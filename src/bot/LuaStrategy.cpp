@@ -574,6 +574,11 @@ LuaStrategy::Status LuaStrategy::init(const QString &source, double balance,
         lua_pushstring(m_L, g.constData());
         lua_setglobal(m_L, "game");
     }
+    if (!runCfg.currency.isEmpty()) {
+        const QByteArray c = runCfg.currency.toUtf8();
+        lua_pushstring(m_L, c.constData());
+        lua_setglobal(m_L, "currency");
+    }
     publish("startbalance", balance);
     publishBool("win", false);
     publish("previousbet", 0.0);
@@ -671,6 +676,21 @@ bool LuaStrategy::readOutputs(double &nextBet, BotConfig &runCfg)
     } else {
         lua_pop(m_L, 1);
         m_error = QStringLiteral("game must be the string \"dice\" or \"limbo\"");
+        return false;
+    }
+    lua_pop(m_L, 1);
+
+    // ---- currency (optional): the currency code to bet in, e.g. "btc" / "usdt"
+    lua_getglobal(m_L, "currency");
+    if (lua_isnil(m_L, -1)) {
+        // keep the current currency
+    } else if (lua_type(m_L, -1) == LUA_TSTRING) {
+        const QString c = QString::fromUtf8(lua_tostring(m_L, -1)).trimmed().toLower();
+        if (!c.isEmpty())
+            runCfg.currency = c;
+    } else {
+        lua_pop(m_L, 1);
+        m_error = QStringLiteral("currency must be a string such as \"btc\" or \"usdt\"");
         return false;
     }
     lua_pop(m_L, 1);

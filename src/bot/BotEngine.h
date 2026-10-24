@@ -9,6 +9,8 @@
 
 #include <QTimer>
 
+#include <functional>
+
 class StakeClient;
 struct LiveBetResult;
 
@@ -38,6 +40,18 @@ public:
         m_scriptLanguage = language;
     }
     bool scriptActive() const { return m_scriptActive; }
+
+    // Currency hooks (set by MainWindow) for the script variable `currency`.
+    //   getter:   the currency code being bet in right now (lowercase).
+    //   switcher: switches to another one (live: the bet currency, simulation: just the
+    //             label) and returns the balance in it; false + error if that is not possible.
+    using CurrencyGetter = std::function<QString()>;
+    using CurrencySwitcher = std::function<bool(const QString &currency, double &balance, QString &error)>;
+    void setCurrencyHooks(CurrencyGetter getter, CurrencySwitcher switcher)
+    {
+        m_currencyGetter = std::move(getter);
+        m_currencySwitcher = std::move(switcher);
+    }
 
     const SessionStats &stats() const { return m_stats; }
 
@@ -111,6 +125,8 @@ private:
     // script one last time (so its print()s show the latest roll), then close it.
     void finishScriptDrain(bool feedLastBet);
     void notifyGameChange();
+    QString currentCurrency() const;
+    bool applyScriptCurrency(); // true if switching failed and the run was halted
     double resetStatsFromScript();
     void rotateSeedFromScript(const QString &clientSeed);
     void dispatchSeedRotation();
@@ -124,6 +140,8 @@ private:
     QString m_scriptSource;
     ScriptLanguage m_scriptLanguage = ScriptLanguage::Lua;
     bool m_scriptActive = false;
+    CurrencyGetter m_currencyGetter;
+    CurrencySwitcher m_currencySwitcher;
     bool m_scriptDraining = false; // stopped, waiting for the last in-flight scripted bet
     BetRecord m_lastRec;           // last finished bet (fed to the script)
 

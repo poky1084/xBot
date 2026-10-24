@@ -273,6 +273,7 @@ void BotEngine::start()
     m_seedWaitTimer.stop();
     m_nextBetSize = m_config.baseBet;
     m_runCfg = m_config;
+    m_runCfg.currency = currentCurrency(); // what a script sees in `currency` at start-up
     m_announcedGame = m_config.game;
     m_runStartProfit = m_stats.profit;
     m_conditions.setBlocks(scriptMode ? BlockList() : m_condBlocks);
@@ -301,6 +302,11 @@ void BotEngine::start()
             emit logMessage(tr("[%1] script stopped during start-up").arg(lang), false);
             emit stopped(tr("stopped by %1 script").arg(lang));
             m_script->close();
+            return;
+        }
+        // The script may have chosen another currency in its body (currency = "btc").
+        if (applyScriptCurrency()) {
+            emit stopped(tr("%1 error").arg(lang)); // see applyScriptCurrency(): already reported
             return;
         }
         m_scriptActive = true;
@@ -402,6 +408,48 @@ void BotEngine::seedRotationFinished(bool ok)
     // The held-back bet is placed now (placeNextBet() returned early while waiting).
     if (m_running && !m_paused && !m_inFlight)
         scheduleNext();
+}
+
+QString BotEngine::currentCurrency() const
+{
+    return m_currencyGetter ? m_currencyGetter().trimmed().toLower() : QString();
+}
+
+// A script set `currency`: switch the betting currency (before the next bet is placed).
+// Returns true when that was not possible; the run is then halted / not started.
+bool BotEngine::applyScriptCurrency()
+{
+    const QString have = currentCurrency();
+    const QString want = m_runCfg.currency.trimmed().toLower();
+    if (want.isEmpty() || want == have || !m_currencySwitcher) {
+        m_runCfg.currency = have;
+        return false;
+    }
+
+    double balance = m_stats.balance;
+    QString err;
+    if (!m_currencySwitcher(want, balance, err)) {
+        const QString msg = tr("cannot switch currency to %1: %2").arg(want.toUpper(), err);
+        emit scriptOutput(msg, true);
+        emit scriptError(msg);
+        if (m_running) {
+            stopWithReason(tr("halted (%1)").arg(msg));
+        } else {
+            m_scriptActive = false;
+            m_script->close();
+        }
+        return true;
+    }
+
+    m_runCfg.currency = want;
+    emit logMessage(tr("Currency switched to %1.").arg(want.toUpper()), false);
+    if (liveMode()) {
+        // The session figures were in the old currency: start a fresh session in the new
+        // one. This also republishes balance / startbalance / profit / ... to the script.
+        m_stats.balance = balance;
+        m_script->requestResetStats();
+    }
+    return false;
 }
 
 void BotEngine::notifyGameChange()
@@ -568,6 +616,9 @@ bool BotEngine::advanceProgression(bool win, const BotConfig &cfg)
                                          : tr("stopped by %1 script: %2").arg(lang, why));
             return true;
         }
+        // dobet() may have set `currency`: switch before the next bet is placed.
+        if (applyScriptCurrency())
+            return true;
         //notifyGameChange();
         return false;
     }

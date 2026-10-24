@@ -131,6 +131,8 @@ private:
     void updateWindowTitle();
     double displayBalance() const;
     QString currencyLabel() const;
+    // `currency = "btc"` in a Lua / JavaScript strategy
+    bool switchCurrencyFromScript(const QString &currency, double &balance, QString &error);
 
     // Core
     BotEngine *m_engine = nullptr;
@@ -253,6 +255,7 @@ private:
     QString m_selectedFile;
 
     QString m_currencyTag = QStringLiteral("USDT");
+    QMap<QString, double> m_balances; // last balances fetched from the server (lowercase code -> amount)
     double m_startBalance = BotConstants::kStartBalance;
 
     // Rolling betting-speed measurement (bets per second).

@@ -509,6 +509,12 @@ MainWindow::MainWindow(QWidget *parent)
     });
     connect(m_engine, &BotEngine::seedRotationRequested, this,
             [this](const QString &clientSeed) { rotateSeed(true, clientSeed); });
+    // `currency = "btc"` in a Lua / JavaScript strategy
+    m_engine->setCurrencyHooks(
+        [this]() { return m_engine->liveMode() ? m_live.currency : m_currencyTag.toLower(); },
+        [this](const QString &cur, double &balance, QString &err) {
+            return switchCurrencyFromScript(cur, balance, err);
+        });
     connect(m_engine, &BotEngine::scriptError, this, [this](const QString &msg) {
         if (m_luaDock)
             m_luaDock->setStatus(msg, true);
@@ -1808,6 +1814,7 @@ void MainWindow::applyLiveSettings(const LiveSettings &requested)
    
 
     m_live = next;
+    m_balances.clear();
 	m_isLoggedIn = false;
 	
     QString err;
@@ -1851,6 +1858,7 @@ void MainWindow::applyLiveSettings(const LiveSettings &requested)
 
 void MainWindow::onBalancesReady(const QMap<QString, double> &balances)
 {
+    m_balances = balances;
     m_lastBalanceError.clear();
     const QStringList codes = balances.keys();
 	m_isLoggedIn = true; 
@@ -1936,6 +1944,30 @@ double MainWindow::displayBalance() const
         return s.balance;
     // While a run is active the session is initialised (resetstats() can leave it at 0 bets).
     return (s.bets > 0 || m_engine->isRunning()) ? s.balance : m_startBalance;
+}
+
+bool MainWindow::switchCurrencyFromScript(const QString &currency, double &balance, QString &error)
+{
+    const QString cur = currency.trimmed().toLower();
+    if (!m_engine->liveMode()) {
+        // Simulation = play money: the currency is only a label.
+        m_currencyTag = cur.toUpper();
+        updateSessionWidgets();
+        updateStatusWidgets();
+        return true;
+    }
+    if (!m_balances.contains(cur)) {
+        error = m_balances.isEmpty()
+            ? tr("no balances loaded yet")
+            : tr("this account has no \"%1\" balance (available: %2)")
+                  .arg(cur, m_balances.keys().join(QStringLiteral(", ")));
+        return false;
+    }
+    m_live.currency = cur;
+    m_stake->setCurrency(cur);
+    balance = m_balances.value(cur);
+    m_stake->fetchBalances(); // refresh the figure for the new currency
+    return true;
 }
 
 QString MainWindow::currencyLabel() const

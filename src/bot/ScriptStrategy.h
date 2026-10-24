@@ -16,7 +16,7 @@ inline QString scriptLanguageName(ScriptLanguage l)
 // Common interface of the scripting back ends (LuaStrategy, JsStrategy). Both run
 // the same strategy contract: the script body runs once at the start, then an
 // optional dobet() function is called after every finished bet; the globals
-// nextbet / chance / bethigh / target / game are read back after each call.
+// nextbet / chance / bethigh / target / game / currency are read back after each call.
 class ScriptStrategy
 {
 public:

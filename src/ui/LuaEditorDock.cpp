@@ -81,7 +81,7 @@ protected:
             "while"};
         // Variables / functions the strategy API provides.
         static const QSet<QString> api = {
-            "nextbet", "chance", "bethigh", "target", "game", "dobet", "stop", "startbalance", "balance",
+            "nextbet", "chance", "bethigh", "target", "game", "currency", "dobet", "stop", "startbalance", "balance",
             "profit", "win", "previousbet", "lastBet", "lastprofit", "roll", "bets", "wins", "losses", "wagered",
             "currentstreak", "log", "resetstats", "resetseed"};
         static const QSet<QString> builtins = {
@@ -296,7 +296,7 @@ protected:
             "async", "await", "static", "get", "set"};
         // Variables / functions the strategy API provides.
         static const QSet<QString> api = {
-            "nextbet", "chance", "bethigh", "target", "game", "dobet", "stop", "startbalance", "balance",
+            "nextbet", "chance", "bethigh", "target", "game", "currency", "dobet", "stop", "startbalance", "balance",
             "profit", "win", "previousbet", "lastBet", "lastprofit", "roll", "bets", "wins", "losses", "wagered",
             "currentstreak", "log", "print", "resetstats", "resetseed"};
         static const QSet<QString> builtins = {
@@ -991,6 +991,10 @@ void LuaEditorDock::onHelp()
         "<b>Set (read / write)</b><br>"
         "<code>game</code> – <code>\"dice\"</code> or <code>\"limbo\"</code> (default: the game "
         "selected in the Game menu); can be changed at any time, e.g. in <code>dobet()</code><br>"
+        "<code>currency</code> – currency code to bet in, e.g. <code>\"btc\"</code> or "
+        "<code>\"usdt\"</code> (default: the current bet currency); can be changed at any time. "
+        "Live: the account needs a balance in it, and the session statistics restart in the "
+        "new currency<br>"
         "<code>nextbet</code> – amount of the next bet<br>"
         "<b>Dice:</b><br>"
         "<code>chance</code> – win chance in % (0.01 – 99.99)<br>"

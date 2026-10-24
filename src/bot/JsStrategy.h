@@ -38,6 +38,8 @@ private:
 // same contract as the Lua strategy (see LuaStrategy.h), with JavaScript syntax:
 //
 //   game = "dice";          // optional: "dice" or "limbo"
+//   currency = "btc";       // optional: currency code to bet in (default: the current bet
+//                           // currency); may be changed in dobet()
 //   nextbet = 0.00000100;   // required
 //   chance = 49.5;          // dice
 //   bethigh = true;         // dice: true = roll over, false = roll under

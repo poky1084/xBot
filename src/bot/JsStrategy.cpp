@@ -249,6 +249,8 @@ JsStrategy::Status JsStrategy::init(const QString &source, double balance, doubl
     }
 
     m_engine->globalObject().setProperty(QStringLiteral("game"), gameName(runCfg.game));
+    if (!runCfg.currency.isEmpty())
+        m_engine->globalObject().setProperty(QStringLiteral("currency"), runCfg.currency);
     publish("startbalance", balance);
     publishBool("win", false);
     publish("previousbet", 0.0);
@@ -337,6 +339,19 @@ bool JsStrategy::readOutputs(double &nextBet, BotConfig &runCfg)
         }
     } else {
         m_error = QStringLiteral("game must be the string \"dice\" or \"limbo\"");
+        return false;
+    }
+
+    // ---- currency (optional): the currency code to bet in, e.g. "btc" / "usdt"
+    const QJSValue currency = readGlobal("currency");
+    if (currency.isUndefined() || currency.isNull()) {
+        // keep the current currency
+    } else if (currency.isString()) {
+        const QString c = currency.toString().trimmed().toLower();
+        if (!c.isEmpty())
+            runCfg.currency = c;
+    } else {
+        m_error = QStringLiteral("currency must be a string such as \"btc\" or \"usdt\"");
         return false;
     }
 

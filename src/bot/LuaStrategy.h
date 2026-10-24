@@ -13,6 +13,10 @@ struct lua_State;
 //   * The script body runs ONCE when the run starts. Use it to set the first bet:
 //         game    = "dice"          -- optional: "dice" or "limbo" (default: the game
 //                                   -- selected in the Game menu); may be changed in dobet()
+//         currency = "btc"          -- optional: currency code to bet in (default: the
+//                                   -- current bet currency); may be changed in dobet().
+//                                   -- Live: the account needs a balance in it; the session
+//                                   -- statistics restart in the new currency
 //         nextbet = 0.00000100      -- required
 //       dice:
 //         chance  = 49.5            -- required
