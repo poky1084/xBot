@@ -15,8 +15,13 @@ public:
 
 protected:
     void paintEvent(QPaintEvent *event) override;
+    void mouseMoveEvent(QMouseEvent *event) override;
+    void leaveEvent(QEvent *event) override;
 
 private:
+    int sampleIndexAt(const QPoint &pos) const;
+
+    int m_hoverIndex = -1; // sample under the mouse, -1 = none
     QVector<double> m_samples;
     static constexpr int kMaxSamples = 600;
 };

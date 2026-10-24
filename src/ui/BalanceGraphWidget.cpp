@@ -1,7 +1,9 @@
 #include "ui/BalanceGraphWidget.h"
 
+#include <QMouseEvent>
 #include <QPainter>
 #include <QPaintEvent>
+#include <QToolTip>
 
 #include <algorithm>
 
@@ -9,6 +11,44 @@ BalanceGraphWidget::BalanceGraphWidget(QWidget *parent)
     : QWidget(parent)
 {
     setMinimumHeight(120);
+    setMouseTracking(true);
+}
+
+int BalanceGraphWidget::sampleIndexAt(const QPoint &pos) const
+{
+    if (m_samples.size() < 2)
+        return -1;
+    const QRect r = rect().adjusted(6, 6, -6, -6);
+    if (r.width() <= 0)
+        return -1;
+    const double t = double(pos.x() - r.left()) / double(r.width());
+    return qBound(0, int(t * (m_samples.size() - 1) + 0.5), int(m_samples.size()) - 1);
+}
+
+void BalanceGraphWidget::mouseMoveEvent(QMouseEvent *event)
+{
+    const int idx = sampleIndexAt(event->pos());
+    if (idx != m_hoverIndex) {
+        m_hoverIndex = idx;
+        update();
+    }
+    if (idx < 0) {
+        QToolTip::hideText();
+        return;
+    }
+    const double v = m_samples.at(idx);
+    const QString text = QStringLiteral("%1%2")
+                             .arg(v > 0 ? QStringLiteral("+") : QString())
+                             .arg(v, 0, 'f', 8);
+    QToolTip::showText(mapToGlobal(event->pos()) + QPoint(12, 16), text, this);
+}
+
+void BalanceGraphWidget::leaveEvent(QEvent *event)
+{
+    m_hoverIndex = -1;
+    QToolTip::hideText();
+    update();
+    QWidget::leaveEvent(event);
 }
 
 void BalanceGraphWidget::addSample(double profit)
@@ -22,6 +62,7 @@ void BalanceGraphWidget::addSample(double profit)
 void BalanceGraphWidget::clearSamples()
 {
     m_samples.clear();
+    m_hoverIndex = -1;
     update();
 }
 
@@ -109,6 +150,17 @@ void BalanceGraphWidget::paintEvent(QPaintEvent *event)
             p.setPen(linePen);
             p.drawLine(cross, b);
         }
+    }
+
+    // Hover marker: vertical guide + dot on the sample under the mouse.
+    if (m_hoverIndex >= 0 && m_hoverIndex < line.size()) {
+        const QPointF hp = line.at(m_hoverIndex);
+        p.setPen(QPen(dark ? QColor(0x7a, 0x80, 0x86) : QColor(0x9a, 0xa0, 0xa6), 1, Qt::DotLine));
+        p.drawLine(QPointF(hp.x(), r.top()), QPointF(hp.x(), r.bottom()));
+        p.setPen(QPen(dark ? QColor(0x23, 0x26, 0x29) : Qt::white, 1.5));
+        p.setBrush(colorFor(m_samples.at(m_hoverIndex)));
+        p.drawEllipse(hp, 3.5, 3.5);
+        p.setBrush(Qt::NoBrush);
     }
 
     // Value labels

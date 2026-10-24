@@ -160,6 +160,7 @@ private:
     // false once the user scrolls / clicks in the bet list: new bets then no
     // longer move the view. Scrolling back to the top resumes following.
     bool m_betFollow = true;
+    bool m_betClickWasSelected = false; // row under the mouse was already selected at press
 
     // Sidebar
     QWidget *m_sidebar = nullptr;

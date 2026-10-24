@@ -907,6 +907,15 @@ void MainWindow::createCentralWidget()
         });
     });
     connect(m_model, &QAbstractItemModel::modelReset, this, [this] { m_betFollow = true; });
+
+    // When the highlighted bet is pushed out of the list (beyond kMaxRows), just
+    // drop the highlight. Otherwise Qt moves the selection/current row to the
+    // neighbouring row and scrolls the view down to it.
+    connect(m_model, &BetHistoryModel::rowAboutToBeDropped, this, [this](int row) {
+        QItemSelectionModel *sm = m_betTable->selectionModel();
+        if (sm->isRowSelected(row, {}) || sm->currentIndex().row() == row)
+            sm->clear(); // clears selection and current index
+    });
     connect(m_model, &QAbstractItemModel::rowsInserted, this,
             [this](const QModelIndex &, int first, int last) {
         if (first != 0 || m_betFollow)
@@ -1474,6 +1483,13 @@ void MainWindow::resolveBetIid(const QString &betId, std::function<void(const QS
 
 void MainWindow::onBetTableClicked(const QModelIndex &index)
 {
+    // Clicking an already highlighted row again removes the highlight.
+    if (index.isValid() && m_betClickWasSelected) {
+        m_betTable->clearSelection();
+        m_betTable->setCurrentIndex(QModelIndex());
+    }
+    m_betClickWasSelected = false;
+
     if (!index.isValid() || index.column() != BetHistoryModel::ColBetId)
         return;
     const QString betId = m_model->betIdAt(index.row());
@@ -2185,6 +2201,14 @@ bool MainWindow::eventFilter(QObject *watched, QEvent *event)
             });
         } else if (t == QEvent::MouseButtonPress) {
             m_betFollow = false;
+            // Remember whether the row being clicked is already highlighted, so
+            // the click handler can toggle the highlight off again.
+            if (watched == m_betTable->viewport()) {
+                auto *me = static_cast<QMouseEvent *>(event);
+                const QModelIndex idx = m_betTable->indexAt(me->pos());
+                m_betClickWasSelected = me->button() == Qt::LeftButton && idx.isValid()
+                                        && m_betTable->selectionModel()->isRowSelected(idx.row(), {});
+            }
         }
     }
     if (watched == m_betTable->viewport() && event->type() == QEvent::Resize

@@ -150,8 +150,10 @@ void BetHistoryModel::addBet(const BetRecord &record)
     while (m_rows.size() > kMaxRows) {
         const int last = m_rows.size() - 1;
         const bool wasVisible = !m_visible.isEmpty() && m_visible.last() == last;
-        if (wasVisible)
+        if (wasVisible) {
+            emit rowAboutToBeDropped(m_visible.size() - 1);
             beginRemoveRows({}, m_visible.size() - 1, m_visible.size() - 1);
+        }
         m_resolved.remove(m_rows.last().betId);
         m_rows.removeLast();
         if (wasVisible) {

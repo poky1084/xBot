@@ -63,6 +63,11 @@ public:
 
     static QString formatAmount(double value, int decimals = 8);
 
+signals:
+    // Emitted just before the oldest visible row falls off the bottom (kMaxRows),
+    // so the view can drop its selection instead of moving it to a neighbour row.
+    void rowAboutToBeDropped(int visualRow);
+
 private:
     bool passes(const BetRecord &b) const;
     void rebuildVisible();
