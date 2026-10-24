@@ -32,6 +32,12 @@ QVariant BetHistoryModel::data(const QModelIndex &index, int role) const
     const BetRecord &rec = m_rows.at(m_visible.at(index.row()));
     const bool win = rec.win;
 
+    if (role == Qt::BackgroundRole) {
+        if (m_stripe.isValid() && (rec.index & 1))
+            return m_stripe;
+        return {};
+    }
+
     if (role == Qt::ForegroundRole) {
         if (index.column() == ColBetId)
             return (!rec.betId.isEmpty() && !m_resolved.contains(rec.betId))
@@ -178,6 +184,16 @@ void BetHistoryModel::setResolvedIid(const QString &betId, const QString &iid)
     m_resolved.insert(betId, iid);
     if (!m_visible.isEmpty())
         emit dataChanged(index(0, ColBetId), index(m_visible.size() - 1, ColBetId));
+}
+
+void BetHistoryModel::setStripeColor(const QColor &color)
+{
+    if (m_stripe == color)
+        return;
+    m_stripe = color;
+    if (!m_visible.isEmpty())
+        emit dataChanged(index(0, 0), index(m_visible.size() - 1, ColumnCount - 1),
+                         {Qt::BackgroundRole});
 }
 
 void BetHistoryModel::setFilter(Filter filter)

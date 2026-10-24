@@ -3,6 +3,7 @@
 #include "bot/BotTypes.h"
 
 #include <QAbstractTableModel>
+#include <QColor>
 #include <QHash>
 
 class BetHistoryModel : public QAbstractTableModel
@@ -44,6 +45,11 @@ public:
     Filter filter() const { return m_filter; }
     void setSearchText(const QString &text);
 
+    // Zebra striping is tied to the bet itself (its running #), not to the row
+    // position, so the stripes stay with their bets instead of flipping every
+    // time a new bet is inserted at the top.
+    void setStripeColor(const QColor &color);
+
     // ---- Bet id column ----------------------------------------------------
     // Rows with a server bet id show a blue "View" link. Once the id has been
     // resolved (BetLookup) the cell shows the iid instead, like the C# bot.
@@ -66,4 +72,5 @@ private:
     QVector<int> m_visible;      // indices into m_rows after filter+search
     Filter m_filter = All;
     QString m_search;
+    QColor m_stripe;             // background of every other bet (invalid = none)
 };

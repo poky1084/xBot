@@ -851,7 +851,8 @@ void MainWindow::createCentralWidget()
     m_betTable->setModel(m_model);
     m_betTable->setSelectionBehavior(QAbstractItemView::SelectRows);
     m_betTable->setSelectionMode(QAbstractItemView::SingleSelection);
-    m_betTable->setAlternatingRowColors(true);
+    // Zebra stripes come from the model (per bet), not from the row position.
+    m_betTable->setAlternatingRowColors(false);
     m_betTable->verticalHeader()->setVisible(false);
     m_betTable->verticalHeader()->setDefaultSectionSize(20);
     m_betTable->horizontalHeader()->setStretchLastSection(false);
@@ -2224,6 +2225,8 @@ void MainWindow::applyTheme(bool dark)
     if (!dark)
         sheet += comboArrowRules(QColor(0x40, 0x40, 0x40));
     qApp->setStyleSheet(sheet);
+    if (m_model)
+        m_model->setStripeColor(dark ? QColor(0x29, 0x2d, 0x31) : QColor(0xf6, 0xf8, 0xfb));
     if (m_luaDock)
         m_luaDock->setDark(dark);
 }
