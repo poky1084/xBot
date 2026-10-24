@@ -1975,14 +1975,16 @@ void MainWindow::updateModeWidgets()
 void MainWindow::onAbout()
 {
     QMessageBox::about(
-        this, tr("About QDiceBot"),
-        tr("<h3>QDiceBot 1.0</h3>"
+        this, tr("About xBot"),
+        tr("<h3>xBot 1.0</h3>"
            "<p>A play-money dice simulator with a qBittorrent-style interface: "
            "provably fair HMAC-SHA256 rolls, manual and auto-bet with "
            "configurable win/loss progressions, profit chart and session "
            "statistics.</p>"
            "<p>Simulation mode never places real bets; live betting must be "
            "enabled explicitly in Options.</p>"
+		   "source code and exe is here: <a href='https://bitbucket.org/poky1084/xbot'>"
+           "https://bitbucket.org/poky1084/xbot</a>"
            "<p>Icons are taken from the qBittorrent project "
            "(<a href='https://github.com/qbittorrent/qBittorrent'>"
            "github.com/qbittorrent/qBittorrent</a>, GPLv2).</p>"));

@@ -175,7 +175,7 @@ bool ExtensionTransport::start(quint16 port, QString *errorOut)
         return true;
     stop();
 
-    m_server = new QWebSocketServer(QStringLiteral("QDiceBot"),
+    m_server = new QWebSocketServer(QStringLiteral("xBot"),
                                     QWebSocketServer::NonSecureMode, this);
     // Loopback only: the original 0.0.0.0 bind exposes the session to the LAN.
     if (!m_server->listen(QHostAddress::LocalHost, port)) {

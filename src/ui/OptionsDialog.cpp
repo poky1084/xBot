@@ -30,7 +30,7 @@
 OptionsDialog::OptionsDialog(QWidget *parent)
     : QDialog(parent)
 {
-    setWindowTitle(tr("Options — QDiceBot"));
+    setWindowTitle(tr("Options — xBot"));
     setMinimumWidth(480);
 
     auto *root = new QVBoxLayout(this);
