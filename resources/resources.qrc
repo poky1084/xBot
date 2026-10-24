@@ -1,0 +1,42 @@
+<RCC>
+  <qresource prefix="/">
+    <file alias="icons/application-exit.svg">icons/application-exit.svg</file>
+    <file alias="icons/chart-line.svg">icons/chart-line.svg</file>
+    <file alias="icons/checked-completed.svg">icons/checked-completed.svg</file>
+    <file alias="icons/configure.svg">icons/configure.svg</file>
+    <file alias="icons/connected.svg">icons/connected.svg</file>
+    <file alias="icons/dialog-warning.svg">icons/dialog-warning.svg</file>
+    <file alias="icons/disconnected.svg">icons/disconnected.svg</file>
+    <file alias="icons/download.svg">icons/download.svg</file>
+    <file alias="icons/downloading.svg">icons/downloading.svg</file>
+    <file alias="icons/edit-clear.svg">icons/edit-clear.svg</file>
+    <file alias="icons/edit-find.svg">icons/edit-find.svg</file>
+    <file alias="icons/error.svg">icons/error.svg</file>
+    <file alias="icons/filter-active.svg">icons/filter-active.svg</file>
+    <file alias="icons/filter-all.svg">icons/filter-all.svg</file>
+    <file alias="icons/filter-inactive.svg">icons/filter-inactive.svg</file>
+    <file alias="icons/help-about.svg">icons/help-about.svg</file>
+    <file alias="icons/list-add.svg">icons/list-add.svg</file>
+    <file alias="icons/list-remove.svg">icons/list-remove.svg</file>
+    <file alias="icons/network-server.svg">icons/network-server.svg</file>
+    <file alias="icons/pause-session.svg">icons/pause-session.svg</file>
+    <file alias="icons/preferences-desktop.svg">icons/preferences-desktop.svg</file>
+    <file alias="icons/tray.svg">icons/tray.svg</file>
+    <file alias="icons/queued.svg">icons/queued.svg</file>
+    <file alias="icons/ratio.svg">icons/ratio.svg</file>
+    <file alias="icons/security-high.svg">icons/security-high.svg</file>
+    <file alias="icons/security-low.svg">icons/security-low.svg</file>
+    <file alias="icons/speedometer.svg">icons/speedometer.svg</file>
+    <file alias="icons/stopped.svg">icons/stopped.svg</file>
+    <file alias="icons/task-complete.svg">icons/task-complete.svg</file>
+    <file alias="icons/task-reject.svg">icons/task-reject.svg</file>
+    <file alias="icons/torrent-start-forced.svg">icons/torrent-start-forced.svg</file>
+    <file alias="icons/torrent-start.svg">icons/torrent-start.svg</file>
+    <file alias="icons/torrent-stop.svg">icons/torrent-stop.svg</file>
+    <file alias="icons/upload.svg">icons/upload.svg</file>
+    <file alias="icons/view-categories.svg">icons/view-categories.svg</file>
+    <file alias="icons/view-refresh.svg">icons/view-refresh.svg</file>
+    <file alias="icons/view-statistics.svg">icons/view-statistics.svg</file>
+    <file alias="icons/wallet-open.svg">icons/wallet-open.svg</file>
+  </qresource>
+</RCC>

@@ -1,0 +1,2395 @@
+#include "MainWindow.h"
+
+#include "bot/BotEngine.h"
+#include "bot/SimulatedProvider.h"
+#include "ui/AutoBetPanel.h"
+#include "ui/BalanceGraphWidget.h"
+#include "ui/BetHistoryModel.h"
+#include "ui/ConditionBuilderDialog.h"
+#include "ui/FairPanel.h"
+#include "ui/LogWidget.h"
+#include "ui/LuaEditorDock.h"
+#include "ui/ManualBetPanel.h"
+#include "ui/OptionsDialog.h"
+#include "bot/StakeClient.h"
+#include "bot/StakeTransport.h"
+
+#include <QAction>
+#include <QClipboard>
+#include <QCursor>
+#include <QDesktopServices>
+#include <QSet>
+#include <QUrl>
+#include <functional>
+#include <QActionGroup>
+#include <QMoveEvent>
+#include <QPoint>
+#include <QResizeEvent>
+#include <QShowEvent>
+#include <QApplication>
+#include <QButtonGroup>
+#include <QCloseEvent>
+#include <QDateTime>
+#include <QDir>
+#include <QDockWidget>
+#include <QEvent>
+#include <QFile>
+#include <QFileDialog>
+#include <QFileInfo>
+#include <QGridLayout>
+#include <QHeaderView>
+#include <QHBoxLayout>
+#include <QJsonDocument>
+#include <QLabel>
+#include <QFontMetrics>
+#include <QLineEdit>
+#include <QMenu>
+#include <QMenuBar>
+#include <QPixmap>
+#include <QMessageBox>
+#include <QPainter>
+#include <QProxyStyle>
+#include <QStyleOption>
+#include <QPainterPath>
+#include <QPen>
+#include <QPushButton>
+#include <QScreen>
+#include <QScrollArea>
+#include <QSettings>
+#include <QTimer>
+#include <QSplitter>
+#include <QStandardPaths>
+#include <QPolygonF>
+#include <QStatusBar>
+#include <QTableView>
+#include <QScrollBar>
+#include <QWheelEvent>
+#include <QMouseEvent>
+#include <QTabBar>
+#include <QTabWidget>
+#include <QToolBar>
+#include <QVBoxLayout>
+
+#include <algorithm>
+
+namespace
+{
+
+// qBittorrent-style light chrome, matching the reference project's palette.
+const char kLightStylesheet[] = R"(
+QWidget { background: #ffffff; color: #202020; font-size: 12px; }
+QMainWindow, QMenuBar, QToolBar, QStatusBar { background: #eeeeee; }
+QMenuBar { border-bottom: 1px solid #c8c8c8; padding: 1px 2px; }
+QMenuBar::item { background: transparent; padding: 3px 8px; border-radius: 2px; }
+QMenuBar::item:selected { background: #dde6f5; }
+QMenu { background: #ffffff; border: 1px solid #c8c8c8; padding: 2px; }
+QMenu::item { padding: 3px 24px 3px 20px; border-radius: 2px; }
+QMenu::item:selected { background: #4a77c7; color: #ffffff; }
+QMenu::separator { height: 1px; background: #c8c8c8; margin: 3px 6px; }
+QToolTip { background: #ffffdc; border: 1px solid #c8c8c8; color: #202020; padding: 2px; }
+QToolBar { border: none; spacing: 2px; padding: 1px; }
+QToolBar::separator { background: #c8c8c8; width: 1px; margin: 5px 4px; }
+QToolButton { border: 1px solid transparent; border-radius: 3px; padding: 4px; background: transparent; }
+QToolButton:hover { background: #dde6f5; border-color: #c8c8c8; }
+QToolButton:pressed { background: #c9d9f1; }
+QToolButton:disabled { color: #b4b4b4; }
+QPushButton {
+    background: qlineargradient(x1:0, y1:0, x2:0, y2:1, stop:0 #ffffff, stop:1 #ececec);
+    border: 1px solid #bdbdbd; border-radius: 3px; padding: 3px 12px; min-height: 18px;
+}
+QPushButton:hover { border-color: #4a77c9; }
+QPushButton:pressed { background: #e2e2e2; }
+QPushButton:disabled { color: #a8a8a8; background: #f2f2f2; border-color: #d4d4d4; }
+QPushButton:checked { background: #4a77c7; color: #ffffff; border-color: #3a63a8; }
+QPushButton#filterBtn {
+    border: none; border-radius: 0; background: transparent;
+    text-align: left; padding: 4px 8px; min-height: 18px;
+}
+QPushButton#filterBtn:hover { background: #dde6f5; border: none; }
+QPushButton#filterBtn:checked { background: #4a77c7; color: #ffffff; border: none; }
+QPushButton#sectionHeader {
+    background: #eeeeee; border: none; border-bottom: 1px solid #c8c8c8;
+    font-weight: bold; padding: 3px 6px; text-align: left; min-height: 16px;
+}
+QPushButton#sectionHeader:disabled { background: #eeeeee; color: #202020; border-bottom: 1px solid #c8c8c8; }
+QPushButton#rollDiceBtn { font-weight: bold; padding: 6px 12px; }
+QPushButton#amountBtn { padding: 3px 0px; }
+QComboBox, QSpinBox, QDoubleSpinBox, QLineEdit {
+    background: #ffffff; border: 1px solid #bdbdbd; border-radius: 2px;
+    padding: 1px 4px; min-height: 18px;
+}
+QComboBox:hover, QSpinBox:hover, QDoubleSpinBox:hover, QLineEdit:hover { border-color: #8f8f8f; }
+QComboBox QAbstractItemView { background: #ffffff; border: 1px solid #c8c8c8; selection-background-color: #4a77c7; selection-color: #ffffff; }
+QComboBox QAbstractItemView { outline: 0; padding: 2px; }
+QComboBox QAbstractItemView::item { padding: 3px 24px 3px 8px; min-height: 18px; border-radius: 2px; }
+QComboBox QAbstractItemView::item:hover, QComboBox QAbstractItemView::item:selected { background: #4a77c7; color: #ffffff; }
+QComboBox { combobox-popup: 0; }
+QTableView {
+    background: #ffffff; alternate-background-color: #f6f8fb; border: none;
+    gridline-color: #ececec; selection-background-color: #4a77c7; selection-color: #ffffff;
+}
+QHeaderView::section {
+    background: #eeeeee; border: none; border-right: 1px solid #dcdcdc;
+    border-bottom: 1px solid #c8c8c8; padding: 3px 6px;
+}
+QTabWidget::pane { border: none; background: #ffffff; }
+QTabBar::tab {
+    background: #e4e4e4; border: 1px solid #c8c8c8; border-bottom: none;
+    padding: 4px 14px; margin-right: 1px;
+    border-top-left-radius: 3px; border-top-right-radius: 3px;
+}
+QTabBar::tab:selected { background: #ffffff; margin-bottom: -1px; }
+QTabBar::tab:!selected { color: #606060; }
+QTabBar::tab:!selected:hover { background: #dde6f5; }
+QStatusBar { border-top: 1px solid #c8c8c8; }
+QStatusBar QLabel { padding: 0 4px; background: transparent; }
+QSplitter::handle { background: #d8d8d8; width: 1px; height: 1px; }
+QDockWidget::title { background: #eeeeee; border-bottom: 1px solid #c8c8c8; padding: 4px; text-align: left; }
+QPlainTextEdit { background: #ffffff; border: 1px solid #c8c8c8; selection-background-color: #4a77c7; selection-color: #ffffff; }
+QListWidget { background: #ffffff; border: 1px solid #c8c8c8; selection-background-color: #4a77c7; selection-color: #ffffff; }
+QScrollBar:vertical { background: #eeeeee; width: 12px; margin: 0; }
+QScrollBar::handle:vertical { background: #c4c4c4; border-radius: 5px; min-height: 20px; }
+QScrollBar::add-line:vertical, QScrollBar::sub-line:vertical,
+QScrollBar::add-page:vertical, QScrollBar::sub-page:vertical { height: 0; background: none; }
+QScrollBar:horizontal { background: #eeeeee; height: 12px; margin: 0; }
+QScrollBar::handle:horizontal { background: #c4c4c4; border-radius: 5px; min-width: 20px; }
+QScrollBar::add-line:horizontal, QScrollBar::sub-line:horizontal,
+QScrollBar::add-page:horizontal, QScrollBar::sub-page:horizontal { width: 0; background: none; }
+QSlider::groove:horizontal { height: 4px; background: #e0e0e0; border-radius: 2px; }
+QSlider::handle:horizontal { width: 12px; margin: -5px 0; background: #4a77c7; border-radius: 6px; }
+QSlider::handle:horizontal:hover { background: #3a63a8; }
+QToolBar QWidget { background: transparent; }
+QToolBar QComboBox { background: #ffffff; }
+QToolBar QComboBox QWidget { background: #ffffff; }
+QToolBar QComboBox QAbstractItemView { background: #ffffff; color: #202020; }
+QToolBar QComboBox QAbstractItemView::item:hover, QToolBar QComboBox QAbstractItemView::item:selected { background: #4a77c7; color: #ffffff; }
+)";
+
+// Dark variant of the same design.
+const char kDarkStylesheet[] = R"(
+QWidget { background: #2b2e33; color: #c8ccd0; font-size: 12px; }
+QMainWindow, QMenuBar, QToolBar, QStatusBar { background: #2b2e33; }
+QMenuBar { border-bottom: 1px solid #3a3f45; }
+QMenuBar::item { background: transparent; padding: 3px 8px; border-radius: 2px; }
+QMenuBar::item:selected { background: #3d4349; }
+QMenu { background: #2b2e33; border: 1px solid #454a50; }
+QMenu::item:selected { background: #4a77c7; color: #ffffff; }
+QMenu::separator { height: 1px; background: #454a50; margin: 3px 6px; }
+QToolTip { color: #c8ccd0; background-color: #32363b; border: 1px solid #454a50; }
+QToolBar { border: none; spacing: 2px; }
+QToolBar::separator { background: #454a50; width: 1px; margin: 5px 4px; }
+QToolButton { border: 1px solid transparent; border-radius: 3px; padding: 4px; background: transparent; }
+QToolButton:hover { background: #3d4349; border-color: #454a50; }
+QToolButton:disabled { color: #5a6068; }
+QPushButton {
+    background: qlineargradient(x1:0, y1:0, x2:0, y2:1, stop:0 #3a3f45, stop:1 #31353a);
+    border: 1px solid #4a5056; border-radius: 3px; padding: 3px 12px; min-height: 18px; color: #c8ccd0;
+}
+QPushButton:hover { border-color: #4a77c9; }
+QPushButton:disabled { color: #60666d; background: #2d3136; }
+QPushButton:checked { background: #4a77c7; color: #ffffff; }
+QPushButton#filterBtn {
+    border: none; border-radius: 0; background: transparent;
+    text-align: left; padding: 4px 8px; min-height: 18px;
+}
+QPushButton#filterBtn:hover { background: #3d4349; border: none; }
+QPushButton#filterBtn:checked { background: #4a77c7; color: #ffffff; border: none; }
+QPushButton#sectionHeader {
+    background: #32363b; border: none; border-bottom: 1px solid #454a50;
+    font-weight: bold; padding: 3px 6px; text-align: left; min-height: 16px; color: #c8ccd0;
+}
+QPushButton#sectionHeader:disabled { background: #32363b; color: #c8ccd0; border-bottom: 1px solid #454a50; }
+QPushButton#rollDiceBtn { font-weight: bold; padding: 6px 12px; }
+QPushButton#amountBtn { padding: 3px 0px; }
+QComboBox, QSpinBox, QDoubleSpinBox, QLineEdit {
+    background: #232629; border: 1px solid #4a5056; border-radius: 2px;
+    padding: 1px 4px; min-height: 18px; color: #c8ccd0;
+}
+QComboBox { combobox-popup: 0; }
+QComboBox QAbstractItemView { background: #232629; border: 1px solid #454a50; selection-background-color: #4a77c7; selection-color: #ffffff; }
+QComboBox QAbstractItemView { outline: 0; padding: 2px; }
+QComboBox QAbstractItemView::item { padding: 3px 24px 3px 8px; min-height: 18px; border-radius: 2px; }
+QComboBox QAbstractItemView::item:hover, QComboBox QAbstractItemView::item:selected { background: #4a77c7; color: #ffffff; }
+QTableView {
+    background: #232629; alternate-background-color: #292d31; border: none;
+    gridline-color: #33383d; selection-background-color: #4a77c7; selection-color: #ffffff;
+}
+QHeaderView::section {
+    background: #2b2e33; border: none; border-right: 1px solid #3a3f45;
+    border-bottom: 1px solid #454a50; padding: 3px 6px;
+}
+QTabWidget::pane { border: none; background: #2b2e33; }
+QTabBar::tab {
+    background: #24272b; border: 1px solid #454a50; border-bottom: none;
+    padding: 4px 14px; margin-right: 1px; color: #9aa0a6;
+    border-top-left-radius: 3px; border-top-right-radius: 3px;
+}
+QTabBar::tab:selected { background: #2b2e33; color: #c8ccd0; margin-bottom: -1px; }
+QTabBar::tab:!selected:hover { background: #3d4349; }
+QStatusBar { border-top: 1px solid #454a50; }
+QStatusBar QLabel { padding: 0 4px; background: transparent; }
+QSplitter::handle { background: #3a3f45; width: 1px; height: 1px; }
+QDockWidget::title { background: #2b2e33; border-bottom: 1px solid #454a50; padding: 4px; text-align: left; }
+QPlainTextEdit { background: #232629; border: 1px solid #454a50; }
+QListWidget { background: #232629; border: 1px solid #454a50; selection-background-color: #4a77c7; selection-color: #ffffff; }
+QScrollBar:vertical { background: #2b2e33; width: 12px; margin: 0; }
+QScrollBar::handle:vertical { background: #4a5056; border-radius: 5px; min-height: 20px; }
+QScrollBar::add-line:vertical, QScrollBar::sub-line:vertical,
+QScrollBar::add-page:vertical, QScrollBar::sub-page:vertical { height: 0; background: none; }
+QScrollBar:horizontal { background: #2b2e33; height: 12px; margin: 0; }
+QScrollBar::handle:horizontal { background: #4a5056; border-radius: 5px; min-width: 20px; }
+QScrollBar::add-line:horizontal, QScrollBar::sub-line:horizontal,
+QScrollBar::add-page:horizontal, QScrollBar::sub-page:horizontal { width: 0; background: none; }
+QSlider::groove:horizontal { height: 4px; background: #3a3f45; border-radius: 2px; }
+QSlider::handle:horizontal { width: 12px; margin: -5px 0; background: #4a77c7; border-radius: 6px; }
+
+)";
+
+// Draws check boxes itself (border + blue fill + white tick when checked), so no
+// image files or style-sheet indicator rules are needed. Works for both themes.
+class CheckStyle : public QProxyStyle
+{
+public:
+    explicit CheckStyle(const QString &key) : QProxyStyle(key) {}
+
+    void drawPrimitive(PrimitiveElement pe, const QStyleOption *opt, QPainter *p,
+                       const QWidget *w) const override
+    {
+        if (pe != PE_IndicatorCheckBox) {
+            QProxyStyle::drawPrimitive(pe, opt, p, w);
+            return;
+        }
+
+        const bool enabled = opt->state & State_Enabled;
+        const bool on = opt->state & State_On;
+        const bool partial = opt->state & State_NoChange;
+        const bool hover = enabled && (opt->state & State_MouseOver);
+        // Both stylesheets set a text colour: light text means the dark theme.
+        const bool dark = opt->palette.color(QPalette::WindowText).lightness() > 128;
+
+        QColor border = dark ? QColor("#4a5056") : QColor("#8f8f8f");
+        QColor fill = dark ? QColor("#232629") : QColor("#ffffff");
+        if (on || partial) {
+            fill = QColor("#4a77c7");
+            border = QColor("#3a63a8");
+        }
+        if (hover && !(on || partial))
+            border = QColor("#4a77c9");
+        if (!enabled) {
+            if (on || partial) {
+                fill = QColor("#a9bde0");
+                border = QColor("#a9bde0");
+            } else {
+                fill = dark ? QColor("#2d3136") : QColor("#f2f2f2");
+                border = dark ? QColor("#3a3f45") : QColor("#c8c8c8");
+            }
+        }
+
+        p->save();
+        p->setRenderHint(QPainter::Antialiasing, true);
+        const QRectF r = QRectF(opt->rect).adjusted(0.5, 0.5, -0.5, -0.5);
+        p->setPen(QPen(border, 1.0));
+        p->setBrush(fill);
+        p->drawRoundedRect(r, 2.0, 2.0);
+
+        if (on || partial) {
+            QPen tickPen(Qt::white, qMax(1.6, r.width() * 0.14), Qt::SolidLine,
+                         Qt::RoundCap, Qt::RoundJoin);
+            p->setPen(tickPen);
+            p->setBrush(Qt::NoBrush);
+            QPainterPath path;
+            if (partial) {
+                path.moveTo(r.left() + r.width() * 0.25, r.center().y());
+                path.lineTo(r.left() + r.width() * 0.75, r.center().y());
+            } else {
+                path.moveTo(r.left() + r.width() * 0.22, r.top() + r.height() * 0.52);
+                path.lineTo(r.left() + r.width() * 0.43, r.top() + r.height() * 0.72);
+                path.lineTo(r.left() + r.width() * 0.78, r.top() + r.height() * 0.30);
+            }
+            p->drawPath(path);
+        }
+        p->restore();
+    }
+};
+
+QString formatAmount(double value, int decimals = 8)
+{
+    return QString::number(value, 'f', decimals);
+}
+
+QString formatSigned(double value, int decimals = 8)
+{
+    return (value >= 0.0 ? QStringLiteral("+") : QString()) + formatAmount(value, decimals);
+}
+
+} // namespace
+
+namespace
+{
+// Renders a short text (e.g. "#") into a toolbar icon in the same blue as the
+// other toolbar icons, so it sits naturally next to them.
+QIcon makeTextIcon(const QString &text, const QColor &color)
+{
+    QIcon icon;
+    for (const int size : {24, 48}) {
+        QPixmap pm(size, size);
+        pm.fill(Qt::transparent);
+        QPainter p(&pm);
+        p.setRenderHint(QPainter::Antialiasing);
+        p.setRenderHint(QPainter::TextAntialiasing);
+        QFont f(QStringLiteral("Segoe UI"));
+        f.setBold(true);
+        f.setPixelSize(int(size * 0.95));
+        p.setFont(f);
+        p.setPen(color);
+        p.drawText(QRect(0, 0, size, size), Qt::AlignCenter, text);
+        p.end();
+        icon.addPixmap(pm);
+    }
+    return icon;
+}
+
+// Holds the bottom tab panel at the width it has when nothing is docked on the
+// right. When the Lua dock is widened the holder shrinks, but the panel keeps
+// its full width and is simply clipped (covered) instead of being squeezed.
+class FixedWidthHolder : public QWidget
+{
+public:
+    explicit FixedWidthHolder(QWidget *child, QWidget *parent = nullptr)
+        : QWidget(parent), m_child(child)
+    {
+        m_child->setParent(this);
+        setSizePolicy(QSizePolicy::Preferred, QSizePolicy::Ignored);
+    }
+
+    QSize sizeHint() const override { return m_child->sizeHint(); }
+    QSize minimumSizeHint() const override { return QSize(0, 0); }
+
+    // Called with the width that is actually visible (this widget's own width)
+    // every time the holder is re-laid out. Lets a page inside the clipped child
+    // follow the visible width instead of keeping the full, partly covered one.
+    void setVisibleWidthCallback(std::function<void(int)> cb)
+    {
+        m_visibleWidthCb = std::move(cb);
+        relayout();
+    }
+
+protected:
+    void resizeEvent(QResizeEvent *event) override
+    {
+        QWidget::resizeEvent(event);
+        relayout();
+    }
+    void moveEvent(QMoveEvent *event) override
+    {
+        QWidget::moveEvent(event);
+        relayout();
+    }
+    void showEvent(QShowEvent *event) override
+    {
+        QWidget::showEvent(event);
+        relayout();
+    }
+
+private:
+    void relayout()
+    {
+        int w = width();
+        // Width available if no dock took space on the right: from this widget's
+        // left edge to the right edge of the main window.
+        if (QWidget *top = window(); top && top != this)
+            w = std::max(w, top->width() - mapTo(top, QPoint(0, 0)).x());
+        // Before the child is resized, so a page limited to the visible width is
+        // already capped (or released again) when the child's layout runs.
+        if (m_visibleWidthCb)
+            m_visibleWidthCb(width());
+        m_child->setGeometry(0, 0, w, height());
+    }
+
+    QWidget *m_child;
+    std::function<void(int)> m_visibleWidthCb;
+};
+} // namespace
+
+MainWindow::MainWindow(QWidget *parent)
+    : QMainWindow(parent)
+{
+    qApp->setStyle(new CheckStyle(QStringLiteral("Fusion"))); // custom check box drawing
+    updateWindowTitle();
+    setWindowIcon(QIcon(QStringLiteral(":/icons/tray.svg")));
+
+    m_engine = new BotEngine(this);
+    m_provider = new SimulatedProvider;
+    m_engine->setProvider(m_provider);
+    m_model = new BetHistoryModel(this);
+
+    // Live betting plumbing (inactive until enabled in Options).
+    m_cookie = new CookieTransport(this);
+    m_ext = new ExtensionTransport(this);
+    m_stake = new StakeClient(this);
+    m_stake->setTransport(m_cookie);
+    m_engine->setLiveClient(m_stake);
+    m_runClock = new QTimer(this);
+    m_runClock->setInterval(1000);
+    connect(m_runClock, &QTimer::timeout, this, &MainWindow::updateRunTime);
+
+    m_balanceTimer = new QTimer(this);
+    m_balanceTimer->setInterval(10000);
+    connect(m_balanceTimer, &QTimer::timeout, this, &MainWindow::onBalanceTimer);
+    connect(m_stake, &StakeClient::balancesReady, this, &MainWindow::onBalancesReady);
+    connect(m_stake, &StakeClient::balancesFailed, this, &MainWindow::onBalancesFailed);
+	connect(m_stake, &StakeClient::sessionLost, this, [this](const QString &reason) {
+        if (m_isLoggedIn) {
+            m_isLoggedIn = false;
+            updateConnectionStatus();
+            onLogMessage(tr("Session connection lost: %1").arg(reason), true);
+        }
+    });
+    connect(m_stake, &StakeClient::seedRotated, this,
+            [this](const QString &clientSeed, qint64 nonce, const QString &hash,
+                   const QString &nextHash) {
+        m_rotatingSeed = false;
+        m_actRotate->setEnabled(true);
+        onLogMessage(tr("Seed pair rotated — client seed: %1, nonce: %2, server seed hash: %3%4")
+                         .arg(clientSeed)
+                         .arg(nonce)
+                         .arg(hash,
+                              nextHash.isEmpty() ? QString() : tr(", next hash: %1").arg(nextHash)),
+                     false);
+        m_engine->seedRotationFinished();
+        if (m_afterSeedRotation) { // manual / auto bet waiting for its client seed
+            const auto next = std::move(m_afterSeedRotation);
+            m_afterSeedRotation = nullptr;
+            next();
+        }
+    });
+    connect(m_stake, &StakeClient::seedRotateFailed, this, [this](const QString &error) {
+        m_rotatingSeed = false;
+        m_actRotate->setEnabled(true);
+        onLogMessage(tr("Seed rotation failed: %1").arg(error), true);
+        m_engine->seedRotationFinished(false);
+        if (m_afterSeedRotation) {
+            m_afterSeedRotation = nullptr;
+            onLogMessage(tr("Not betting: the client seed could not be set."), true);
+        }
+    });
+    connect(m_ext, &IStakeTransport::readyChanged, this, &MainWindow::onExtensionReadyChanged);
+    connect(m_ext, &ExtensionTransport::originRejected, this, [this](const QString &origin) {
+        onLogMessage(tr("Rejected a connection to the extension port from origin \"%1\". Allowed: "
+                        "browser extensions and https://%2 — set Site/mirror in Options if your "
+                        "extension runs on another domain.")
+                         .arg(origin, m_live.site),
+                     true);
+    });
+
+    createActions();
+    createMenus();
+    createSidebar();
+    createCentralWidget();
+    createToolbar();
+    createStatusBar();
+    createLogDock();
+    createLuaDock();
+
+    // ---- Engine wiring
+    connect(m_engine, &BotEngine::started, this, &MainWindow::onEngineStarted);
+    connect(m_engine, &BotEngine::stopped, this, &MainWindow::onEngineStopped);
+    connect(m_engine, &BotEngine::pausedChanged, this, &MainWindow::onPausedChanged);
+    connect(m_engine, &BotEngine::betPlaced, this, &MainWindow::onBetPlaced);
+    connect(m_engine, &BotEngine::logMessage, this, &MainWindow::onLogMessage);
+    connect(m_engine, &BotEngine::scriptOutput, this, [this](const QString &msg, bool isError) {
+        if (m_luaDock)
+            m_luaDock->appendConsole(msg, isError);
+    });
+    connect(m_engine, &BotEngine::gameChanged, this, [this](Game game) { setGame(game); });
+    // resetstats() / resetseed() called from a Lua / JavaScript strategy
+    connect(m_engine, &BotEngine::statsReset, this, [this] {
+        refreshAfterStatsReset();
+        onLogMessage(tr("Session statistics reset by script"), false);
+    });
+    connect(m_engine, &BotEngine::seedRotationRequested, this,
+            [this](const QString &clientSeed) { rotateSeed(true, clientSeed); });
+    connect(m_engine, &BotEngine::scriptError, this, [this](const QString &msg) {
+        if (m_luaDock)
+            m_luaDock->setStatus(msg, true);
+    });
+
+    connect(m_manualPanel, &ManualBetPanel::rollRequested, this, &MainWindow::onRollOnce);
+    connect(m_autoPanel, &AutoBetPanel::startRequested, this, &MainWindow::onStartAuto);
+    connect(m_autoPanel, &AutoBetPanel::stopRequested, this, &MainWindow::onStopAuto);
+    connect(m_fairPanel, &FairPanel::seedRotated, this,
+            [this](const QString &msg) { onLogMessage(msg, false); });
+
+    // Default size for a first launch; loadSettings() replaces it with the
+    // geometry from the previous session when one was saved.
+    resize(1040, 560);
+
+    loadSettings();
+	applyLiveSettings(m_live);
+    updateModeWidgets();
+    updateSessionWidgets();
+    updateStatusWidgets();
+
+    /*onLogMessage(tr("Ready. Balance %1 %2 — press Roll Dice or start auto-bet.")
+                     .arg(formatAmount(m_startBalance))
+                     .arg(m_currencyTag),
+                 false);*/
+}
+
+MainWindow::~MainWindow()
+{
+    delete m_provider;
+}
+
+// ---------------------------------------------------------------- creation
+
+void MainWindow::createActions()
+{
+    m_actRollOnce = new QAction(QIcon(QStringLiteral(":/icons/list-add.svg")), tr("Roll once"), this);
+    m_actRollOnce->setToolTip(tr("Roll once (manual bet)"));
+    m_actRollOnce->setShortcut(QKeySequence(Qt::Key_Return));
+    connect(m_actRollOnce, &QAction::triggered, this, &MainWindow::onRollOnce);
+
+    m_actClear = new QAction(QIcon(QStringLiteral(":/icons/list-remove.svg")), tr("Clear history"), this);
+    connect(m_actClear, &QAction::triggered, this, &MainWindow::onClearHistory);
+
+    m_actStart = new QAction(QIcon(QStringLiteral(":/icons/torrent-start.svg")), tr("Start auto-bet"), this);
+    m_actStart->setShortcut(QKeySequence(Qt::Key_F5));
+    connect(m_actStart, &QAction::triggered, this, &MainWindow::onStartAuto);
+
+    m_actStop = new QAction(QIcon(QStringLiteral(":/icons/torrent-stop.svg")), tr("Stop auto-bet"), this);
+    m_actStop->setShortcut(QKeySequence(Qt::Key_F8));
+    m_actStop->setEnabled(false);
+    connect(m_actStop, &QAction::triggered, this, &MainWindow::onStopAuto);
+
+    m_actPause = new QAction(QIcon(QStringLiteral(":/icons/pause-session.svg")), tr("Pause auto-bet"), this);
+    m_actPause->setShortcut(QKeySequence(Qt::Key_F6));
+    m_actPause->setToolTip(tr("Pause auto-bet (F6)"));
+    m_actPause->setEnabled(false);
+    connect(m_actPause, &QAction::triggered, this, &MainWindow::onPauseAuto);
+
+    m_actRotate = new QAction(QIcon(QStringLiteral(":/icons/security-high.svg")), tr("Rotate seed"), this);
+    connect(m_actRotate, &QAction::triggered, this, &MainWindow::onRotateSeed);
+
+    m_actStats = new QAction(QIcon(QStringLiteral(":/icons/view-statistics.svg")), tr("Statistics"), this);
+    connect(m_actStats, &QAction::triggered, this, &MainWindow::onSwitchToChart);
+
+    // Toolbar placement matters: this replaces the old "Clear history" button
+    // and keeps its list-remove icon.
+    m_actReset = new QAction(QIcon(QStringLiteral(":/icons/list-remove.svg")), tr("Reset session"), this);
+    connect(m_actReset, &QAction::triggered, this, &MainWindow::onResetSession);
+
+    m_actOptions = new QAction(QIcon(QStringLiteral(":/icons/configure.svg")), tr("Options"), this);
+    connect(m_actOptions, &QAction::triggered, this, &MainWindow::onOpenOptions);
+
+    // "+" toolbar button: pick any file.
+    m_actOpenFile = new QAction(QIcon(QStringLiteral(":/icons/list-add.svg")), tr("Select file..."), this);
+    m_actOpenFile->setToolTip(tr("Select a file"));
+    connect(m_actOpenFile, &QAction::triggered, this, &MainWindow::onOpenFile);
+
+    // Condition builder button, next to Options.
+    QIcon prefIcon;
+    if (QFile::exists(QStringLiteral(":/icons/preferences-desktop.svg")))
+        prefIcon = QIcon(QStringLiteral(":/icons/preferences-desktop.svg"));
+    else
+        prefIcon = QIcon::fromTheme(QStringLiteral("preferences-desktop"));
+    m_actConditions = new QAction(prefIcon, tr("Condition builder"), this);
+    m_actConditions->setToolTip(tr("Condition builder"));
+    connect(m_actConditions, &QAction::triggered, this, &MainWindow::onOpenConditionBuilder);
+
+    // "#" button: shows / hides the dockable strategy editor (Lua / JavaScript).
+    m_actLua = new QAction(makeTextIcon(QStringLiteral("#"), QColor("#1e90ff")),
+                           tr("Strategy editor (Lua / JavaScript)"), this);
+    m_actLua->setToolTip(tr("Strategy editor (Lua / JavaScript)"));
+    m_actLua->setCheckable(true);
+    connect(m_actLua, &QAction::toggled, this, [this](bool visible) {
+        if (m_luaDock)
+            m_luaDock->setVisible(visible);
+    });
+
+    m_actDarkTheme = new QAction(tr("Dark theme"), this);
+    m_actDarkTheme->setCheckable(true);
+    connect(m_actDarkTheme, &QAction::toggled, this, &MainWindow::onToggleDarkTheme);
+
+    m_actShowLog = new QAction(tr("Show log"), this);
+    m_actShowLog->setCheckable(true);
+    connect(m_actShowLog, &QAction::toggled, this, [this](bool visible) {
+        if (m_logDock)
+            m_logDock->setVisible(visible);
+    });
+
+    // Panel toggles (View menu). The panels themselves are created later, so
+    // the actions look the widget up through the member pointer when toggled.
+    m_actShowSidebar = new QAction(tr("Show sidebar"), this);
+    m_actShowSidebar->setCheckable(true);
+    m_actShowSidebar->setChecked(true);
+    connect(m_actShowSidebar, &QAction::toggled, this, [this](bool visible) {
+        if (m_sidebar)
+            m_sidebar->setVisible(visible);
+    });
+
+    m_actShowBetList = new QAction(tr("Show bet list"), this);
+    m_actShowBetList->setCheckable(true);
+    m_actShowBetList->setChecked(true);
+    connect(m_actShowBetList, &QAction::toggled, this, [this](bool visible) {
+        if (m_betTable)
+            m_betTable->setVisible(visible);
+    });
+
+    m_actShowTabs = new QAction(tr("Show bottom panel"), this);
+    m_actShowTabs->setCheckable(true);
+    m_actShowTabs->setChecked(true);
+    connect(m_actShowTabs, &QAction::toggled, this, [this](bool visible) {
+        if (!m_tabs)
+            return;
+        m_tabs->parentWidget()->setVisible(visible); // the holder around the tabs
+        if (visible) // re-fit the pane to the current tab's content height
+            QTimer::singleShot(0, this, [this] { onTabChanged(m_tabs->currentIndex()); });
+    });
+}
+
+void MainWindow::createMenus()
+{
+    QMenu *fileMenu = menuBar()->addMenu(tr("&File"));
+    fileMenu->addAction(tr("E&xit"), qApp, &QApplication::closeAllWindows);
+
+    QMenu *gameMenu = menuBar()->addMenu(tr("&Game"));
+    m_gameGroup = new QActionGroup(this);
+    m_gameGroup->setExclusive(true);
+    m_actGameDice = gameMenu->addAction(tr("&Dice"));
+    m_actGameLimbo = gameMenu->addAction(tr("&Limbo"));
+    for (QAction *a : {m_actGameDice, m_actGameLimbo}) {
+        a->setCheckable(true);
+        m_gameGroup->addAction(a);
+    }
+    m_actGameDice->setChecked(true);
+    connect(m_actGameDice, &QAction::triggered, this, [this] { onGameSelected(Game::Dice); });
+    connect(m_actGameLimbo, &QAction::triggered, this, [this] { onGameSelected(Game::Limbo); });
+
+    QMenu *viewMenu = menuBar()->addMenu(tr("&View"));
+    viewMenu->addAction(m_actShowSidebar);
+    viewMenu->addAction(m_actShowBetList);
+    viewMenu->addAction(m_actShowTabs);
+    viewMenu->addAction(m_actShowLog);
+    viewMenu->addAction(m_actLua);
+    viewMenu->addSeparator();
+    viewMenu->addAction(m_actDarkTheme);
+
+    QMenu *botMenu = menuBar()->addMenu(tr("&Bot"));
+    botMenu->addAction(m_actStart);
+    botMenu->addAction(m_actPause);
+    botMenu->addAction(m_actStop);
+    botMenu->addSeparator();
+    botMenu->addAction(m_actRollOnce);
+    botMenu->addAction(m_actReset);
+    botMenu->addAction(m_actClear);
+    botMenu->addSeparator();
+    botMenu->addAction(m_actRotate);
+
+    QMenu *toolsMenu = menuBar()->addMenu(tr("&Tools"));
+    toolsMenu->addAction(m_actStats);
+    toolsMenu->addAction(m_actOptions);
+    toolsMenu->addAction(m_actConditions);
+
+    QMenu *helpMenu = menuBar()->addMenu(tr("&Help"));
+    helpMenu->addAction(tr("&About"), this, &MainWindow::onAbout);
+}
+
+void MainWindow::createToolbar()
+{
+    auto *toolbar = addToolBar(QString());
+    toolbar->setObjectName(QStringLiteral("mainToolBar"));
+    toolbar->setMovable(false);
+    toolbar->setIconSize(QSize(24, 24));
+    toolbar->setToolButtonStyle(Qt::ToolButtonIconOnly);
+
+    toolbar->addAction(m_actOpenFile);
+    toolbar->addAction(m_actReset);
+    toolbar->addSeparator();
+    toolbar->addAction(m_actStart);
+    toolbar->addAction(m_actPause);
+    toolbar->addAction(m_actStop);
+    toolbar->addSeparator();
+    toolbar->addAction(m_actRotate);
+    toolbar->addAction(m_actStats);
+    toolbar->addAction(m_actOptions);
+    toolbar->addAction(m_actConditions);
+    toolbar->addAction(m_actLua);
+    toolbar->addSeparator();
+
+    // Filter box on the right, like the reference toolbar.
+    auto *filterBox = new QWidget;
+    auto *filterLayout = new QHBoxLayout(filterBox);
+    filterLayout->setContentsMargins(0, 0, 2, 0);
+    filterLayout->setSpacing(2);
+	
+    auto *findIcon = new QLabel;
+    findIcon->setPixmap(QIcon(QStringLiteral(":/icons/edit-find.svg")).pixmap(14, 14));
+    m_searchEdit = new QLineEdit;
+    m_searchEdit->setPlaceholderText(tr("Filter by nonce or roll..."));
+    m_searchEdit->setFixedWidth(220);
+    m_searchEdit->setClearButtonEnabled(true);
+	
+	m_searchEdit->addAction(QIcon(QStringLiteral(":/icons/edit-find.svg")),
+                            QLineEdit::LeadingPosition);
+
+	
+    connect(m_searchEdit, &QLineEdit::textChanged, this, &MainWindow::onSearchEdited);
+    //filterLayout->addWidget(findIcon);
+    filterLayout->addWidget(m_searchEdit);
+    toolbar->addWidget(filterBox);
+}
+
+void MainWindow::createSidebar()
+{
+    // The sidebar content keeps its natural height. The scroll area around it
+    // only clips, so when the Log dock shrinks the central area the SESSION
+    // rows are covered from the bottom instead of being squeezed together.
+    auto *sidebarContent = new QWidget;
+    auto *scroll = new QScrollArea;
+    scroll->setFrameShape(QFrame::NoFrame);
+    scroll->setWidgetResizable(true);
+    scroll->setHorizontalScrollBarPolicy(Qt::ScrollBarAlwaysOff);
+    scroll->setVerticalScrollBarPolicy(Qt::ScrollBarAlwaysOff);
+    scroll->setWidget(sidebarContent);
+    scroll->setMinimumHeight(0);
+    scroll->setSizePolicy(QSizePolicy::Fixed, QSizePolicy::Ignored);
+    m_sidebar = scroll;
+    m_sidebar->setFixedWidth(210);
+    auto *layout = new QVBoxLayout(sidebarContent);
+    layout->setContentsMargins(0, 0, 0, 0);
+    layout->setSpacing(0);
+
+    auto makeHeader = [](const QString &text) {
+        auto *label = new QPushButton(text);
+        label->setObjectName(QStringLiteral("sectionHeader"));
+        label->setEnabled(false);
+        return label;
+    };
+
+    layout->addWidget(makeHeader(tr("STATUS")));
+
+    const QList<QPair<QString, QString>> filterDefs = {
+        {tr("All"), QStringLiteral(":/icons/filter-all.svg")},
+        {tr("Wins"), QStringLiteral(":/icons/checked-completed.svg")},
+        {tr("Losses"), QStringLiteral(":/icons/error.svg")},
+        {tr("Big wins (10x+)"), QStringLiteral(":/icons/filter-active.svg")},
+    };
+
+    auto *group = new QButtonGroup(this);
+    group->setExclusive(true);
+    for (int row = 0; row < filterDefs.size(); ++row) {
+        auto *btn = new QPushButton(QStringLiteral("%1 (0)").arg(filterDefs.at(row).first));
+        btn->setCheckable(true);
+        btn->setIcon(QIcon(filterDefs.at(row).second));
+        btn->setIconSize(QSize(16, 16));
+        btn->setFlat(true);
+        btn->setObjectName(QStringLiteral("filterBtn"));
+        btn->setProperty("filterRow", row);
+        btn->setProperty("baseLabel", filterDefs.at(row).first);
+        btn->setToolTip(tr("Filter the bet list"));
+        if (row == 0)
+            btn->setChecked(true);
+        group->addButton(btn, row);
+        layout->addWidget(btn);
+    }
+    connect(group, &QButtonGroup::idClicked, this, [this](int id) {
+        m_model->setFilter(static_cast<BetHistoryModel::Filter>(id));
+    });
+
+    // The reference app puts a small gap between the filter list and SESSION.
+    layout->addSpacing(6);
+    layout->addWidget(makeHeader(tr("SESSION")));
+
+    auto *sessionGrid = new QGridLayout;
+    sessionGrid->setContentsMargins(8, 6, 8, 6);
+    sessionGrid->setHorizontalSpacing(8);
+    sessionGrid->setVerticalSpacing(4);
+    QFont mono(QStringLiteral("Consolas"));
+    mono.setStyleHint(QFont::Monospace);
+    mono.setPointSizeF(8.5);
+    auto makeSessionRow = [&](const QString &name, QLabel **value, int r) {
+        auto *nameLabel = new QLabel(name);
+        nameLabel->setStyleSheet(QStringLiteral("color:#737373;"));
+        *value = new QLabel(QStringLiteral("—"));
+        (*value)->setAlignment(Qt::AlignRight | Qt::AlignVCenter);
+        (*value)->setFont(mono);
+        // Label and value share one cell. The label sits on the left; the value is only
+        // as wide as its own text and is right-aligned, so a short value leaves the label
+        // visible, while a long value grows to the left and covers part of the label
+        // (it is created after the label, so it is drawn on top and has an opaque
+        // background).
+        (*value)->setSizePolicy(QSizePolicy::Ignored, QSizePolicy::Preferred);
+        (*value)->setAutoFillBackground(true);
+        auto *rowGrid = new QGridLayout;
+        rowGrid->setContentsMargins(0, 0, 0, 0);
+        rowGrid->addWidget(nameLabel, 0, 0, Qt::AlignLeft | Qt::AlignVCenter);
+        rowGrid->addWidget(*value, 0, 0, Qt::AlignRight | Qt::AlignVCenter);
+        sessionGrid->addLayout(rowGrid, r, 0, 1, 2);
+    };
+    makeSessionRow(tr("Balance"), &m_lblBalance, 0);
+    makeSessionRow(tr("Profit"), &m_lblProfit, 1);
+    makeSessionRow(tr("Wager"), &m_lblWagered, 2);
+    makeSessionRow(tr("Win rate"), &m_lblWinRate, 3);
+    makeSessionRow(tr("Highest bet"), &m_lblHighestBet, 4);
+    makeSessionRow(tr("H profit"), &m_lblHighestProfit, 5);
+    makeSessionRow(tr("L profit"), &m_lblLowestProfit, 6);
+    makeSessionRow(tr("Highest streak"), &m_lblHighestStreak, 7);
+    makeSessionRow(tr("Lowest streak"), &m_lblLowestStreak, 8);
+    makeSessionRow(tr("Current streak"), &m_lblCurrentStreak, 9);
+    makeSessionRow(tr("Running time"), &m_lblRunTime, 10);
+    m_lblRunTime->setText(QStringLiteral("00:00:00"));
+    sessionGrid->setColumnStretch(1, 1);
+    layout->addLayout(sessionGrid);
+    layout->addStretch();
+}
+
+void MainWindow::createCentralWidget()
+{
+    // ---- Bet table ------------------------------------------------------
+    m_betTable = new QTableView;
+    m_betTable->setModel(m_model);
+    m_betTable->setSelectionBehavior(QAbstractItemView::SelectRows);
+    m_betTable->setSelectionMode(QAbstractItemView::SingleSelection);
+    m_betTable->setAlternatingRowColors(true);
+    m_betTable->verticalHeader()->setVisible(false);
+    m_betTable->verticalHeader()->setDefaultSectionSize(20);
+    m_betTable->horizontalHeader()->setStretchLastSection(false);
+    m_betTable->horizontalHeader()->setSectionResizeMode(QHeaderView::Interactive);
+    m_betTable->setEditTriggers(QAbstractItemView::NoEditTriggers);
+    m_betTable->setShowGrid(false);
+    m_betTable->setSortingEnabled(false);
+
+    QFont mono(QStringLiteral("Consolas"));
+    mono.setStyleHint(QFont::Monospace);
+    mono.setPointSizeF(8.5);
+    m_betTable->setFont(mono);
+    m_betTable->horizontalHeader()->setFont(QFont(QStringLiteral("Segoe UI"), 8));
+
+    // Bet ID column: left-click "View" resolves the iid, right-click on any row
+    // opens the copy / open-in-browser menu (same behaviour as the C# bot).
+    m_betTable->setContextMenuPolicy(Qt::CustomContextMenu);
+    connect(m_betTable, &QTableView::clicked, this, &MainWindow::onBetTableClicked);
+    connect(m_betTable, &QWidget::customContextMenuRequested, this,
+            &MainWindow::onBetTableContextMenu);
+
+    // Game, #, Nonce, Time, Amount, Target, Roll, Multiplier, Payout, Profit, Bet ID
+    const int widths[] = {56, 44, 64, 76, 90, 76, 64, 80, 90, 96, 64};
+    for (int c = 0; c < BetHistoryModel::ColumnCount; ++c)
+        m_betTable->setColumnWidth(c, widths[c]);
+
+    // Empty-state hint shown when the bet list has no rows (like the reference).
+    m_emptyLabel = new QLabel(
+        tr("No bets yet — press the + button or Roll Dice below."), m_betTable);
+    m_emptyLabel->setAlignment(Qt::AlignCenter);
+    m_emptyLabel->setStyleSheet(QStringLiteral("color:#737373;"));
+    m_emptyLabel->setAttribute(Qt::WA_TransparentForMouseEvents);
+    m_betTable->viewport()->installEventFilter(this);
+    connect(m_model, &QAbstractItemModel::modelReset, this, &MainWindow::updateEmptyState);
+    connect(m_model, &QAbstractItemModel::rowsInserted, this, &MainWindow::updateEmptyState);
+    connect(m_model, &QAbstractItemModel::rowsRemoved, this, &MainWindow::updateEmptyState);
+    updateEmptyState();
+
+    // ---- Auto-scroll control --------------------------------------------
+    // Newest bets are inserted at row 0. While the user is following the top,
+    // the view stays at the top. As soon as they scroll or click a row, the
+    // view is held in place (scroll value is shifted by the inserted rows so
+    // the same bets stay on screen). Scrolling back to the top resumes it.
+    QScrollBar *vsb = m_betTable->verticalScrollBar();
+    vsb->installEventFilter(this);
+    connect(vsb, &QScrollBar::actionTriggered, this, [this](int) {
+        // actionTriggered fires only for user-driven scrolling (drag, arrows, page).
+        m_betFollow = false;
+        QTimer::singleShot(0, this, [this] {
+            if (m_betTable->verticalScrollBar()->value() == 0)
+                m_betFollow = true;
+        });
+    });
+    connect(m_model, &QAbstractItemModel::modelReset, this, [this] { m_betFollow = true; });
+    connect(m_model, &QAbstractItemModel::rowsInserted, this,
+            [this](const QModelIndex &, int first, int last) {
+        if (first != 0 || m_betFollow)
+            return;
+        QScrollBar *sb = m_betTable->verticalScrollBar();
+        if (sb->isSliderDown())
+            return; // the user is dragging the thumb: don't fight them
+        const int count = last - first + 1;
+        m_betTable->doItemsLayout();            // refresh the scrollbar range first
+        sb->setValue(sb->value() + count);      // keep the same rows on screen
+    });
+
+    // ---- Bottom panel with folder-style tabs ----------------------------
+    m_tabs = new QTabWidget;
+    m_tabs->setTabPosition(QTabWidget::South);
+    m_tabs->setDocumentMode(true);
+	
+	m_tabs->setSizePolicy(QSizePolicy::Preferred, QSizePolicy::Ignored);
+	
+    m_manualPanel = new ManualBetPanel;
+    m_autoPanel = new AutoBetPanel;
+
+    auto *chartTab = new QWidget;
+    auto *chartLayout = new QVBoxLayout(chartTab);
+    chartLayout->setContentsMargins(12, 12, 12, 12);
+    chartLayout->setSpacing(6);
+    auto *chartHeader = new QHBoxLayout;
+    QFont monoBold = mono;
+    monoBold.setBold(true);
+    m_chartMax = new QLabel(tr("Max: —"));
+    m_chartMin = new QLabel(tr("Min: —"));
+    m_chartNow = new QLabel(tr("Now: —"));
+    for (QLabel *label : {m_chartMax, m_chartMin, m_chartNow}) {
+        label->setFont(monoBold);
+        chartHeader->addWidget(label);
+    }
+    chartHeader->addStretch();
+    chartLayout->addLayout(chartHeader);
+    m_graph = new BalanceGraphWidget;
+    chartLayout->addWidget(m_graph);
+
+    m_fairPanel = new FairPanel(m_provider);
+
+    m_tabs->addTab(m_manualPanel, QIcon(QStringLiteral(":/icons/list-add.svg")), tr("Manual Bet"));
+    m_tabs->addTab(m_autoPanel, QIcon(QStringLiteral(":/icons/torrent-start-forced.svg")), tr("Auto Bet"));
+    m_tabs->addTab(chartTab, QIcon(QStringLiteral(":/icons/view-statistics.svg")), tr("Profit Chart"));
+    m_tabs->addTab(m_fairPanel, QIcon(QStringLiteral(":/icons/security-high.svg")), tr("Provably Fair"));
+    for (int i = 0; i < m_tabs->count(); ++i)
+        m_tabs->widget(i)->installEventFilter(this);
+
+    // Latest log line at the right end of the tab strip.
+    m_logLineLabel = new QLabel(tr("Ready"));
+    m_logLineLabel->setStyleSheet(QStringLiteral("color:#737373; padding-right: 8px;"));
+    m_tabs->setCornerWidget(m_logLineLabel, Qt::BottomRightCorner);
+
+    // Expand the bottom panel to full content height when a form-heavy tab
+    // (Provably Fair / Auto Bet) becomes current, so nothing is clipped.
+    connect(m_tabs, &QTabWidget::currentChanged, this, &MainWindow::onTabChanged);
+    // Re-clicking the already-selected tab re-fits the panel too.
+    connect(m_tabs, &QTabWidget::tabBarClicked, this, &MainWindow::onTabChanged);
+
+    m_mainSplitter = new QSplitter(Qt::Vertical);
+    m_mainSplitter->setObjectName(QStringLiteral("mainSplitter"));
+    m_mainSplitter->addWidget(m_betTable);
+    // The tabs live in a holder so they keep their width (and are clipped) when
+    // the Lua dock is widened over them, rather than being resized.
+    auto *tabsHolder = new FixedWidthHolder(m_tabs);
+    // The Profit Chart is the exception: instead of being covered, it follows the
+    // visible width, so the whole graph stays in view while the editor dock is resized.
+    tabsHolder->setVisibleWidthCallback([this, chartTab](int visibleW) {
+        const int left = chartTab->parentWidget()
+                             ? chartTab->mapTo(m_tabs, QPoint(0, 0)).x()
+                             : 0;
+        chartTab->setMaximumWidth(std::max(1, visibleW - left - 1));
+    });
+    m_mainSplitter->addWidget(tabsHolder);
+    m_mainSplitter->setStretchFactor(0, 1); // 1 = Table takes all extra window space
+    m_mainSplitter->setStretchFactor(1, 0); // 0 = Tabs stay at the exact size you dragged
+    m_mainSplitter->setSizes({600, 200});
+
+    auto *right = new QWidget;
+    auto *rightLayout = new QVBoxLayout(right);
+    rightLayout->setContentsMargins(0, 0, 0, 0);
+    rightLayout->setSpacing(0);
+    rightLayout->addWidget(m_mainSplitter);
+
+    m_centralSplitter = new QSplitter(Qt::Horizontal);
+    m_centralSplitter->setObjectName(QStringLiteral("centralSplitter"));
+    m_centralSplitter->setChildrenCollapsible(false);
+    m_centralSplitter->addWidget(m_sidebar);
+    m_centralSplitter->addWidget(right);
+    m_centralSplitter->setStretchFactor(0, 0);
+    m_centralSplitter->setStretchFactor(1, 1);
+    m_centralSplitter->setSizes({192, 1000});
+    // Ignored = the central area reports no minimum size, so a docked panel (the
+    // Lua editor) can be widened over the bet list / bottom tabs and covers them
+    // instead of being stopped by their minimum widths.
+    m_centralSplitter->setSizePolicy(QSizePolicy::Ignored, QSizePolicy::Ignored);
+    setCentralWidget(m_centralSplitter);
+	m_centralSplitter->setMinimumHeight(1);
+}
+
+void MainWindow::createStatusBar()
+{
+    //m_statusStateIcon = new QLabel;
+    //m_statusStateIcon->setPixmap(QIcon(QStringLiteral(":/icons/filter-inactive.svg")).pixmap(14, 14));
+    //m_statusStateText = new QLabel(tr("Idle"));
+
+	m_statusStateIcon = new QLabel;
+    m_statusStateIcon->setFixedSize(12, 12);
+	m_statusStateText = new QLabel(tr("Disconnected"));
+	
+    m_statusBets = new QLabel(tr("Bets: 0"));
+    m_statusWagered = new QLabel(tr("Wagered: 0.00"));
+    m_statusPl = new QLabel(tr("P/L: +0.0000"));
+    m_statusSpeed = new QLabel;
+
+    auto *balanceIcon = new QLabel;
+    balanceIcon->setPixmap(QIcon(QStringLiteral(":/icons/network-server.svg")).pixmap(14, 14));
+    m_statusBalance = new QLabel;
+    QFont bold = m_statusBalance->font();
+    bold.setBold(true);
+    m_statusBalance->setFont(bold);
+
+    statusBar()->addWidget(m_statusStateIcon);
+    statusBar()->addWidget(m_statusStateText);
+    statusBar()->addPermanentWidget(m_statusBets);
+    statusBar()->addPermanentWidget(m_statusWagered);
+    statusBar()->addPermanentWidget(m_statusPl);
+    statusBar()->addPermanentWidget(m_statusSpeed);
+    m_statusMode = new QLabel;
+    statusBar()->addPermanentWidget(m_statusMode);
+    statusBar()->addPermanentWidget(balanceIcon);
+    statusBar()->addPermanentWidget(m_statusBalance);
+}
+
+void MainWindow::createLogDock()
+{
+    m_logWidget = new LogWidget;
+    m_logDock = new QDockWidget(tr("Log"), this);
+    m_logDock->setObjectName(QStringLiteral("logDock"));
+    m_logDock->setWidget(m_logWidget);
+    addDockWidget(Qt::BottomDockWidgetArea, m_logDock);
+    
+    // ADD THIS BLOCK:
+    connect(m_logDock, &QDockWidget::visibilityChanged, this, [this](bool visible) {
+        // Keep the View menu check in sync when the dock is closed via its X.
+        if (m_actShowLog && m_actShowLog->isChecked() != visible) {
+            const QSignalBlocker blocker(m_actShowLog);
+            m_actShowLog->setChecked(visible);
+        }
+        if (visible && m_logWidget) {
+            // Use a 0ms timer so the layout finishes resizing before we scroll
+            QTimer::singleShot(0, m_logWidget, &QTableWidget::scrollToBottom);
+        }
+    });
+    resizeDocks({m_logDock}, {100}, Qt::Vertical);
+    m_logDock->hide();
+}
+
+void MainWindow::createLuaDock()
+{
+    // The right dock area owns the corners: the script editor runs the full window
+    // height, above the bottom (Log) dock instead of being cut short by it.
+    setCorner(Qt::TopRightCorner, Qt::RightDockWidgetArea);
+    setCorner(Qt::BottomRightCorner, Qt::RightDockWidgetArea);
+
+    m_luaDock = new LuaEditorDock(this);
+    addDockWidget(Qt::RightDockWidgetArea, m_luaDock);
+    resizeDocks({m_luaDock}, {300}, Qt::Horizontal);
+    m_luaDock->hide();
+
+    connect(m_luaDock, &LuaEditorDock::runRequested, this, &MainWindow::onRunScript);
+    connect(m_luaDock, &LuaEditorDock::stopRequested, this, &MainWindow::onStopAuto);
+
+    // Keep the "#" button in sync when the dock is closed with its X button.
+    connect(m_luaDock, &QDockWidget::visibilityChanged, this, [this](bool visible) {
+        if (m_actLua && m_actLua->isChecked() != visible) {
+            const QSignalBlocker blocker(m_actLua);
+            m_actLua->setChecked(visible);
+        }
+    });
+}
+
+// ---------------------------------------------------------------- actions
+
+void MainWindow::updateWindowTitle()
+{
+    setWindowTitle(tr("xBot - %1").arg(gameName(m_game)));
+}
+
+void MainWindow::setGame(Game game)
+{
+    m_game = game;
+    {
+        const QSignalBlocker blocker(m_gameGroup);
+        (game == Game::Limbo ? m_actGameLimbo : m_actGameDice)->setChecked(true);
+    }
+    if (m_manualPanel)
+        m_manualPanel->setGame(game);
+    if (m_fairPanel)
+        m_fairPanel->setGame(game); // Limbo: verify shows the multiplier
+    updateWindowTitle();
+}
+
+void MainWindow::onGameSelected(Game game)
+{
+    if (m_engine->isRunning()) {
+        // The running bot (or its script) decides the game; undo the click.
+        (m_game == Game::Limbo ? m_actGameLimbo : m_actGameDice)->setChecked(true);
+        onLogMessage(tr("Stop the running auto-bet before changing the game."), true);
+        return;
+    }
+    setGame(game);
+}
+
+void MainWindow::onRollOnce()
+{
+    if (m_engine->isRunning())
+        return;
+    const auto roll = [this] {
+        BotConfig cfg = currentConfig();
+        cfg.baseBet = m_manualPanel->amount();
+        m_engine->rollOnce(cfg);
+    };
+    // The client seed is set once before the first manual bet (not before every roll).
+    if (m_clientSeedPending)
+        applyClientSeed(roll);
+    else
+        roll();
+}
+
+void MainWindow::applyClientSeed(const std::function<void()> &then)
+{
+    const QString typed = m_clientSeed.trimmed();
+    if (!m_randomClientSeed && typed.isEmpty()) {
+        m_clientSeedPending = false;
+        then(); // no client seed configured: leave the seed pair alone
+        return;
+    }
+    if (m_rotatingSeed) {
+        onLogMessage(tr("A seed rotation is already under way - try again in a moment."), true);
+        return;
+    }
+    const QString seed = m_randomClientSeed ? StakeClient::randomClientSeed(10) : typed;
+
+    if (m_engine->liveMode()) {
+        if (m_engine->betInFlight()) {
+            onLogMessage(tr("Wait for the current bet to finish."), true);
+            return;
+        }
+        m_clientSeedPending = false;
+        m_rotatingSeed = true;
+        m_actRotate->setEnabled(false);
+        m_afterSeedRotation = then;
+        onLogMessage(tr("Setting client seed %1…").arg(seed), false);
+        m_stake->rotateSeedPair(seed); // answer: seedRotated / seedRotateFailed
+        return;
+    }
+
+    m_clientSeedPending = false;
+    m_fairPanel->onRotate();
+    m_provider->setClientSeed(seed);
+    m_fairPanel->refresh();
+    onLogMessage(tr("Client seed set: %1").arg(seed), false);
+    then();
+}
+
+void MainWindow::onStartAuto()
+{
+    if (m_engine->isRunning())
+        return;
+    // The configured client seed (Options -> Game) is set first; strategies started
+    // with the script editor's Run button never go through here.
+    applyClientSeed([this] {
+        const BotConfig cfg = currentConfig();
+
+        m_engine->setConfig(cfg);
+        m_engine->setConditions(m_conditions);
+        m_engine->setScript(QString()); // the normal Start button never runs a script
+        m_luaRunning = false;
+        m_engine->start();
+    });
+}
+
+// Run button of the strategy editor: same as Start, but the Lua / JavaScript script
+// drives the bets.
+void MainWindow::onRunScript(const QString &script, ScriptLanguage language)
+{
+    const QString lang = scriptLanguageName(language);
+    if (m_engine->isRunning()) {
+        onLogMessage(tr("Stop the running auto-bet before starting a %1 strategy.").arg(lang), true);
+        return;
+    }
+    if (script.trimmed().isEmpty()) {
+        onLogMessage(tr("The %1 script is empty.").arg(lang), true);
+        return;
+    }
+    // Script mode ignores the Manual / Auto Bet tabs and the condition blocks.
+    BotConfig luaCfg;
+    luaCfg.startBalance = m_startBalance;
+    luaCfg.game = m_game; // the script can override it with game = "dice" / "limbo"
+    m_engine->setConfig(luaCfg);
+    m_engine->setConditions(BlockList());
+    m_engine->setScript(script, language);
+    //m_luaDock->appendConsole(tr("— run started —"), false);
+    m_luaRunning = true;
+    m_engine->start();
+    m_luaRunning = m_engine->isRunning();
+    m_luaDock->setRunning(m_luaRunning);
+}
+
+void MainWindow::onStopAuto()
+{
+    m_engine->stop();
+}
+
+void MainWindow::onPauseAuto()
+{
+    if (!m_engine->isRunning())
+        return;
+    if (m_engine->isPaused())
+        m_engine->resume();
+    else
+        m_engine->pause();
+}
+
+void MainWindow::updateConnectionStatus()
+{
+    bool connected = false;
+    
+    // Must be live enabled, successfully logged in, and transport must be active
+    if (m_live.enabled && m_engine->liveMode() && m_isLoggedIn) {
+        QString why;
+        if (m_stake && m_stake->transport() && m_stake->transport()->isReady(&why)) {
+            connected = true;
+        }
+    }
+
+    if (connected) {
+        m_statusStateIcon->setStyleSheet(QStringLiteral("background-color: #2e9e46; border-radius: 6px;"));
+        m_statusStateText->setText(tr("Connected"));
+        m_statusStateText->setStyleSheet(QStringLiteral("color: #2e9e46; font-weight: bold;"));
+    } else {
+        m_statusStateIcon->setStyleSheet(QStringLiteral("background-color: #a8a8a8; border-radius: 6px;"));
+        m_statusStateText->setText(tr("Disconnected"));
+        m_statusStateText->setStyleSheet(QStringLiteral("color: #737373;"));
+    }
+}
+
+void MainWindow::onResetSession()
+{
+  
+    resetSessionState();
+    onLogMessage(tr("Session reset"), false);
+}
+
+void MainWindow::resetSessionState()
+{
+    m_model->clear();
+    // Live: keep the balance last reported by the server; simulation: start balance.
+    m_engine->resetSession(m_engine->liveMode() ? m_engine->stats().balance : m_startBalance);
+    m_fairPanel->refresh();
+    refreshAfterStatsReset();
+}
+
+// Everything that has to follow a statistics reset (the bet history is not touched here).
+void MainWindow::refreshAfterStatsReset()
+{
+    m_graph->clearSamples();
+
+    // Running time restarts from zero; keep ticking if auto-bet is active.
+    m_runAccumMs = 0;
+    if (m_engine->isRunning() && !m_engine->isPaused())
+        m_runElapsed.restart();
+    else
+        m_runElapsed.invalidate();
+    updateRunTime();
+    
+    // --- FIX: Reset speed properly ---
+    m_speedBetsAtWindowStart = 0;
+    m_betsPerSecond = 0.0;
+    if (m_engine->isRunning()) {
+        m_speedTimer.restart(); // Keep it running so it updates with new bets
+    } else {
+        m_speedTimer.invalidate();
+    }
+    // ---------------------------------
+
+    updateSessionWidgets();
+    updateStatusWidgets();
+    updateFilterCounts();
+    updateChartLabels();
+}
+
+void MainWindow::onClearHistory()
+{
+    m_model->clear();
+    onLogMessage(tr("Bet history cleared"), false);
+}
+
+void MainWindow::onRotateSeed()
+{
+    rotateSeed(false);
+}
+
+// fromScript: resetseed([clientSeed]) in a Lua / JavaScript strategy. Same rotation as
+// the toolbar button, but with the script's client seed (random 10 characters when it
+// gave none) and without switching to the Fairness tab on every call.
+void MainWindow::rotateSeed(bool fromScript, const QString &clientSeed)
+{
+    // Scripts bring their own client seed; the toolbar button uses Options -> Game
+    // (random when "Random client seed" is ticked, the typed seed otherwise).
+    QString seedToUse;
+    if (fromScript) {
+        seedToUse = clientSeed.trimmed();
+    } else {
+        seedToUse = m_randomClientSeed ? StakeClient::randomClientSeed(10) : m_clientSeed.trimmed();
+        if (!seedToUse.isEmpty())
+            m_clientSeedPending = false; // manual bets need not rotate again for it
+    }
+
+    if (m_engine->liveMode()) {
+        if (fromScript && m_rotatingSeed) {
+            // A rotation (toolbar button) is still under way: report a failure so the
+            // engine sends the script's request again in a moment.
+            QTimer::singleShot(0, this, [this] { m_engine->seedRotationFinished(false); });
+            return;
+        }
+        // Live: rotate the real seed pair through the GraphQL API. The client seed is the
+        // script's own (resetseed("...")) or, for the toolbar button, the one from
+        // Options -> Game; without any a random 10-character one is used.
+        //if (m_rotatingSeed)
+            //return;
+        //if (m_engine->betInFlight()) {
+           // onLogMessage(tr("A bet is in flight — try rotating the seed again in a moment."), true);
+            //return;
+        //}
+        m_rotatingSeed = true;
+        m_actRotate->setEnabled(false);
+        QString seed = seedToUse;
+        if (seed.isEmpty())
+            seed = StakeClient::randomClientSeed(10);
+        onLogMessage(tr("Rotating seed pair (new client seed: %1)…").arg(seed), false);
+        m_stake->rotateSeedPair(seed);
+        return;
+    }
+
+    // The Fair panel owns rotation so the revealed-seeds list stays in sync.
+    if (!fromScript)
+        m_tabs->setCurrentWidget(m_fairPanel);
+    m_fairPanel->onRotate();
+    // The server seed was rotated above; the client seed is the script's / the Options one.
+    if (!seedToUse.isEmpty())
+        m_provider->setClientSeed(seedToUse);
+    m_fairPanel->refresh();
+    if (fromScript)
+        onLogMessage(tr("Seed pair rotated by script (client seed: %1)").arg(m_provider->clientSeed()),
+                     false);
+    else if (!seedToUse.isEmpty())
+        onLogMessage(tr("Seed pair rotated (client seed: %1)").arg(m_provider->clientSeed()), false);
+}
+
+void MainWindow::onEngineStarted()
+{
+    if (m_luaDock)
+        m_luaDock->setRunning(m_luaRunning);
+    startRunClock();
+    m_speedTimer.start();
+    m_speedBetsAtWindowStart = m_engine->stats().bets;
+    m_betsPerSecond = 0.0;
+    m_actStart->setEnabled(false);
+    m_actPause->setEnabled(true);
+    m_actStop->setEnabled(true);
+    m_actRollOnce->setEnabled(false);
+    m_autoPanel->setRunning(true);
+    m_manualPanel->setLocked(true);
+    //m_statusStateIcon->setPixmap(QIcon(QStringLiteral(":/icons/filter-active.svg")).pixmap(14, 14));
+    //m_statusStateText->setText(tr("Auto-betting"));
+}
+
+void MainWindow::onEngineStopped(const QString &reason)
+{
+    Q_UNUSED(reason);
+    m_luaRunning = false;
+    if (m_luaDock)
+        m_luaDock->setRunning(false);
+    stopRunClock();
+    m_speedTimer.invalidate();
+    m_betsPerSecond = 0.0;
+    m_actStart->setEnabled(true);
+    m_actStop->setEnabled(false);
+    // Stopping while paused does not emit pausedChanged, so reset here.
+    m_actPause->setEnabled(false);
+    m_actPause->setText(tr("Pause auto-bet"));
+    m_actPause->setToolTip(tr("Pause auto-bet (F6)"));
+    m_actRollOnce->setEnabled(true);
+    m_autoPanel->setRunning(false);
+    m_manualPanel->setLocked(false);
+    //m_statusStateIcon->setPixmap(QIcon(QStringLiteral(":/icons/filter-inactive.svg")).pixmap(14, 14));
+    //m_statusStateText->setText(tr("Idle"));
+    updateStatusWidgets();
+}
+
+void MainWindow::onPausedChanged(bool paused)
+{
+    if (m_engine->isRunning()) {
+        if (paused)
+            stopRunClock();
+        else
+            startRunClock();
+    }
+    m_actPause->setText(paused ? tr("Resume auto-bet") : tr("Pause auto-bet"));
+    m_actPause->setToolTip(paused ? tr("Resume auto-bet (F6)") : tr("Pause auto-bet (F6)"));
+    if (m_engine->isRunning()) {
+        //m_statusStateIcon->setPixmap(QIcon(paused ? QStringLiteral(":/icons/pause-session.svg")
+         //                                         : QStringLiteral(":/icons/filter-active.svg"))
+         //                                .pixmap(14, 14));
+        //m_statusStateText->setText(paused ? tr("Paused") : tr("Auto-betting"));
+    }
+    updateStatusWidgets();
+}
+
+void MainWindow::resolveBetIid(const QString &betId, std::function<void(const QString &)> done)
+{
+    if (betId.isEmpty() || !m_stake) {
+        if (done)
+            done(QString());
+        return;
+    }
+    if (m_model->isResolved(betId)) {
+        if (done)
+            done(m_model->resolvedIid(betId));
+        return;
+    }
+    if (m_iidLookups.contains(betId)) { // a lookup is already running for this row
+        if (done)
+            done(QString());            // caller falls back to the raw bet id
+        return;
+    }
+    m_iidLookups.insert(betId);
+    m_betTable->viewport()->setCursor(Qt::WaitCursor);
+
+    QPointer<MainWindow> self(this);
+    m_stake->lookupBetIid(betId, [self, betId, done](const QString &iid) {
+        if (!self)
+            return;
+        self->m_iidLookups.remove(betId);
+        if (self->m_iidLookups.isEmpty())
+            self->m_betTable->viewport()->unsetCursor();
+
+        QString clean = iid;
+        clean.replace(QStringLiteral("house:"), QStringLiteral("casino:"));
+        if (!clean.isEmpty()) {
+            self->m_model->setResolvedIid(betId, clean);
+            // Widen the column if the iid doesn't fit (capped at 250 px).
+            const int needed = self->m_betTable->fontMetrics().horizontalAdvance(clean) + 16;
+            if (needed > self->m_betTable->columnWidth(BetHistoryModel::ColBetId))
+                self->m_betTable->setColumnWidth(BetHistoryModel::ColBetId, qMin(needed, 250));
+        }
+        if (done)
+            done(clean);
+    });
+}
+
+void MainWindow::onBetTableClicked(const QModelIndex &index)
+{
+    if (!index.isValid() || index.column() != BetHistoryModel::ColBetId)
+        return;
+    const QString betId = m_model->betIdAt(index.row());
+    if (betId.isEmpty() || m_model->isResolved(betId))
+        return;                      // nothing to do / already revealed
+    resolveBetIid(betId);
+}
+
+void MainWindow::onBetTableContextMenu(const QPoint &pos)
+{
+    const QModelIndex index = m_betTable->indexAt(pos);
+    if (!index.isValid())
+        return;
+    const QString betId = m_model->betIdAt(index.row());
+    if (betId.isEmpty())
+        return;
+
+    const QPoint globalPos = m_betTable->viewport()->mapToGlobal(pos);
+    auto showMenu = [this, betId, globalPos](const QString &iid) {
+        const QString site = m_live.site;
+        const QString copyText = iid.isEmpty() ? betId : iid;
+        const QUrl openUrl(iid.isEmpty()
+                               ? QStringLiteral("https://%1/?betId=%2&modal=bet").arg(site, betId)
+                               : QStringLiteral("https://%1/?modal=bet&iid=%2").arg(site, iid));
+
+        QMenu menu;
+        QAction *copyAct = menu.addAction(iid.isEmpty() ? tr("Copy Bet ID:  %1").arg(betId)
+                                                        : tr("Copy IID:  %1").arg(iid));
+        QAction *openAct = menu.addAction(tr("Open in browser"));
+        QAction *chosen = menu.exec(globalPos);
+        if (chosen == copyAct)
+            QApplication::clipboard()->setText(copyText);
+        else if (chosen == openAct)
+            QDesktopServices::openUrl(openUrl);
+    };
+
+    // Resolve the iid on demand before showing the menu (falls back to the raw id).
+    // (menu is shown from the event loop, not from inside the network callback)
+    resolveBetIid(betId, [this, showMenu](const QString &iid) {
+        QTimer::singleShot(0, this, [showMenu, iid] { showMenu(iid); });
+    });
+}
+
+void MainWindow::onBetPlaced(const BetRecord &record)
+{
+    m_model->addBet(record);
+    m_manualPanel->onBetResult(record);
+    m_graph->addSample(m_engine->stats().profit);
+    updateSessionWidgets();
+    updateStatusWidgets();
+    updateFilterCounts();
+    updateChartLabels();
+	
+	//if (m_live.enabled && m_engine->stats().bets % 50 == 0) {
+       // m_stake->fetchBalances();
+    // }
+}
+
+void MainWindow::onLogMessage(const QString &message, bool isError)
+{
+    const QString stamp = QDateTime::currentDateTime().toString(QStringLiteral("HH:mm:ss"));
+    //m_logLineLabel->setText(QStringLiteral("%1  %2").arg(stamp, message));
+    //m_logLineLabel->setToolTip(message);
+    if (m_logWidget)
+        m_logWidget->appendLog(message, isError);
+}
+
+void MainWindow::onSearchEdited(const QString &text)
+{
+    m_model->setSearchText(text.trimmed());
+}
+
+void MainWindow::onSwitchToChart()
+{
+    m_tabs->setCurrentIndex(2);
+}
+
+// When switching to Provably Fair / Auto Bet, resize the bottom pane so the
+// page's content fits exactly. FairPanel gets a safety floor (its hint is 0
+// on the very first switch, before it has laid itself out); AutoBetPanel uses
+// QSizePolicy::Maximum, so its sizeHint() is already the tight natural height.
+void MainWindow::onTabChanged(int index)
+{
+    QWidget *page = m_tabs->widget(index);
+    if (!page)
+        return;
+
+    // Tab pages keep their natural height (see the event filter below), so the
+    // Log dock can only clip them, never squeeze them. Here we just give the
+    // panel its full content height when there is room for it.
+    auto fit = [this, page]() {
+        if (m_tabs->currentWidget() != page)
+            return;
+        if (QLayout *l = page->layout())
+            l->activate();
+
+        const int tabBarH = m_tabs->tabBar()->sizeHint().height();
+        const int contentH = std::max({page->sizeHint().height(),
+                                       page->minimumSizeHint().height(),
+                                       page->minimumHeight(),
+                                       80});
+        const int needed = contentH + tabBarH + 8;   // small buffer for the pane border
+
+        const QList<int> sizes = m_mainSplitter->sizes();
+        const int total = sizes.value(0) + sizes.value(1);
+        if (total <= 0)
+            return;
+
+        const int minTableH = 60;
+        const int tabsH = qMin(needed, qMax(0, total - minTableH));
+        m_mainSplitter->setSizes({total - tabsH, tabsH});
+    };
+
+    fit();
+    QTimer::singleShot(0, this, fit);
+}
+
+void MainWindow::onToggleDarkTheme(bool enabled)
+{
+    applyTheme(enabled);
+}
+
+void MainWindow::onOpenFile()
+{
+    const QString startDir = m_selectedFile.isEmpty() ? QString()
+                                                      : QFileInfo(m_selectedFile).absolutePath();
+    const QString path = QFileDialog::getOpenFileName(this, tr("Select file"), startDir);
+    if (path.isEmpty())
+        return;
+    m_selectedFile = path;
+    onLogMessage(tr("Selected file: %1").arg(QDir::toNativeSeparators(path)), false);
+}
+
+void MainWindow::onOpenConditionBuilder()
+{
+    ConditionBuilderDialog dialog(m_conditions, m_strategies, m_activeStrategy, this);
+    dialog.setWindowTitle(tr("Condition Builder — %1").arg(gameName(m_game).toUpper()));
+    if (dialog.exec() != QDialog::Accepted) {
+        // The dialog autosaves strategies.json as you edit, even if you cancel;
+        // re-read it so the in-memory copy matches the file.
+        if (QFile::exists(ConditionIo::strategiesPath()))
+            m_strategies = ConditionIo::loadStrategies();
+        return;
+    }
+
+    m_conditions = dialog.result();
+    m_strategies = dialog.resultStrategies();
+    m_activeStrategy = dialog.resultStrategyName();
+    saveConditions();
+    ConditionIo::saveStrategies(m_strategies);
+
+    QString msg = tr("Conditions saved (%1 blocks)").arg(m_conditions.size());
+    if (!m_activeStrategy.isEmpty())
+        msg += tr(" — strategy: \"%1\"").arg(m_activeStrategy);
+    onLogMessage(msg, false);
+}
+
+void MainWindow::loadConditions()
+{
+    QSettings settings;
+    const QByteArray raw = settings.value(QStringLiteral("Conditions/blocks")).toByteArray();
+    m_conditions = ConditionIo::blocksFromJson(QJsonDocument::fromJson(raw).array());
+    m_activeStrategy = settings.value(QStringLiteral("Conditions/activeStrategy")).toString();
+    m_strategies = ConditionIo::loadStrategies();
+}
+
+void MainWindow::saveConditions()
+{
+    QSettings settings;
+    settings.setValue(QStringLiteral("Conditions/blocks"),
+                      QJsonDocument(ConditionIo::blocksToJson(m_conditions)).toJson(QJsonDocument::Compact));
+    settings.setValue(QStringLiteral("Conditions/activeStrategy"), m_activeStrategy);
+}
+
+void MainWindow::onOpenOptions()
+{
+    OptionsDialog dialog(this);
+    m_optionsDialog = &dialog;
+    dialog.setDarkTheme(m_actDarkTheme->isChecked());
+    dialog.setCurrencyTag(m_currencyTag);
+    dialog.setStartBalance(m_startBalance);
+    dialog.setClientSeed(m_clientSeed);
+    dialog.setRandomClientSeed(m_randomClientSeed);
+    dialog.setLiveSettings(m_live);
+    if (!m_live.currency.isEmpty())
+        dialog.setLiveCurrencies({m_live.currency}, m_live.currency);
+    dialog.setExtensionStatus(m_ext->isListening(), m_ext->isConnected());
+
+    connect(m_ext, &IStakeTransport::readyChanged, &dialog, [this, &dialog](bool) {
+        dialog.setExtensionStatus(m_ext->isListening(), m_ext->isConnected());
+    });
+    connect(&dialog, &OptionsDialog::loginRequested, this, [this, &dialog] {
+        QString err;
+        if (!configureConnection(dialog.liveSettings(), &err)) {
+            dialog.setLoginStatus(err, false);
+            return;
+        }
+        dialog.setExtensionStatus(m_ext->isListening(), m_ext->isConnected());
+
+        // Browser was just (re)created and is still loading: wait for it.
+        if (m_hiddenBrowser && !m_hiddenBrowser->isPageLoaded()) {
+            dialog.setLoginStatus(tr("Loading browser…"), true);
+            connect(m_hiddenBrowser, &CookieGrabberDialog::pageLoaded, this,
+                    [this] { m_stake->fetchBalances(); },
+                    Qt::SingleShotConnection); // Qt 6.0+
+            return;
+        }
+        m_stake->fetchBalances(); // answer arrives in onBalancesReady/Failed
+    });
+
+    connect(&dialog, &OptionsDialog::dataCleared, this, [this, &dialog] {
+        m_discardSettings = true;
+        dialog.reject();
+    });
+
+    const bool accepted = dialog.exec() == QDialog::Accepted;
+    if (m_discardSettings) {
+        close(); // closeEvent skips saving so nothing is written back
+        return;
+    }
+    if (!accepted) {
+        // A login test may have reconfigured the connection with unsaved values.
+        configureConnection(m_live);
+        return;
+    }
+
+    m_currencyTag = dialog.currencyTag();
+    m_startBalance = dialog.startBalance();
+    m_manualPanel->setStartBalance(m_startBalance);
+    if (m_clientSeed != dialog.clientSeed() || m_randomClientSeed != dialog.randomClientSeed())
+        m_clientSeedPending = true; // the next manual bet / auto-bet uses the new setting
+    m_clientSeed = dialog.clientSeed();
+    m_randomClientSeed = dialog.randomClientSeed();
+    m_actDarkTheme->setChecked(dialog.darkTheme());
+
+    if (m_engine->isRunning() || m_engine->betInFlight()) {
+        configureConnection(m_live);
+        onLogMessage(tr("Live betting settings are not changed while a bet or auto-bet is running."),
+                     true);
+    } else {
+        applyLiveSettings(dialog.liveSettings());
+    }
+
+    updateSessionWidgets();
+    updateStatusWidgets();
+    onLogMessage(tr("Options applied (currency: %1)").arg(currencyLabel()), false);
+}
+
+// ---------------------------------------------------------------- live betting
+
+bool MainWindow::configureConnection(const LiveSettings &s, QString *errorOut)
+{
+    StakeCredentials cred;
+    cred.site = s.site;
+    cred.apiKey = s.apiKey;
+    cred.clearance = s.clearance;
+    cred.userAgent = s.userAgent;
+    m_cookie->setCredentials(cred);
+    m_ext->setCredentials(cred);
+
+    if (s.extensionMode) {
+        QString err;
+        if (!m_ext->start(s.extensionPort, &err)) {
+            const QString msg = tr("Could not start the extension server on 127.0.0.1:%1 (%2)")
+                                    .arg(s.extensionPort)
+                                    .arg(err);
+            if (errorOut)
+                *errorOut = msg;
+            onLogMessage(msg, true);
+            return false;
+        }
+        m_stake->setTransport(m_ext);
+    } else {
+        m_ext->stop();
+        
+        if (!m_webTransport) {
+            m_webTransport = new WebViewTransport(this);
+        }
+        m_webTransport->setCredentials(cred);
+
+        // Recreate the hidden browser if the site / user agent changed since it
+        // was created (e.g. the user just typed new values in Settings).
+        if (m_hiddenBrowser && (m_browserSite != s.site || m_browserUA != s.userAgent)) {
+            m_webTransport->setBrowser(nullptr);
+            m_hiddenBrowser->close();
+            delete m_hiddenBrowser;
+            m_hiddenBrowser = nullptr;
+        }
+
+        if (!m_hiddenBrowser) {
+            m_hiddenBrowser = new CookieGrabberDialog(s.site, s.userAgent, nullptr);
+            m_hiddenBrowser->setAttribute(Qt::WA_DontShowOnScreen);
+            m_hiddenBrowser->show();
+            m_browserSite = s.site;
+            m_browserUA = s.userAgent;
+
+            // Fetch the balance as soon as the page is actually loaded.
+            connect(m_hiddenBrowser, &CookieGrabberDialog::pageLoaded, this, [this] {
+                if (m_live.enabled && m_stake)
+                    m_stake->fetchBalances();
+            });
+        }
+
+        m_webTransport->setBrowser(m_hiddenBrowser);
+        m_stake->setTransport(m_webTransport);
+    }
+    m_stake->setCurrency(s.currency);
+    return true;
+}
+
+void MainWindow::applyLiveSettings(const LiveSettings &requested)
+{
+    LiveSettings next = requested;
+    const bool wasEnabled = m_live.enabled;
+
+   
+
+    m_live = next;
+	m_isLoggedIn = false;
+	
+    QString err;
+    if (!configureConnection(m_live, &err) && m_live.enabled) {
+        // Do NOT set m_live.enabled = false here. 
+        // Just log the error so the checkbox stays ticked and the app tries again.
+        onLogMessage(tr("Live connection failed to initialize: %1").arg(err), true);
+    }
+
+    const bool modeChanged = (wasEnabled != m_live.enabled);
+    const bool live = m_live.enabled;
+
+    m_engine->setLiveEnabled(live); // also marks the balance as "not yet fetched"
+    // Bet sizes always carry 8 decimals and 0 is a valid bet, in both modes.
+    m_manualPanel->setBetPrecision(8, 0.0);
+    m_autoPanel->setBetPrecision(8, 0.0);
+
+    // Mixing simulated and real bets in one history would be misleading, so only
+    // reset when switching between simulation and live - not on every re-login.
+    if (modeChanged) {
+        resetSessionState();
+        m_clientSeedPending = true;
+    }
+    if (!live)
+        m_manualPanel->setStartBalance(m_startBalance);
+
+    m_lastBalanceError.clear();
+    if (live) {
+        m_stake->fetchBalances();
+        m_balanceTimer->start();
+        onLogMessage(tr("Live betting enabled (%1, %2). Fetching balance…")
+                         .arg(m_live.site, m_live.extensionMode ? tr("extension") : tr("cookie")),
+                     false);
+    } else {
+        m_balanceTimer->stop();
+        if (modeChanged)
+            onLogMessage(tr("Back to simulation (play money)."), false);
+    }
+    updateModeWidgets();
+}
+
+void MainWindow::onBalancesReady(const QMap<QString, double> &balances)
+{
+    m_lastBalanceError.clear();
+    const QStringList codes = balances.keys();
+	m_isLoggedIn = true; 
+    // Pick the currency: what the dialog (if open) or the saved settings say,
+    // otherwise the first one the account has.
+    QString cur = m_optionsDialog ? m_optionsDialog->liveSettings().currency : m_live.currency;
+    if (cur.isEmpty() || !balances.contains(cur))
+        cur = codes.value(0);
+
+    if (m_optionsDialog) {
+        m_optionsDialog->setLiveCurrencies(codes, cur);
+        m_optionsDialog->setLoginStatus(
+            tr("Logged in — %1 %2 available").arg(formatAmount(balances.value(cur), 8), cur.toUpper()),
+            true);
+    }
+
+    if (!m_live.enabled)
+        return;
+
+    if (m_live.currency.isEmpty() || !balances.contains(m_live.currency)) {
+        m_live.currency = cur;
+        m_stake->setCurrency(cur);
+        onLogMessage(tr("Betting currency set to %1.").arg(cur.toUpper()), false);
+    }
+
+    const double balance = balances.value(m_live.currency);
+    m_engine->syncBalance(balance);
+    m_manualPanel->setStartBalance(m_engine->stats().balance);
+    updateSessionWidgets();
+    updateStatusWidgets();
+	updateConnectionStatus();
+}
+
+void MainWindow::onBalancesFailed(const QString &error)
+{
+    if (m_optionsDialog)
+        m_optionsDialog->setLoginStatus(error, false);
+        
+    // ADD THIS BLOCK:
+    // Check if the error indicates an expired or invalid login session
+    if (error.contains(QLatin1String("invalid"), Qt::CaseInsensitive) ||
+        error.contains(QLatin1String("login"), Qt::CaseInsensitive) ||
+        error.contains(QLatin1String("unauthorized"), Qt::CaseInsensitive) ||
+        error.contains(QLatin1String("401"), Qt::CaseInsensitive)) {
+        m_isLoggedIn = false;
+        updateConnectionStatus(); 
+    }
+
+    if (!m_live.enabled)
+        return;
+    if (error != m_lastBalanceError) {
+        m_lastBalanceError = error;
+        onLogMessage(tr("Balance refresh failed: %1").arg(error), true);
+    }
+	updateConnectionStatus();
+}
+
+void MainWindow::onExtensionReadyChanged(bool ready)
+{
+    if (!m_stake || m_stake->transport() != m_ext)
+        return;
+    if (ready) {
+        onLogMessage(tr("Browser extension connected."), false);
+        if (m_live.enabled || m_optionsDialog)
+            m_stake->fetchBalances();
+    } else {
+        onLogMessage(tr("Browser extension disconnected."), true);
+        m_isLoggedIn = false; // <--- ADD THIS LINE
+    }
+    updateModeWidgets();
+}
+
+void MainWindow::onBalanceTimer()
+{
+    if (m_live.enabled)
+        m_stake->fetchBalances();
+}
+
+double MainWindow::displayBalance() const
+{
+    const SessionStats &s = m_engine->stats();
+    if (m_engine->liveMode())
+        return s.balance;
+    // While a run is active the session is initialised (resetstats() can leave it at 0 bets).
+    return (s.bets > 0 || m_engine->isRunning()) ? s.balance : m_startBalance;
+}
+
+QString MainWindow::currencyLabel() const
+{
+    if (m_engine->liveMode() && !m_live.currency.isEmpty())
+        return m_live.currency.toUpper();
+    return m_currencyTag;
+}
+
+void MainWindow::updateModeWidgets()
+{
+    const bool live = m_engine->liveMode();
+
+    // Bet IDs only exist for real bets, so the column is hidden in simulation.
+    m_betTable->setColumnHidden(BetHistoryModel::ColBetId, !live);
+    if (live) {
+        QString why;
+        const bool ready = m_stake->transport() && m_stake->transport()->isReady(&why);
+        m_statusMode->setText(tr("%1 · %2%3")
+                                  .arg(m_live.site,
+                                       m_live.extensionMode ? tr("extension") : tr("cookie"),
+                                       ready ? QString() : tr(" (not connected)")));
+        m_statusMode->setStyleSheet(QStringLiteral("color:#c9372a;font-weight:bold;"));
+    } else {
+        m_statusMode->setText(tr("Simulation"));
+        m_statusMode->setStyleSheet(QStringLiteral("color:#737373;"));
+    }
+
+    // The Fairness tab verifies the *simulated* seeds only.
+    const int fairIdx = m_tabs->indexOf(m_fairPanel);
+    if (fairIdx >= 0)
+        m_tabs->setTabEnabled(fairIdx, true);
+    m_actRotate->setEnabled(!m_rotatingSeed);
+	updateConnectionStatus(); 
+}
+
+void MainWindow::onAbout()
+{
+    QMessageBox::about(
+        this, tr("About QDiceBot"),
+        tr("<h3>QDiceBot 1.0</h3>"
+           "<p>A play-money dice simulator with a qBittorrent-style interface: "
+           "provably fair HMAC-SHA256 rolls, manual and auto-bet with "
+           "configurable win/loss progressions, profit chart and session "
+           "statistics.</p>"
+           "<p>Simulation mode never places real bets; live betting must be "
+           "enabled explicitly in Options.</p>"
+           "<p>Icons are taken from the qBittorrent project "
+           "(<a href='https://github.com/qbittorrent/qBittorrent'>"
+           "github.com/qbittorrent/qBittorrent</a>, GPLv2).</p>"));
+}
+
+// ---------------------------------------------------------------- helpers
+
+BotConfig MainWindow::currentConfig() const
+{
+    BotConfig cfg = m_manualPanel->config();
+    cfg.game = m_game;
+    cfg.startBalance = m_startBalance;
+    m_autoPanel->applyTo(cfg);
+    return cfg;
+}
+
+void MainWindow::updateSessionWidgets()
+{
+    const SessionStats &s = m_engine->stats();
+    const bool hasSession = s.bets > 0;
+    const double balance = displayBalance();
+
+    // Everything below is relative to the balance the session started with.
+    const double base = s.startBalance;
+    auto pctOf = [base](double v) -> QString {
+        if (base <= 0.0)
+            return QStringLiteral("—");
+        const double pct = 100.0 * v / base;
+        return QLatin1Char('(') + (pct >= 0.0 ? QStringLiteral("+") : QString()) + QString::number(pct, 'f', 1) + QStringLiteral("%)");
+    };
+    auto timesOf = [base](double v) -> QString {
+        if (base <= 0.0)
+            return QStringLiteral("—");
+        return QLatin1Char('(') + QString::number(v / base, 'f', 2) + QStringLiteral("x)");
+    };
+
+    m_lblBalance->setText(formatAmount(balance));
+    m_lblProfit->setText(pctOf(s.profit) + QLatin1Char(' ') + formatSigned(s.profit));
+    m_lblProfit->setStyleSheet(s.profit >= 0.0 ? QStringLiteral("color:#2e9e46;")
+                                               : QStringLiteral("color:#c9372a;"));
+    m_lblWagered->setText(timesOf(s.wagered) + QLatin1Char(' ') + formatAmount(s.wagered));
+    m_lblWinRate->setText(hasSession ? QStringLiteral("%1%").arg(s.winRate(), 0, 'f', 1)
+                                     : QStringLiteral("—"));
+
+    const QString green = QStringLiteral("color:#2e9e46;");
+    const QString red = QStringLiteral("color:#c9372a;");
+    const QString neutral = QStringLiteral("");
+
+    m_lblHighestBet->setText(hasSession ? formatAmount(s.highestBet) : QStringLiteral("—"));
+
+    m_lblHighestProfit->setText(hasSession ? pctOf(s.highestProfit) + QLatin1Char(' ') + formatSigned(s.highestProfit)
+                                           : QStringLiteral("—"));
+    m_lblHighestProfit->setStyleSheet(hasSession && s.highestProfit > 0.0 ? green : neutral);
+
+    m_lblLowestProfit->setText(hasSession ? pctOf(s.lowestProfit) + QLatin1Char(' ') + formatSigned(s.lowestProfit)
+                                          : QStringLiteral("—"));
+    m_lblLowestProfit->setStyleSheet(hasSession && s.lowestProfit < 0.0 ? red : neutral);
+
+    m_lblHighestStreak->setText(hasSession ? QStringLiteral("%1").arg(s.highestStreak)
+                                           : QStringLiteral("—"));
+    m_lblHighestStreak->setStyleSheet(hasSession && s.highestStreak > 0 ? green : neutral);
+
+    m_lblLowestStreak->setText(hasSession ? QStringLiteral("%1").arg(s.lowestStreak)
+                                          : QStringLiteral("—"));
+    m_lblLowestStreak->setStyleSheet(hasSession && s.lowestStreak < 0 ? red : neutral);
+
+    if (hasSession && s.currentStreak != 0) {
+        m_lblCurrentStreak->setText(s.currentStreak > 0 ? QStringLiteral("+%1").arg(s.currentStreak)
+                                                        : QStringLiteral("%1").arg(s.currentStreak));
+        m_lblCurrentStreak->setStyleSheet(s.currentStreak > 0 ? green : red);
+    } else {
+        m_lblCurrentStreak->setText(QStringLiteral("—"));
+        m_lblCurrentStreak->setStyleSheet(neutral);
+    }
+
+    // The sidebar has a fixed width: a value may overlap its label, but its font is
+    // shrunk if it would still be wider than the whole row.
+    auto fitValue = [this](QLabel *lbl) {
+        QFont f = lbl->font();
+        f.setPointSizeF(8.5);
+        const int rowW = m_sidebar->maximumWidth() - 16 /*grid margins*/ - 2 /*slack*/;
+        while (f.pointSizeF() > 6.0 && QFontMetrics(f).horizontalAdvance(lbl->text()) > rowW)
+            f.setPointSizeF(f.pointSizeF() - 0.25);
+        lbl->setFont(f);
+    };
+    fitValue(m_lblBalance);
+    fitValue(m_lblProfit);
+    fitValue(m_lblWagered);
+    fitValue(m_lblHighestBet);
+    fitValue(m_lblHighestProfit);
+    fitValue(m_lblLowestProfit);
+}
+
+void MainWindow::updateRunTime()
+{
+    qint64 ms = m_runAccumMs;
+    if (m_runElapsed.isValid())
+        ms += m_runElapsed.elapsed();
+    const qint64 totalSec = ms / 1000;
+    const qint64 h = totalSec / 3600;
+    const qint64 m = (totalSec % 3600) / 60;
+    const qint64 sec = totalSec % 60;
+    m_lblRunTime->setText(QStringLiteral("%1:%2:%3")
+                              .arg(h, 2, 10, QLatin1Char('0'))
+                              .arg(m, 2, 10, QLatin1Char('0'))
+                              .arg(sec, 2, 10, QLatin1Char('0')));
+}
+
+void MainWindow::startRunClock()
+{
+    if (!m_runElapsed.isValid())
+        m_runElapsed.start();
+    m_runClock->start();
+    updateRunTime();
+}
+
+void MainWindow::stopRunClock()
+{
+    if (m_runElapsed.isValid()) {
+        m_runAccumMs += m_runElapsed.elapsed();
+        m_runElapsed.invalidate();
+    }
+    m_runClock->stop();
+    updateRunTime();
+}
+
+void MainWindow::updateStatusWidgets()
+{
+    const SessionStats &s = m_engine->stats();
+    const double balance = displayBalance();
+
+    m_statusBets->setText(tr("Bets: %1").arg(s.bets));
+    m_statusWagered->setText(tr("Wagered: %1").arg(formatAmount(s.wagered)));
+    m_statusPl->setText(tr("P/L: %1").arg(formatSigned(s.profit)));
+    m_statusPl->setStyleSheet(s.profit >= 0.0 ? QStringLiteral("color:#2e9e46;")
+                                              : QStringLiteral("color:#c9372a;"));
+
+    // Betting speed over a sliding window of roughly a second.
+    const qint64 elapsedMs = m_speedTimer.isValid() ? m_speedTimer.elapsed() : 0;
+    if (elapsedMs >= 1000) {
+        m_betsPerSecond = double(s.bets - m_speedBetsAtWindowStart) * 1000.0 / double(elapsedMs);
+        m_speedBetsAtWindowStart = s.bets;
+        m_speedTimer.restart();
+    }
+    if (!m_engine->isRunning())
+        m_betsPerSecond = 0.0;
+    m_statusSpeed->setText(QStringLiteral("%1/s").arg(m_betsPerSecond, 0, 'f', 1));
+    m_statusBalance->setText(QStringLiteral("%1 %2")
+                                 .arg(formatAmount(balance),
+                                      currencyLabel()));
+}
+
+void MainWindow::updateFilterCounts()
+{
+    const SessionStats &s = m_engine->stats();
+    const QList<QPushButton *> buttons = m_sidebar->findChildren<QPushButton *>();
+    for (QPushButton *btn : buttons) {
+        if (!btn->property("filterRow").isValid())
+            continue;
+        const QString base = btn->property("baseLabel").toString();
+        qint64 count = 0;
+        switch (btn->property("filterRow").toInt()) {
+        case 0: count = s.bets; break;
+        case 1: count = s.wins; break;
+        case 2: count = s.losses; break;
+        case 3: count = s.bigWins; break;
+        }
+        btn->setText(QStringLiteral("%1 (%2)").arg(base).arg(count));
+    }
+}
+
+void MainWindow::updateChartLabels()
+{
+    const SessionStats &s = m_engine->stats();
+    m_chartMax->setText(tr("Max: %1").arg(formatSigned(s.highestProfit)));
+	m_chartMin->setText(tr("Min: %1").arg(formatSigned(s.lowestProfit)));
+    m_chartNow->setText(tr("Now: %1").arg(formatSigned(s.profit)));
+    m_chartNow->setStyleSheet(s.profit >= 0.0 ? QStringLiteral("color:#2e9e46;")
+                                              : QStringLiteral("color:#c9372a;"));
+}
+
+void MainWindow::updateEmptyState()
+{
+    const bool empty = m_model->rowCount() == 0;
+    m_emptyLabel->setVisible(empty);
+    if (empty) {
+        m_emptyLabel->setGeometry(m_betTable->viewport()->rect());
+        m_emptyLabel->raise();
+    }
+}
+
+bool MainWindow::eventFilter(QObject *watched, QEvent *event)
+{
+    // Keep every tab page at its natural height. Without a pinned minimum the
+    // QTabWidget squeezes the page when the Log dock takes space, and the
+    // controls overlap. With it, the page keeps its size and is clipped.
+    if (m_tabs && (event->type() == QEvent::LayoutRequest || event->type() == QEvent::Show)) {
+        QWidget *w = qobject_cast<QWidget *>(watched);
+        if (w && m_tabs->indexOf(w) >= 0) {
+            if (QLayout *l = w->layout()) {
+                const int h = qMax(l->minimumSize().height(), l->sizeHint().height());
+                if (w->minimumHeight() != h)
+                    w->setMinimumHeight(h);
+            }
+        }
+    }
+    // Bet list: user interaction (wheel / click) stops following the newest bet.
+    if (m_betTable
+        && (watched == m_betTable->viewport() || watched == m_betTable->verticalScrollBar())) {
+        const QEvent::Type t = event->type();
+        if (t == QEvent::Wheel) {
+            m_betFollow = false;
+            QTimer::singleShot(0, this, [this] {
+                if (m_betTable->verticalScrollBar()->value() == 0)
+                    m_betFollow = true; // wheeled back to the top: resume
+            });
+        } else if (t == QEvent::MouseButtonPress) {
+            m_betFollow = false;
+        }
+    }
+    if (watched == m_betTable->viewport() && event->type() == QEvent::Resize
+        && m_emptyLabel->isVisibleTo(m_betTable)) {
+        m_emptyLabel->setGeometry(m_betTable->viewport()->rect());
+        m_emptyLabel->raise();
+    }
+    return QMainWindow::eventFilter(watched, event);
+}
+
+// Draws a small down-arrow PNG for combo boxes and returns a stylesheet snippet
+// that uses it (a styled ::drop-down needs an explicit arrow image to show one).
+static QString comboArrowRules(const QColor &color)
+{
+    const QString dir = QStandardPaths::writableLocation(QStandardPaths::TempLocation);
+    const QString path = dir + QStringLiteral("/dice-ui-combo-arrow-%1.png").arg(color.name().mid(1));
+    if (!QFile::exists(path)) {
+        QPixmap pm(20, 20);
+        pm.fill(Qt::transparent);
+        QPainter p(&pm);
+        p.setRenderHint(QPainter::Antialiasing);
+        p.setPen(Qt::NoPen);
+        p.setBrush(color);
+        p.drawPolygon(QPolygonF({QPointF(4, 7), QPointF(16, 7), QPointF(10, 14)}));
+        p.end();
+        pm.save(path, "PNG");
+    }
+    return QStringLiteral(
+               "QComboBox::drop-down { subcontrol-origin: padding; subcontrol-position: center right;"
+               " border: none; width: 18px; }\n"
+               "QComboBox::down-arrow { image: url(%1); width: 10px; height: 10px; }\n")
+        .arg(path);
+}
+
+void MainWindow::applyTheme(bool dark)
+{
+    QString sheet = QString::fromUtf8(dark ? kDarkStylesheet : kLightStylesheet);
+    if (!dark)
+        sheet += comboArrowRules(QColor(0x40, 0x40, 0x40));
+    qApp->setStyleSheet(sheet);
+    if (m_luaDock)
+        m_luaDock->setDark(dark);
+}
+
+void MainWindow::loadSettings()
+{
+    loadConditions();
+    QSettings settings;
+
+    // No saved window state = first launch: Log and Lua docks start open.
+    const bool firstLaunch = !settings.contains(QStringLiteral("MainWindow/state"));
+
+    restoreGeometry(settings.value(QStringLiteral("MainWindow/geometry")).toByteArray());
+    restoreState(settings.value(QStringLiteral("MainWindow/state")).toByteArray());
+    m_centralSplitter->restoreState(
+        settings.value(QStringLiteral("MainWindow/centralSplitter")).toByteArray());
+    m_mainSplitter->restoreState(
+        settings.value(QStringLiteral("MainWindow/mainSplitter")).toByteArray());
+    m_betTable->horizontalHeader()->restoreState(
+        settings.value(QStringLiteral("MainWindow/tableState2")).toByteArray());
+
+    // Panel visibility (View menu). Applied after the splitter state is
+    // restored; setChecked() fires toggled() and shows/hides the panel.
+    m_actShowSidebar->setChecked(settings.value(QStringLiteral("View/sidebar"), true).toBool());
+    m_actShowBetList->setChecked(settings.value(QStringLiteral("View/betList"), true).toBool());
+    m_actShowTabs->setChecked(settings.value(QStringLiteral("View/bottomPanel"), true).toBool());
+    if (firstLaunch && m_logDock)
+        m_logDock->show();
+    {
+        // The log dock's visibility comes from restoreState(); sync the menu.
+        const QSignalBlocker blocker(m_actShowLog);
+        m_actShowLog->setChecked(m_logDock && !m_logDock->isHidden());
+    }
+    m_luaDock->loadSettings();
+    if (firstLaunch)
+        m_luaDock->show();
+    {
+        const QSignalBlocker blocker(m_actLua);
+        m_actLua->setChecked(!m_luaDock->isHidden());
+    }
+
+    m_currencyTag = settings.value(QStringLiteral("General/currency"), m_currencyTag).toString();
+    m_startBalance = settings.value(QStringLiteral("General/startBalance"), m_startBalance).toDouble();
+    m_manualPanel->setStartBalance(m_startBalance);
+    m_clientSeed = settings.value(QStringLiteral("General/clientSeed")).toString();
+    m_randomClientSeed = settings.value(QStringLiteral("General/randomClientSeed"), false).toBool();
+    setGame(settings.value(QStringLiteral("General/game"), QStringLiteral("dice")).toString()
+                    == QLatin1String("limbo")
+                ? Game::Limbo
+                : Game::Dice);
+
+    // Live connection settings. `enabled` is deliberately never restored: every
+    // launch starts in simulation and live betting must be switched on again.
+    settings.beginGroup(QStringLiteral("Live"));
+    m_live.site = settings.value(QStringLiteral("site"), m_live.site).toString();
+    m_live.extensionMode = settings.value(QStringLiteral("extensionMode"), false).toBool();
+    m_live.currency = settings.value(QStringLiteral("currency")).toString();
+    m_live.remember = settings.value(QStringLiteral("remember"), false).toBool();
+	m_live.enabled = settings.value(QStringLiteral("enabled"), false).toBool();
+	
+    if (m_live.remember) {
+        m_live.apiKey = settings.value(QStringLiteral("apiKey")).toString();
+        m_live.clearance = settings.value(QStringLiteral("clearance")).toString();
+        m_live.userAgent = settings.value(QStringLiteral("userAgent")).toString();
+    }
+    settings.endGroup();
+
+    BotConfig cfg;
+    settings.beginGroup(QStringLiteral("AutoBet"));
+    cfg.baseBet = settings.value(QStringLiteral("baseBet"), cfg.baseBet).toDouble();
+    cfg.stopAfterBets = settings.value(QStringLiteral("betCount"), cfg.stopAfterBets).toInt();
+    cfg.onWin.increase = settings.value(QStringLiteral("onWinIncrease"), cfg.onWin.increase).toBool();
+    cfg.onWin.pct = settings.value(QStringLiteral("onWinPct"), cfg.onWin.pct).toDouble();
+    cfg.onLoss.increase = settings.value(QStringLiteral("onLossIncrease"), cfg.onLoss.increase).toBool();
+    cfg.onLoss.pct = settings.value(QStringLiteral("onLossPct"), cfg.onLoss.pct).toDouble();
+    cfg.stopProfit = settings.value(QStringLiteral("stopProfit"), cfg.stopProfit).toDouble();
+    cfg.stopLoss = settings.value(QStringLiteral("stopLoss"), cfg.stopLoss).toDouble();
+    cfg.delayMs = settings.value(QStringLiteral("delayMs"), cfg.delayMs).toInt();
+    settings.endGroup();
+    m_autoPanel->setFrom(cfg);
+
+    const bool dark = settings.value(QStringLiteral("General/darkTheme"), false).toBool();
+    m_actDarkTheme->setChecked(dark);
+    applyTheme(dark); // setChecked only fires toggled when the value changes
+}
+
+void MainWindow::saveSettings()
+{
+    saveConditions();
+    QSettings settings;
+	
+    settings.setValue(QStringLiteral("MainWindow/geometry"), saveGeometry());
+    settings.setValue(QStringLiteral("MainWindow/state"), saveState());
+    settings.setValue(QStringLiteral("MainWindow/centralSplitter"), m_centralSplitter->saveState());
+    settings.setValue(QStringLiteral("MainWindow/mainSplitter"), m_mainSplitter->saveState());
+    settings.setValue(QStringLiteral("MainWindow/tableState2"),
+                      m_betTable->horizontalHeader()->saveState());
+    m_luaDock->saveSettings();
+    settings.setValue(QStringLiteral("View/sidebar"), m_actShowSidebar->isChecked());
+    settings.setValue(QStringLiteral("View/betList"), m_actShowBetList->isChecked());
+    settings.setValue(QStringLiteral("View/bottomPanel"), m_actShowTabs->isChecked());
+
+    settings.setValue(QStringLiteral("General/currency"), m_currencyTag);
+    settings.setValue(QStringLiteral("General/startBalance"), m_startBalance);
+    settings.setValue(QStringLiteral("General/clientSeed"), m_clientSeed);
+    settings.setValue(QStringLiteral("General/randomClientSeed"), m_randomClientSeed);
+    settings.setValue(QStringLiteral("General/game"), gameName(m_game));
+    settings.setValue(QStringLiteral("General/darkTheme"), m_actDarkTheme->isChecked());
+
+    settings.beginGroup(QStringLiteral("Live"));
+    settings.setValue(QStringLiteral("site"), m_live.site);
+    settings.setValue(QStringLiteral("extensionMode"), m_live.extensionMode);
+    settings.setValue(QStringLiteral("currency"), m_live.currency);
+    settings.setValue(QStringLiteral("remember"), m_live.remember);
+	settings.setValue(QStringLiteral("enabled"), m_live.enabled);
+	
+    if (m_live.remember) {
+        settings.setValue(QStringLiteral("apiKey"), m_live.apiKey);
+        settings.setValue(QStringLiteral("clearance"), m_live.clearance);
+        settings.setValue(QStringLiteral("userAgent"), m_live.userAgent);
+    } else { // unticking "remember" wipes what was stored before
+        settings.remove(QStringLiteral("apiKey"));
+        settings.remove(QStringLiteral("clearance"));
+        settings.remove(QStringLiteral("userAgent"));
+    }
+    settings.endGroup();
+
+    BotConfig cfg;
+    m_autoPanel->applyTo(cfg);
+    settings.beginGroup(QStringLiteral("AutoBet"));
+    settings.setValue(QStringLiteral("baseBet"), cfg.baseBet);
+    settings.setValue(QStringLiteral("betCount"), cfg.stopAfterBets);
+    settings.setValue(QStringLiteral("onWinIncrease"), cfg.onWin.increase);
+    settings.setValue(QStringLiteral("onWinPct"), cfg.onWin.pct);
+    settings.setValue(QStringLiteral("onLossIncrease"), cfg.onLoss.increase);
+    settings.setValue(QStringLiteral("onLossPct"), cfg.onLoss.pct);
+    settings.setValue(QStringLiteral("stopProfit"), cfg.stopProfit);
+    settings.setValue(QStringLiteral("stopLoss"), cfg.stopLoss);
+    settings.setValue(QStringLiteral("delayMs"), cfg.delayMs);
+    settings.endGroup();
+}
+
+void MainWindow::closeEvent(QCloseEvent *event)
+{
+    if (m_engine->isRunning())
+        m_engine->stop(tr("application closing"));
+
+    // Flush the Fair panel's inputs in case the user typed a seed and closed
+    // the window without unfocusing the field (editingFinished never fires in
+    // that case).
+    if (m_fairPanel && !m_discardSettings)
+        m_fairPanel->saveSettings();
+
+    // --- ADD THIS BLOCK ---
+    if (m_hiddenBrowser) {
+        m_hiddenBrowser->close();
+        delete m_hiddenBrowser; // This triggers the destructor (and the Close() call above)
+        m_hiddenBrowser = nullptr;
+    }
+    if (m_webTransport) {
+        delete m_webTransport;
+        m_webTransport = nullptr;
+    }
+    // ----------------------
+
+    if (!m_discardSettings)
+        saveSettings();
+    event->accept();
+}
