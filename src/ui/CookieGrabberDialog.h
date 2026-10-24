@@ -29,8 +29,11 @@ public:
     bool isPageLoaded() const { return m_pageLoaded; }
 
     // Executes a fetch request inside the WebView2 browser context
-    void executeFetch(const QString &url, const QString &method, const QString &body, 
-                      const QString &apiKey, std::function<void(bool, QJsonObject, QString)> callback);
+    // `status` is the HTTP status (0 = network/page failure). API errors that come back as
+    // JSON with a 4xx status are delivered as ok == true so the caller can read errorType.
+    void executeFetch(const QString &url, const QString &method, const QString &body,
+                      const QString &apiKey,
+                      std::function<void(bool ok, int status, QJsonObject json, QString error)> callback);
 
 signals:
     void pageLoaded();

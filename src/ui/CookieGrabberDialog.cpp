@@ -10,6 +10,7 @@
 #include <QJsonDocument>
 #include <QJsonObject>
 #include <QJsonValue>
+#include <QJsonArray>
 
 #include <windows.h>
 #include <wrl.h>
@@ -85,6 +86,17 @@ void CookieGrabberDialog::initializeWebView(const QString &site)
     
     // No CoreWebView2EnvironmentOptions needed.
     // The stealth script below is sufficient to avoid automation detection.
+    //
+    // The hidden browser lives in a window that is never shown, so Chromium treats it as
+    // occluded/background and throttles it, which slows every bet that goes through it.
+    // These switches keep it running at full speed. They must be identical for every
+    // WebView2 environment in this process (same user-data folder), hence the env var.
+    if (qEnvironmentVariableIsEmpty("WEBVIEW2_ADDITIONAL_BROWSER_ARGUMENTS")) {
+        qputenv("WEBVIEW2_ADDITIONAL_BROWSER_ARGUMENTS",
+                "--disable-background-timer-throttling --disable-renderer-backgrounding "
+                "--disable-backgrounding-occluded-windows "
+                "--disable-features=CalculateNativeWinOcclusion");
+    }
     HRESULT hr = CreateCoreWebView2EnvironmentWithOptions(
         nullptr, nullptr, nullptr,
         Callback<ICoreWebView2CreateCoreWebView2EnvironmentCompletedHandler>(
@@ -105,6 +117,7 @@ void CookieGrabberDialog::initializeWebView(const QString &site)
                             m_controller = controller;
                             m_controller->AddRef();
                             m_controller->put_Bounds({0, 0, m_webContainer->width(), m_webContainer->height()});
+                            m_controller->put_IsVisible(TRUE);
                             m_controller->get_CoreWebView2(&m_webview);
 
                             // Inject the stealth script (this is what actually hides the automation)
@@ -118,6 +131,36 @@ void CookieGrabberDialog::initializeWebView(const QString &site)
                                         Promise.resolve({ state: Notification.permission }) :
                                         originalQuery(parameters)
                                     );
+                                )", nullptr);
+
+                            // Bet transport helper: defined once per document so each bet only sends
+                            // a short call instead of compiling a new script, and the reply is one
+                            // object (no JSON-inside-a-string, no second parse).
+                            m_webview->AddScriptToExecuteOnDocumentCreated(
+                                LR"(
+                                    if (window.top === window) {
+                                        Object.defineProperty(window, '__qdbPost', {
+                                            configurable: true, enumerable: false, writable: true,
+                                            value: async (url, key, body) => {
+                                                try {
+                                                    const r = await fetch(url, {
+                                                        method: 'POST', credentials: 'include',
+                                                        headers: { 'Content-Type': 'application/json',
+                                                                   'x-access-token': key },
+                                                        body: body
+                                                    });
+                                                    const text = await r.text();
+                                                    let json = null;
+                                                    try { json = JSON.parse(text); } catch (e) {}
+                                                    if (json === null || typeof json !== 'object' || Array.isArray(json))
+                                                        return { status: r.status, json: null, text: text.slice(0, 300) };
+                                                    return { status: r.status, json: json, text: '' };
+                                                } catch (e) {
+                                                    return { status: 0, json: null, text: String(e) };
+                                                }
+                                            }
+                                        });
+                                    }
                                 )", nullptr);
 
                             // Apply the custom User-Agent from settings (if provided)
@@ -229,66 +272,66 @@ void CookieGrabberDialog::fetchCookies(const QString &site)
             }).Get());
 }
 
-void CookieGrabberDialog::executeFetch(const QString &url, const QString &method, const QString &body, 
-                                       const QString &apiKey, std::function<void(bool, QJsonObject, QString)> callback)
+static QString jsStringLiteral(const QString &str)
 {
+    // A JSON string is a valid JavaScript string literal.
+    const QByteArray arr = QJsonDocument(QJsonArray{str}).toJson(QJsonDocument::Compact); // ["..."]
+    return QString::fromUtf8(arr.mid(1, arr.size() - 2));
+}
+
+void CookieGrabberDialog::executeFetch(const QString &url, const QString &method, const QString &body,
+                                       const QString &apiKey,
+                                       std::function<void(bool, int, QJsonObject, QString)> callback)
+{
+    Q_UNUSED(method); // the helper always POSTs
     if (!m_webview) {
-        callback(false, QJsonObject(), "Browser is not ready");
+        callback(false, 0, QJsonObject(), QStringLiteral("Browser is not ready"));
         return;
     }
 
-    QString escapedBody = body;
-    escapedBody.replace("\\", "\\\\").replace("\"", "\\\"").replace("\n", "\\n").replace("\r", "\\r");
-
-    QString js = QString(R"(
-        (async () => {
-            try {
-                const r = await fetch("%1", {
-                    method: '%2',
-                    credentials: 'include',
-                    headers: { 'Content-Type': 'application/json', 'x-access-token': '%3' },
-                    body: %4
-                });
-                const text = await r.text();
-                return JSON.stringify({ status: r.status, body: text });
-            } catch (e) {
-                return JSON.stringify({ status: 0, body: String(e) });
-            }
-        })()
-    )").arg(url, method, apiKey, body.isEmpty() ? "null" : "\"" + escapedBody + "\"");
+    const QString js = QStringLiteral(
+        "(typeof window.__qdbPost === 'function')"
+        " ? window.__qdbPost(%1, %2, %3)"
+        " : Promise.resolve({status: 0, json: null, text: 'page not ready (helper missing)'})")
+        .arg(jsStringLiteral(url), jsStringLiteral(apiKey), jsStringLiteral(body));
 
     QJsonObject evalArgs;
     evalArgs["expression"] = js;
     evalArgs["awaitPromise"] = true;
     evalArgs["returnByValue"] = true;
-    QByteArray argsBytes = QJsonDocument(evalArgs).toJson(QJsonDocument::Compact);
+    const QByteArray argsBytes = QJsonDocument(evalArgs).toJson(QJsonDocument::Compact);
 
     m_webview->CallDevToolsProtocolMethod(L"Runtime.evaluate", QString::fromUtf8(argsBytes).toStdWString().c_str(),
         Callback<ICoreWebView2CallDevToolsProtocolMethodCompletedHandler>(
             [callback](HRESULT result, LPCWSTR jsonResult) -> HRESULT {
-                if (FAILED(result)) {
-                    callback(false, QJsonObject(), "DevTools call failed");
+                if (FAILED(result) || !jsonResult) {
+                    callback(false, 0, QJsonObject(), QStringLiteral("DevTools call failed"));
                     return result;
                 }
 
-                QJsonDocument doc = QJsonDocument::fromJson(QString::fromWCharArray(jsonResult).toUtf8());
-                QJsonObject outer = doc.object();
-                
-                if (outer.contains("result") && outer["result"].toObject().contains("value")) {
-                    QString innerStr = outer["result"].toObject()["value"].toString();
-                    QJsonObject inner = QJsonDocument::fromJson(innerStr.toUtf8()).object();
-                    
-                    int status = inner["status"].toInt();
-                    QString body = inner["body"].toString();
-                    
-                    if (status >= 200 && status < 300) {
-                        QJsonObject jsonResp = QJsonDocument::fromJson(body.toUtf8()).object();
-                        callback(true, jsonResp, "");
-                    } else {
-                        callback(false, QJsonObject(), QString("HTTP %1: %2").arg(status).arg(body));
-                    }
+                const QJsonObject outer = QJsonDocument::fromJson(QString::fromWCharArray(jsonResult).toUtf8()).object();
+                const QJsonValue value = outer.value("result").toObject().value("value");
+                if (!value.isObject()) {
+                    callback(false, 0, QJsonObject(), QStringLiteral("Invalid DevTools response"));
+                    return S_OK;
+                }
+
+                const QJsonObject v = value.toObject();
+                const int status = v.value("status").toInt();
+                const QString text = v.value("text").toString();
+
+                // Any JSON object is handed up, whatever the HTTP status: the casino reports
+                // bet errors (parallel bet, rate limit, ...) as JSON with a 4xx status and the
+                // caller needs errorType to decide whether to retry.
+                if (v.value("json").isObject()) {
+                    callback(true, status, v.value("json").toObject(), QString());
+                } else if (status == 403 || status == 503) {
+                    callback(false, status, QJsonObject(),
+                             QStringLiteral("HTTP %1: blocked by Cloudflare - reopen the browser / refresh the session.").arg(status));
+                } else if (status > 0) {
+                    callback(false, status, QJsonObject(), QStringLiteral("HTTP %1: %2").arg(status).arg(text));
                 } else {
-                    callback(false, QJsonObject(), "Invalid DevTools response");
+                    callback(false, 0, QJsonObject(), text.isEmpty() ? QStringLiteral("Network error") : text);
                 }
                 return S_OK;
             }).Get());

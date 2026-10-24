@@ -122,8 +122,11 @@ void BotEngine::onLiveFinished(const LiveBetResult &r)
             // The server refused this bet without placing it (rate limit,
             // parallel bet, seed rotation) -> same bet again after a short backoff.
             emit logMessage(tr("Retrying (%1/%2)…").arg(m_retryStreak).arg(kMaxRetryStreak), false);
-            if (!m_paused)
-                m_timer.start(std::min(2000, 250 * m_retryStreak));
+            if (!m_paused) {
+                const int wait = r.retryDelayMs > 0 ? std::min(500, r.retryDelayMs * m_retryStreak)
+                                                    : std::min(2000, 250 * m_retryStreak);
+                m_timer.start(wait);
+            }
             return;
         }
         if (r.outcomeUnknown) {

@@ -52,6 +52,22 @@ bool isRetryable(const QString &type, const QString &msg)
     return parallel || rateLimit || seedRotate;
 }
 
+// Short retry delay for errors that clear immediately; 0 for rate limits (keep the
+// engine's growing backoff there) and for everything else.
+int fastRetryDelayMs(const QString &type, const QString &msg)
+{
+    const bool rateLimit = containsCI(msg, "slow down") || msg.contains(QLatin1String("429"));
+    if (rateLimit)
+        return 0;
+    if (containsCI(type, "parallelCasinoBet") && !containsCI(type, "internalError"))
+        return 40;
+    if (containsCI(msg, "new seed pair") || containsCI(msg, "choose a new seed")
+        || containsCI(msg, "seedRotate") || containsCI(type, "seedRotate")
+        || (containsCI(msg, "seed") && containsCI(msg, "rotat")))
+        return 100;
+    return 0;
+}
+
 // The API wraps the bet in one property ({"diceRoll": {...}}), optionally
 // inside {"data": {...}}. Pick the first object that looks like a bet.
 QJsonObject findBetObject(const QJsonObject &json)
@@ -328,7 +344,9 @@ void StakeClient::postBet(const QString &endpoint, const QJsonObject &body, doub
         QString type;
         const QString apiError = firstErrorText(reply.json, &type);
         if (!apiError.isEmpty()) {
-            emit diceFinished(failed(apiError, type, isRetryable(type, apiError), false));
+            LiveBetResult r = failed(apiError, type, isRetryable(type, apiError), false);
+            r.retryDelayMs = fastRetryDelayMs(type, apiError);
+            emit diceFinished(r);
             return;
         }
 

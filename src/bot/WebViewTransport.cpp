@@ -27,9 +27,10 @@ void WebViewTransport::post(const QString &path, const QJsonObject &body, Transp
     QString jsonBody = QJsonDocument(body).toJson(QJsonDocument::Compact);
 
     m_browser->executeFetch(fullUrl, "POST", jsonBody, m_cred.apiKey, 
-        [cb](bool success, QJsonObject json, QString error) {
+        [cb](bool success, int status, QJsonObject json, QString error) {
             TransportReply reply;
             reply.ok = success;
+            reply.status = status;
             reply.json = json;
             reply.error = error;
             cb(reply);

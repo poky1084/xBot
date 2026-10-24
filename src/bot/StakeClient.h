@@ -34,6 +34,10 @@ struct LiveBetResult
     bool retryable = false;
     // No answer at all (timeout, disconnect). The bet MAY have been placed.
     bool outcomeUnknown = false;
+    // Suggested wait before repeating a retryable bet (0 = engine's default backoff).
+    // Parallel-bet collisions and seed-rotation notices clear within milliseconds, so
+    // they get a short delay instead of the rate-limit backoff.
+    int retryDelayMs = 0;
 
     // Success details
     double amount = 0.0;
