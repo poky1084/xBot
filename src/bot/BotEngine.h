@@ -95,6 +95,7 @@ public:
     bool liveMode() const { return m_liveEnabled && m_live != nullptr; }
     bool betInFlight() const { return m_inFlight; }
     bool hasLiveBalance() const { return m_liveBalanceKnown; }
+    void invalidateLiveBalance() { m_liveBalanceKnown = false; } // wait for a fresh server balance
     // Overwrites the tracked balance with the server's figure (ignored while a
     // bet is in flight, because the figure may predate that bet).
     void syncBalance(double balance);

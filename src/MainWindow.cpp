@@ -1582,6 +1582,8 @@ void MainWindow::onBetTableClicked(const QModelIndex &index)
     const QString betId = m_model->betIdAt(index.row());
     if (betId.isEmpty() || m_model->isResolved(betId))
         return;                      // nothing to do / already revealed
+    if (m_model->recordAt(index.row()).casino.compare(QLatin1String("shuffle"), Qt::CaseInsensitive) == 0)
+        return;                      // Shuffle ids are used as they are
     resolveBetIid(betId);
 }
 
@@ -1595,8 +1597,26 @@ void MainWindow::onBetTableContextMenu(const QPoint &pos)
         return;
 
     const QPoint globalPos = m_betTable->viewport()->mapToGlobal(pos);
+
+    // The row's own casino decides (the history can mix both); old rows without one
+    // follow the active casino.
+    const QString rowCasino = m_model->recordAt(index.row()).casino.trimmed().toLower();
+    const bool shuffleRow = rowCasino.isEmpty() ? m_live.isShuffle()
+                                                : rowCasino == QLatin1String("shuffle");
+
+    // Shuffle: nothing to look up, just make the bet id copiable.
+    if (shuffleRow) {
+        QMenu menu;
+        QAction *copyAct = menu.addAction(tr("Copy Bet id:  %1").arg(betId));
+        if (menu.exec(globalPos) == copyAct)
+            QApplication::clipboard()->setText(betId);
+        return;
+    }
+
+    // Stake: always resolve the iid on every right click (cached once found; a failed
+    // lookup is retried next time), then show the menu.
     auto showMenu = [this, betId, globalPos](const QString &iid) {
-        const QString site = m_live.activeSite();
+        const QString site = m_live.site;
         const QString copyText = iid.isEmpty() ? betId : iid;
         const QUrl openUrl(iid.isEmpty()
                                ? QStringLiteral("https://%1/?betId=%2&modal=bet").arg(site, betId)
@@ -1605,16 +1625,14 @@ void MainWindow::onBetTableContextMenu(const QPoint &pos)
         QMenu menu;
         QAction *copyAct = menu.addAction(iid.isEmpty() ? tr("Copy Bet ID:  %1").arg(betId)
                                                         : tr("Copy IID:  %1").arg(iid));
-        // Only Stake's bet link format is known.
-        QAction *openAct = m_live.isShuffle() ? nullptr : menu.addAction(tr("Open in browser"));
+        QAction *openAct = menu.addAction(tr("Open in browser"));
         QAction *chosen = menu.exec(globalPos);
         if (chosen == copyAct)
             QApplication::clipboard()->setText(copyText);
-        else if (openAct && chosen == openAct)
+        else if (chosen == openAct)
             QDesktopServices::openUrl(openUrl);
     };
 
-    // Resolve the iid on demand before showing the menu (falls back to the raw id).
     // (menu is shown from the event loop, not from inside the network callback)
     resolveBetIid(betId, [this, showMenu](const QString &iid) {
         QTimer::singleShot(0, this, [showMenu, iid] { showMenu(iid); });
@@ -1964,6 +1982,7 @@ void MainWindow::applyLiveSettings(const LiveSettings &requested)
 {
     LiveSettings next = requested;
     const bool wasEnabled = m_live.enabled;
+    const bool casinoChanged = (m_live.casino != next.casino);
 
    
 
@@ -1982,6 +2001,8 @@ void MainWindow::applyLiveSettings(const LiveSettings &requested)
     const bool live = m_live.enabled;
 
     m_engine->setLiveEnabled(live); // also marks the balance as "not yet fetched"
+    if (casinoChanged && live)
+        m_engine->invalidateLiveBalance(); // the old casino's balance must not be used for the new one
     // Bet sizes always carry 8 decimals and 0 is a valid bet, in both modes.
     m_manualPanel->setBetPrecision(8, 0.0);
     m_autoPanel->setBetPrecision(8, 0.0);

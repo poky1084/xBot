@@ -476,7 +476,10 @@ void StakeClient::fetchBalances()
     body.insert(QStringLiteral("query"),
                 QStringLiteral("query UserBalances{user{balances{available{amount currency}}}}"));
 
-    m_transport->post(QStringLiteral("_api/graphql"), body, [this](const TransportReply &reply) {
+    IStakeTransport *requestedOn = m_transport;
+    m_transport->post(QStringLiteral("_api/graphql"), body, [this, requestedOn](const TransportReply &reply) {
+        if (requestedOn != m_transport)
+            return; // the casino / transport was switched meanwhile: stale answer
         if (!reply.ok) {
 			if (reply.status == 0) {
                 emit sessionLost(reply.error);

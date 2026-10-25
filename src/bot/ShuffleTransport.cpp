@@ -312,6 +312,7 @@ void ShuffleTransport::openSocket()
     closeSocket();
     m_acked = false;
     m_connectFailureReported = false;
+    m_balances.clear(); // values cached before (e.g. before switching to Stake and back) are stale
     m_fresh.clear();
     m_wsFresh.clear();
 
