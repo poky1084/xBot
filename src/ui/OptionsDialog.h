@@ -61,6 +61,7 @@ private:
     void setFormRowVisible(QWidget *field, bool visible);
     void onClearData();
 	void onGrabCookie();
+    void onShuffleLogin();
     QComboBox *m_themeCombo = nullptr;
     QComboBox *m_currencyCombo = nullptr;
     QDoubleSpinBox *m_startBalanceSpin = nullptr;
@@ -84,6 +85,7 @@ private:
     QComboBox *m_liveCurrencyCombo = nullptr;
     QPushButton *m_loginBtn = nullptr;
 	QPushButton *m_grabCookieBtn = nullptr;
+    QPushButton *m_shuffleLoginBtn = nullptr;
     QLabel *m_loginStatus = nullptr;
     QCheckBox *m_rememberCheck = nullptr;
     quint16 m_extensionPort = 4444;

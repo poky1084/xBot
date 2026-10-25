@@ -65,6 +65,8 @@ set(SOURCES
 	src/ui/BlockEditorDialog.h
 	src/ui/ConditionBuilderDialog.cpp
 	src/ui/ConditionBuilderDialog.h
+	src/ui/ShuffleLoginDialog.cpp
+	src/ui/ShuffleLoginDialog.h
     resources/resources.qrc
 	resources/app.rc
 )

@@ -1,5 +1,6 @@
 #include "ui/CookieGrabberDialog.h"
 #include "ui/OptionsDialog.h"
+#include "ui/ShuffleLoginDialog.h"
 
 #include <QCheckBox>
 #include <QComboBox>
@@ -125,6 +126,15 @@ OptionsDialog::OptionsDialog(QWidget *parent)
 	m_browserIdEdit->setEchoMode(QLineEdit::Password);
     m_browserIdEdit->setPlaceholderText(tr("browser id used in the x-correlation-id header"));
     liveForm->addRow(tr("BROWSER_ID:"), m_browserIdEdit);
+
+    // Shuffle only: opens the site, waits for the login, then fills Token / IDs.
+    m_shuffleLoginBtn = new QPushButton(tr("Open Shuffle && Log in - to autofill data"));
+    m_shuffleLoginBtn->setToolTip(
+        tr("Opens the site in a browser window. After you log in, Token, CORRELATION_USER_ID "
+           "and BROWSER_ID are filled in automatically."));
+    m_shuffleLoginBtn->setEnabled(ShuffleLoginDialog::isAvailable());
+    liveForm->addRow(QString(), m_shuffleLoginBtn);
+    connect(m_shuffleLoginBtn, &QPushButton::clicked, this, &OptionsDialog::onShuffleLogin);
 
     m_clearanceEdit = new QLineEdit;
     m_clearanceEdit->setEchoMode(QLineEdit::Password);
@@ -338,6 +348,7 @@ void OptionsDialog::applyCasinoUi()
 
     setFormRowVisible(m_correlationEdit, shuffle);
     setFormRowVisible(m_browserIdEdit, shuffle);
+    setFormRowVisible(m_shuffleLoginBtn, shuffle);
     setFormRowVisible(m_extStatus, !shuffle);
 }
 
@@ -448,4 +459,15 @@ void OptionsDialog::onGrabCookie()
             
         setLoginStatus(tr("cf_clearance captured — press Log in to verify."), true);
     }
+}
+void OptionsDialog::onShuffleLogin()
+{
+    ShuffleLoginDialog dlg(m_siteEdit->text().trimmed(), this);
+    if (dlg.exec() != QDialog::Accepted)
+        return;
+
+    m_apiKeyEdit->setText(dlg.token());
+    m_correlationEdit->setText(dlg.correlationUserId());
+    m_browserIdEdit->setText(dlg.browserId());
+    setLoginStatus(tr("Logged in to Shuffle — press Log in to verify."), true);
 }
