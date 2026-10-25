@@ -290,6 +290,7 @@ void BotEngine::start()
         });
         m_script->setResetStatsHandler([this] { return resetStatsFromScript(); });
         m_script->setResetSeedHandler([this](const QString &seed) { rotateSeedFromScript(seed); });
+        m_script->setVaultHandler([this](double amount) { vaultFromScript(amount); });
         const auto st = m_script->init(m_scriptSource, m_stats.balance, m_nextBetSize, m_runCfg);
         if (st == ScriptStrategy::Status::Error) {
             const QString err = m_script->lastError();
@@ -375,6 +376,21 @@ void BotEngine::rotateSeedFromScript(const QString &clientSeed)
         return;
     }
     dispatchSeedRotation();
+}
+
+// vault(amount) from a script: only a live Shuffle account has a vault; MainWindow
+// sends the request (fire and forget - bets are not held back for it).
+void BotEngine::vaultFromScript(double amount)
+{
+    if (!(amount > 0.0)) {
+        emit scriptOutput(tr("vault(): the amount must be greater than 0."), true);
+        return;
+    }
+    if (!liveMode()) {
+        emit scriptOutput(tr("vault() only works in live mode."), true);
+        return;
+    }
+    emit vaultRequested(amount);
 }
 
 void BotEngine::dispatchSeedRotation()

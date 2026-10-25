@@ -107,6 +107,8 @@ signals:
     // A script called resetseed(): rotate the seed pair with this client seed
     // (MainWindow does the work). Never emitted while a live bet is in flight.
     void seedRotationRequested(const QString &clientSeed);
+    // A script called vault(amount) in live mode (MainWindow sends the deposit).
+    void vaultRequested(double amount);
 
 private slots:
     void placeNextBet();
@@ -129,6 +131,7 @@ private:
     bool applyScriptCurrency(); // true if switching failed and the run was halted
     double resetStatsFromScript();
     void rotateSeedFromScript(const QString &clientSeed);
+    void vaultFromScript(double amount);
     void dispatchSeedRotation();
 
     bool liveReady(QString *whyNot) const;

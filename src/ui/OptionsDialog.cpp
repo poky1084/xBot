@@ -14,6 +14,7 @@
 #include <QLabel>
 #include <QLineEdit>
 #include <QPushButton>
+#include <QSignalBlocker>
 #include <QVBoxLayout>
 
 #ifdef Q_OS_WIN
@@ -92,7 +93,9 @@ OptionsDialog::OptionsDialog(QWidget *parent)
 
     // ------------------------------------------------------------- live betting
     auto *liveBox = new QGroupBox(tr("Live betting"), this);
+    m_liveBox = liveBox;
     auto *liveForm = new QFormLayout(liveBox);
+    m_liveForm = liveForm;
     liveForm->setContentsMargins(8, 10, 8, 8);
 
     m_liveEnable = new QCheckBox(tr("Enable live betting"));
@@ -111,6 +114,17 @@ OptionsDialog::OptionsDialog(QWidget *parent)
     m_apiKeyEdit->setEchoMode(QLineEdit::Password);
     m_apiKeyEdit->setPlaceholderText(tr("x-access-token (API key)"));
     liveForm->addRow(tr("API key:"), m_apiKeyEdit);
+
+    // Shuffle only (hidden for Stake)
+    m_correlationEdit = new QLineEdit;
+	m_correlationEdit->setEchoMode(QLineEdit::Password);
+    m_correlationEdit->setPlaceholderText(tr("user id used in the x-correlation-id header"));
+    liveForm->addRow(tr("CORRELATION_USER_ID:"), m_correlationEdit);
+
+    m_browserIdEdit = new QLineEdit;
+	m_browserIdEdit->setEchoMode(QLineEdit::Password);
+    m_browserIdEdit->setPlaceholderText(tr("browser id used in the x-correlation-id header"));
+    liveForm->addRow(tr("BROWSER_ID:"), m_browserIdEdit);
 
     m_clearanceEdit = new QLineEdit;
     m_clearanceEdit->setEchoMode(QLineEdit::Password);
@@ -157,6 +171,7 @@ OptionsDialog::OptionsDialog(QWidget *parent)
     });
 
     root->addWidget(liveBox);
+    applyCasinoUi();
     updateAuthFields();
     setExtensionStatus(false, false);
 
@@ -285,25 +300,76 @@ void OptionsDialog::setStartBalance(double value)
 
 // ------------------------------------------------------------------ live
 
+void OptionsDialog::setFormRowVisible(QWidget *field, bool visible)
+{
+    field->setVisible(visible);
+    if (QWidget *label = m_liveForm->labelForField(field))
+        label->setVisible(visible);
+}
+
+void OptionsDialog::applyCasinoUi()
+{
+    const bool shuffle = m_shuffle;
+
+    m_liveBox->setTitle(shuffle ? tr("Live betting — Shuffle") : tr("Live betting"));
+
+    // Login method: Shuffle has the one "Direct mode" (no WebView2, no browser extension).
+    {
+        const QSignalBlocker blocker(m_authCombo);
+        m_authCombo->clear();
+        if (shuffle) {
+            m_authCombo->addItem(tr("Direct mode"));
+        } else {
+            m_authCombo->addItem(tr("Cookie (cf_clearance)"));
+            m_authCombo->addItem(tr("Browser extension"));
+        }
+        m_authCombo->setCurrentIndex(0);
+    }
+
+    // "API key" is the "Token" on Shuffle.
+    if (auto *label = qobject_cast<QLabel *>(m_liveForm->labelForField(m_apiKeyEdit)))
+        label->setText(shuffle ? tr("Token:") : tr("API key:"));
+    m_apiKeyEdit->setPlaceholderText(shuffle ? tr("authorization token (JWT)")
+                                             : tr("x-access-token (API key)"));
+    m_siteEdit->setPlaceholderText(shuffle ? QStringLiteral("shuffle.com")
+                                           : QStringLiteral("stake.com"));
+    m_rememberCheck->setText(shuffle ? tr("Remember token and IDs on this computer")
+                                     : tr("Remember API key and cookie on this computer"));
+
+    setFormRowVisible(m_correlationEdit, shuffle);
+    setFormRowVisible(m_browserIdEdit, shuffle);
+    setFormRowVisible(m_extStatus, !shuffle);
+}
+
 void OptionsDialog::updateAuthFields()
 {
-    const bool ext = m_authCombo->currentIndex() == 1;
+    const bool ext = !m_shuffle && m_authCombo->currentIndex() == 1;
     m_clearanceEdit->setEnabled(!ext);
     m_userAgentEdit->setEnabled(!ext);
     m_extStatus->setEnabled(ext);
     if (m_grabCookieBtn)
-        m_grabCookieBtn->setEnabled(!ext && CookieGrabberDialog::isAvailable());
+        m_grabCookieBtn->setEnabled(!ext && !m_shuffle && CookieGrabberDialog::isAvailable());
 }
 
 LiveSettings OptionsDialog::liveSettings() const
 {
-    LiveSettings s;
+    // Start from what we were given so the other casino's values are kept.
+    LiveSettings s = m_base;
     s.enabled = m_liveEnable->isChecked();
-    s.extensionMode = m_authCombo->currentIndex() == 1;
-    s.site = m_siteEdit->text().trimmed();
-    s.apiKey = m_apiKeyEdit->text().trimmed();
-    s.clearance = m_clearanceEdit->text().trimmed();
-    s.userAgent = m_userAgentEdit->text().trimmed();
+    s.casino = m_shuffle ? LiveSettings::Casino::Shuffle : LiveSettings::Casino::Stake;
+    if (m_shuffle) {
+        const QString site = m_siteEdit->text().trimmed();
+        s.shuffleSite = site.isEmpty() ? QStringLiteral("shuffle.com") : site;
+        s.shuffleToken = m_apiKeyEdit->text().trimmed();
+        s.correlationUserId = m_correlationEdit->text().trimmed();
+        s.browserId = m_browserIdEdit->text().trimmed();
+    } else {
+        s.extensionMode = m_authCombo->currentIndex() == 1;
+        s.site = m_siteEdit->text().trimmed();
+        s.apiKey = m_apiKeyEdit->text().trimmed();
+        s.clearance = m_clearanceEdit->text().trimmed();
+        s.userAgent = m_userAgentEdit->text().trimmed();
+    }
     s.currency = m_liveCurrencyCombo->currentText().trimmed().toLower();
     s.remember = m_rememberCheck->isChecked();
     s.extensionPort = m_extensionPort;
@@ -312,12 +378,24 @@ LiveSettings OptionsDialog::liveSettings() const
 
 void OptionsDialog::setLiveSettings(const LiveSettings &s)
 {
+    m_base = s;
+    m_shuffle = s.isShuffle();
+    applyCasinoUi();
+
     m_liveEnable->setChecked(s.enabled);
-    m_authCombo->setCurrentIndex(s.extensionMode ? 1 : 0);
-    m_siteEdit->setText(s.site);
-    m_apiKeyEdit->setText(s.apiKey);
-    m_clearanceEdit->setText(s.clearance);
-    m_userAgentEdit->setText(s.userAgent);
+    if (m_shuffle) {
+        m_authCombo->setCurrentIndex(0); // Direct mode
+        m_siteEdit->setText(s.shuffleSite);
+        m_apiKeyEdit->setText(s.shuffleToken);
+        m_correlationEdit->setText(s.correlationUserId);
+        m_browserIdEdit->setText(s.browserId);
+    } else {
+        m_authCombo->setCurrentIndex(s.extensionMode ? 1 : 0);
+        m_siteEdit->setText(s.site);
+        m_apiKeyEdit->setText(s.apiKey);
+        m_clearanceEdit->setText(s.clearance);
+        m_userAgentEdit->setText(s.userAgent);
+    }
     m_liveCurrencyCombo->setEditText(s.currency);
     m_rememberCheck->setChecked(s.remember);
     m_extensionPort = s.extensionPort;

@@ -29,6 +29,9 @@ public:
     // resetseed([clientseed]): the engine rotates the (simulated or live) seed pair.
     // `clientSeed` is empty when the script gave none (the engine then makes one up).
     using ResetSeedHandler = std::function<void(const QString &clientSeed)>;
+    // vault(amount): the engine moves `amount` of the current currency into the vault
+    // (live mode).
+    using VaultHandler = std::function<void(double amount)>;
 
     // Result of one finished bet, published to the script before dobet().
     struct BetInfo
@@ -47,6 +50,7 @@ public:
     void setLogger(Logger logger) { m_logger = std::move(logger); }
     void setResetStatsHandler(ResetStatsHandler handler) { m_resetStatsHandler = std::move(handler); }
     void setResetSeedHandler(ResetSeedHandler handler) { m_resetSeedHandler = std::move(handler); }
+    void setVaultHandler(VaultHandler handler) { m_vaultHandler = std::move(handler); }
 
     // Compiles and runs the script body. `nextBet` and `runCfg` (target / side)
     // are taken from what the script set.
@@ -85,6 +89,12 @@ public:
         if (m_resetSeedHandler)
             m_resetSeedHandler(clientSeed);
     }
+    // vault(amount): deposits `amount` into the vault.
+    void requestVault(double amount)
+    {
+        if (m_vaultHandler)
+            m_vaultHandler(amount);
+    }
 
 protected:
     // Called after resetstats(): zero the run counters / globals (bets, wins, losses,
@@ -94,6 +104,7 @@ protected:
     Logger m_logger;
     ResetStatsHandler m_resetStatsHandler;
     ResetSeedHandler m_resetSeedHandler;
+    VaultHandler m_vaultHandler;
     QString m_error;
     QString m_stopReason;
     bool m_stop = false;

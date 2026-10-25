@@ -83,7 +83,7 @@ protected:
         static const QSet<QString> api = {
             "nextbet", "chance", "bethigh", "target", "game", "currency", "dobet", "stop", "startbalance", "balance",
             "profit", "win", "previousbet", "lastBet", "lastprofit", "roll", "bets", "wins", "losses", "wagered",
-            "currentstreak", "log", "resetstats", "resetseed"};
+            "currentstreak", "log", "resetstats", "resetseed", "vault"};
         static const QSet<QString> builtins = {
             "print", "math", "string", "table", "os", "utf8", "coroutine", "pairs", "ipairs",
             "tonumber", "tostring", "type", "select", "error", "assert", "pcall", "next",
@@ -298,7 +298,7 @@ protected:
         static const QSet<QString> api = {
             "nextbet", "chance", "bethigh", "target", "game", "currency", "dobet", "stop", "startbalance", "balance",
             "profit", "win", "previousbet", "lastBet", "lastprofit", "roll", "bets", "wins", "losses", "wagered",
-            "currentstreak", "log", "print", "resetstats", "resetseed"};
+            "currentstreak", "log", "print", "resetstats", "resetseed", "vault"};
         static const QSet<QString> builtins = {
             "console", "Math", "JSON", "Date", "Object", "Array", "String", "Number", "Boolean",
             "Map", "Set", "Symbol", "Error", "RegExp", "parseInt", "parseFloat", "isNaN",
@@ -1015,7 +1015,9 @@ void LuaEditorDock::onHelp()
         "profit, streaks); the balance is kept<br>"
         "<code>resetseed([clientseed])</code> – rotate the seed pair, e.g. <code>resetseed(\"123xcv123\")</code>; "
         "without an argument a random 10-character alphanumeric client seed is used (live: waits for a bet "
-        "in flight, the next bet waits for the server)");
+        "in flight, the next bet waits for the server)<br>"
+        "<code>vault(amount)</code> – deposit <code>amount</code> of the current currency into the vault, "
+        "e.g. <code>vault(0.001)</code> (live mode)");
 
     QString text = common;
     if (js) {

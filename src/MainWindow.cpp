@@ -11,6 +11,7 @@
 #include "ui/LuaEditorDock.h"
 #include "ui/ManualBetPanel.h"
 #include "ui/OptionsDialog.h"
+#include "bot/ShuffleTransport.h"
 #include "bot/StakeClient.h"
 #include "bot/StakeTransport.h"
 
@@ -426,6 +427,7 @@ MainWindow::MainWindow(QWidget *parent)
     // Live betting plumbing (inactive until enabled in Options).
     m_cookie = new CookieTransport(this);
     m_ext = new ExtensionTransport(this);
+    m_shuffle = new ShuffleTransport(this);
     m_stake = new StakeClient(this);
     m_stake->setTransport(m_cookie);
     m_engine->setLiveClient(m_stake);
@@ -450,12 +452,15 @@ MainWindow::MainWindow(QWidget *parent)
                    const QString &nextHash) {
         m_rotatingSeed = false;
         m_actRotate->setEnabled(true);
-        onLogMessage(tr("Seed pair rotated — client seed: %1, nonce: %2, server seed hash: %3%4")
-                         .arg(clientSeed)
-                         .arg(nonce)
-                         .arg(hash,
-                              nextHash.isEmpty() ? QString() : tr(", next hash: %1").arg(nextHash)),
-                     false);
+        if (hash.isEmpty()) // defensive: no hash in the reply
+            onLogMessage(tr("Seed has been reset — client seed: %1").arg(clientSeed), false);
+        else
+            onLogMessage(tr("Seed pair rotated — client seed: %1, nonce: %2, server seed hash: %3%4")
+                             .arg(clientSeed)
+                             .arg(nonce)
+                             .arg(hash,
+                                  nextHash.isEmpty() ? QString() : tr(", next hash: %1").arg(nextHash)),
+                         false);
         m_engine->seedRotationFinished();
         if (m_afterSeedRotation) { // manual / auto bet waiting for its client seed
             const auto next = std::move(m_afterSeedRotation);
@@ -472,6 +477,12 @@ MainWindow::MainWindow(QWidget *parent)
             m_afterSeedRotation = nullptr;
             onLogMessage(tr("Not betting: the client seed could not be set."), true);
         }
+    });
+    connect(m_stake, &StakeClient::vaultDeposited, this, [this](double amount, const QString &currency) {
+        onLogMessage(tr("Deposited %1 %2 to vault.").arg(QString::number(amount, 'f', 8), currency), false);
+    });
+    connect(m_stake, &StakeClient::vaultFailed, this, [this](const QString &error) {
+        onLogMessage(tr("Vault deposit failed: %1").arg(error), true);
     });
     connect(m_ext, &IStakeTransport::readyChanged, this, &MainWindow::onExtensionReadyChanged);
     connect(m_ext, &ExtensionTransport::originRejected, this, [this](const QString &origin) {
@@ -509,6 +520,10 @@ MainWindow::MainWindow(QWidget *parent)
     });
     connect(m_engine, &BotEngine::seedRotationRequested, this,
             [this](const QString &clientSeed) { rotateSeed(true, clientSeed); });
+    // vault(amount) called from a Lua / JavaScript strategy (live mode)
+    connect(m_engine, &BotEngine::vaultRequested, this, [this](double amount) {
+        m_stake->vaultDeposit(amount);
+    });
     // `currency = "btc"` in a Lua / JavaScript strategy
     m_engine->setCurrencyHooks(
         [this]() { return m_engine->liveMode() ? m_live.currency : m_currencyTag.toLower(); },
@@ -656,6 +671,23 @@ void MainWindow::createActions()
 
 void MainWindow::createMenus()
 {
+    // Casino: which site the live bets go to. Stake keeps its login methods; Shuffle uses
+    // "Direct mode" (plain HTTPS + websocket, no WebView2 / browser extension).
+    QMenu *casinoMenu = menuBar()->addMenu(tr("&Casino"));
+    m_casinoGroup = new QActionGroup(this);
+    m_casinoGroup->setExclusive(true);
+    m_actCasinoStake = casinoMenu->addAction(tr("&Stake"));
+    m_actCasinoShuffle = casinoMenu->addAction(tr("S&huffle"));
+    for (QAction *a : {m_actCasinoStake, m_actCasinoShuffle}) {
+        a->setCheckable(true);
+        m_casinoGroup->addAction(a);
+    }
+    m_actCasinoStake->setChecked(true);
+    connect(m_actCasinoStake, &QAction::triggered, this,
+            [this] { onCasinoSelected(LiveSettings::Casino::Stake); });
+    connect(m_actCasinoShuffle, &QAction::triggered, this,
+            [this] { onCasinoSelected(LiveSettings::Casino::Shuffle); });
+
     QMenu *fileMenu = menuBar()->addMenu(tr("&File"));
     fileMenu->addAction(tr("E&xit"), qApp, &QApplication::closeAllWindows);
 
@@ -1138,6 +1170,55 @@ void MainWindow::onGameSelected(Game game)
     setGame(game);
 }
 
+void MainWindow::updateCasinoMenu()
+{
+    if (!m_actCasinoStake || !m_actCasinoShuffle)
+        return;
+    const QSignalBlocker blocker(m_casinoGroup);
+    (m_live.isShuffle() ? m_actCasinoShuffle : m_actCasinoStake)->setChecked(true);
+}
+
+void MainWindow::onCasinoSelected(LiveSettings::Casino casino)
+{
+    if (m_live.casino == casino)
+        return;
+    if (m_engine->isRunning() || m_engine->betInFlight()) {
+        updateCasinoMenu(); // undo the click: the running bot keeps its casino
+        onLogMessage(tr("Stop the running auto-bet before changing the casino."), true);
+        return;
+    }
+
+    // Each casino remembers its own bet currency.
+    m_currencyByCasino[int(m_live.casino)] = m_live.currency;
+
+    LiveSettings next = m_live;
+    next.casino = casino;
+    next.currency = m_currencyByCasino[int(casino)];
+
+    const bool wasLive = m_live.enabled;
+    applyLiveSettings(next);
+    if (wasLive) {
+        // Bets of two casinos must not share one history / balance.
+        resetSessionState();
+        m_clientSeedPending = true;
+    }
+    updateCasinoMenu();
+    onLogMessage(tr("Casino: %1 — open Tools → Options to enter its credentials and log in.")
+                     .arg(casino == LiveSettings::Casino::Shuffle ? tr("Shuffle") : tr("Stake")),
+                 false);
+}
+
+void MainWindow::closeHiddenBrowser()
+{
+    if (m_webTransport)
+        m_webTransport->setBrowser(nullptr);
+    if (m_hiddenBrowser) {
+        m_hiddenBrowser->close();
+        delete m_hiddenBrowser;
+        m_hiddenBrowser = nullptr;
+    }
+}
+
 void MainWindow::onRollOnce()
 {
     if (m_engine->isRunning())
@@ -1515,7 +1596,7 @@ void MainWindow::onBetTableContextMenu(const QPoint &pos)
 
     const QPoint globalPos = m_betTable->viewport()->mapToGlobal(pos);
     auto showMenu = [this, betId, globalPos](const QString &iid) {
-        const QString site = m_live.site;
+        const QString site = m_live.activeSite();
         const QString copyText = iid.isEmpty() ? betId : iid;
         const QUrl openUrl(iid.isEmpty()
                                ? QStringLiteral("https://%1/?betId=%2&modal=bet").arg(site, betId)
@@ -1524,11 +1605,12 @@ void MainWindow::onBetTableContextMenu(const QPoint &pos)
         QMenu menu;
         QAction *copyAct = menu.addAction(iid.isEmpty() ? tr("Copy Bet ID:  %1").arg(betId)
                                                         : tr("Copy IID:  %1").arg(iid));
-        QAction *openAct = menu.addAction(tr("Open in browser"));
+        // Only Stake's bet link format is known.
+        QAction *openAct = m_live.isShuffle() ? nullptr : menu.addAction(tr("Open in browser"));
         QAction *chosen = menu.exec(globalPos);
         if (chosen == copyAct)
             QApplication::clipboard()->setText(copyText);
-        else if (chosen == openAct)
+        else if (openAct && chosen == openAct)
             QDesktopServices::openUrl(openUrl);
     };
 
@@ -1719,6 +1801,8 @@ void MainWindow::onOpenOptions()
     if (!accepted) {
         // A login test may have reconfigured the connection with unsaved values.
         configureConnection(m_live);
+        if (!m_live.enabled)
+            m_shuffle->closeSocket(); // a login test may have left Shuffle's balance socket open
         return;
     }
 
@@ -1748,6 +1832,22 @@ void MainWindow::onOpenOptions()
 
 bool MainWindow::configureConnection(const LiveSettings &s, QString *errorOut)
 {
+    if (s.isShuffle()) {
+        // Direct mode: HTTPS + websocket straight from the app. No WebView2, no extension.
+        ShuffleCredentials sc;
+        sc.site = s.shuffleSite;
+        sc.token = s.shuffleToken;
+        sc.correlationUserId = s.correlationUserId;
+        sc.browserId = s.browserId;
+        m_shuffle->setCredentials(sc);
+        m_ext->stop();
+        closeHiddenBrowser();
+        m_stake->setTransport(m_shuffle);
+        m_stake->setCurrency(s.currency);
+        return true;
+    }
+    m_shuffle->closeSocket();
+
     StakeCredentials cred;
     cred.site = s.site;
     cred.apiKey = s.apiKey;
@@ -1846,10 +1946,13 @@ void MainWindow::applyLiveSettings(const LiveSettings &requested)
         m_stake->fetchBalances();
         m_balanceTimer->start();
         onLogMessage(tr("Live betting enabled (%1, %2). Fetching balance…")
-                         .arg(m_live.site, m_live.extensionMode ? tr("extension") : tr("cookie")),
+                         .arg(m_live.activeSite(),
+                              m_live.isShuffle() ? tr("direct")
+                                                 : (m_live.extensionMode ? tr("extension") : tr("cookie"))),
                      false);
     } else {
         m_balanceTimer->stop();
+        m_shuffle->closeSocket();
         if (modeChanged)
             onLogMessage(tr("Back to simulation (play money)."), false);
     }
@@ -1864,28 +1967,47 @@ void MainWindow::onBalancesReady(const QMap<QString, double> &balances)
 	m_isLoggedIn = true; 
     // Pick the currency: what the dialog (if open) or the saved settings say,
     // otherwise the first one the account has.
+    // Shuffle pushes one currency at a time, so a chosen currency whose balance has not
+    // arrived yet is waited for instead of being replaced by whichever arrived first.
+    const bool shuffle = m_live.isShuffle();
     QString cur = m_optionsDialog ? m_optionsDialog->liveSettings().currency : m_live.currency;
-    if (cur.isEmpty() || !balances.contains(cur))
+    if (cur.isEmpty() || (!shuffle && !balances.contains(cur)))
         cur = codes.value(0);
 
     if (m_optionsDialog) {
-        m_optionsDialog->setLiveCurrencies(codes, cur);
-        m_optionsDialog->setLoginStatus(
-            tr("Logged in — %1 %2 available").arg(formatAmount(balances.value(cur), 8), cur.toUpper()),
-            true);
+        QStringList shown = codes;
+        if (!cur.isEmpty() && !shown.contains(cur))
+            shown.prepend(cur);
+        m_optionsDialog->setLiveCurrencies(shown, cur);
+        if (balances.contains(cur))
+            m_optionsDialog->setLoginStatus(
+                tr("Logged in — %1 %2 available")
+                    .arg(formatAmount(balances.value(cur), 8), cur.toUpper()),
+                true);
+        else
+            m_optionsDialog->setLoginStatus(
+                tr("Connected — waiting for the %1 balance…").arg(cur.toUpper()), true);
     }
 
     if (!m_live.enabled)
         return;
 
-    if (m_live.currency.isEmpty() || !balances.contains(m_live.currency)) {
+    if (m_live.currency.isEmpty() || (!shuffle && !balances.contains(m_live.currency))) {
         m_live.currency = cur;
         m_stake->setCurrency(cur);
         onLogMessage(tr("Betting currency set to %1.").arg(cur.toUpper()), false);
     }
+    if (!balances.contains(m_live.currency)) {
+        updateConnectionStatus(); // Shuffle: the balance of the chosen currency is still to come
+        return;
+    }
 
     const double balance = balances.value(m_live.currency);
-    m_engine->syncBalance(balance);
+    // Shuffle's websocket reports the new balance right after each bet, usually before the
+    // bet's own answer is processed. Re-syncing then would count that bet twice, so while a
+    // bet is pending or an auto-bet runs the engine's own running balance is kept.
+    if (!(shuffle && (m_engine->betInFlight() || m_engine->isRunning())))
+        m_engine->syncBalance(balance);
     m_manualPanel->setStartBalance(m_engine->stats().balance);
     updateSessionWidgets();
     updateStatusWidgets();
@@ -1987,8 +2109,10 @@ void MainWindow::updateModeWidgets()
         QString why;
         const bool ready = m_stake->transport() && m_stake->transport()->isReady(&why);
         m_statusMode->setText(tr("%1 · %2%3")
-                                  .arg(m_live.site,
-                                       m_live.extensionMode ? tr("extension") : tr("cookie"),
+                                  .arg(m_live.activeSite(),
+                                       m_live.isShuffle() ? tr("direct")
+                                                          : (m_live.extensionMode ? tr("extension")
+                                                                                  : tr("cookie")),
                                        ready ? QString() : tr(" (not connected)")));
         m_statusMode->setStyleSheet(QStringLiteral("color:#c9372a;font-weight:bold;"));
     } else {
@@ -2339,9 +2463,16 @@ void MainWindow::loadSettings()
     // Live connection settings. `enabled` is deliberately never restored: every
     // launch starts in simulation and live betting must be switched on again.
     settings.beginGroup(QStringLiteral("Live"));
+    m_live.casino = settings.value(QStringLiteral("casino"), QStringLiteral("stake")).toString()
+                            == QLatin1String("shuffle")
+                        ? LiveSettings::Casino::Shuffle
+                        : LiveSettings::Casino::Stake;
     m_live.site = settings.value(QStringLiteral("site"), m_live.site).toString();
+    m_live.shuffleSite = settings.value(QStringLiteral("shuffleSite"), m_live.shuffleSite).toString();
     m_live.extensionMode = settings.value(QStringLiteral("extensionMode"), false).toBool();
-    m_live.currency = settings.value(QStringLiteral("currency")).toString();
+    m_currencyByCasino[0] = settings.value(QStringLiteral("currency")).toString();
+    m_currencyByCasino[1] = settings.value(QStringLiteral("shuffleCurrency")).toString();
+    m_live.currency = m_currencyByCasino[int(m_live.casino)];
     m_live.remember = settings.value(QStringLiteral("remember"), false).toBool();
 	m_live.enabled = settings.value(QStringLiteral("enabled"), false).toBool();
 	
@@ -2349,8 +2480,12 @@ void MainWindow::loadSettings()
         m_live.apiKey = settings.value(QStringLiteral("apiKey")).toString();
         m_live.clearance = settings.value(QStringLiteral("clearance")).toString();
         m_live.userAgent = settings.value(QStringLiteral("userAgent")).toString();
+        m_live.shuffleToken = settings.value(QStringLiteral("shuffleToken")).toString();
+        m_live.correlationUserId = settings.value(QStringLiteral("correlationUserId")).toString();
+        m_live.browserId = settings.value(QStringLiteral("browserId")).toString();
     }
     settings.endGroup();
+    updateCasinoMenu();
 
     BotConfig cfg;
     settings.beginGroup(QStringLiteral("AutoBet"));
@@ -2394,10 +2529,15 @@ void MainWindow::saveSettings()
     settings.setValue(QStringLiteral("General/game"), gameName(m_game));
     settings.setValue(QStringLiteral("General/darkTheme"), m_actDarkTheme->isChecked());
 
+    m_currencyByCasino[int(m_live.casino)] = m_live.currency;
     settings.beginGroup(QStringLiteral("Live"));
+    settings.setValue(QStringLiteral("casino"),
+                      m_live.isShuffle() ? QStringLiteral("shuffle") : QStringLiteral("stake"));
     settings.setValue(QStringLiteral("site"), m_live.site);
+    settings.setValue(QStringLiteral("shuffleSite"), m_live.shuffleSite);
     settings.setValue(QStringLiteral("extensionMode"), m_live.extensionMode);
-    settings.setValue(QStringLiteral("currency"), m_live.currency);
+    settings.setValue(QStringLiteral("currency"), m_currencyByCasino[0]);
+    settings.setValue(QStringLiteral("shuffleCurrency"), m_currencyByCasino[1]);
     settings.setValue(QStringLiteral("remember"), m_live.remember);
 	settings.setValue(QStringLiteral("enabled"), m_live.enabled);
 	
@@ -2405,10 +2545,16 @@ void MainWindow::saveSettings()
         settings.setValue(QStringLiteral("apiKey"), m_live.apiKey);
         settings.setValue(QStringLiteral("clearance"), m_live.clearance);
         settings.setValue(QStringLiteral("userAgent"), m_live.userAgent);
+        settings.setValue(QStringLiteral("shuffleToken"), m_live.shuffleToken);
+        settings.setValue(QStringLiteral("correlationUserId"), m_live.correlationUserId);
+        settings.setValue(QStringLiteral("browserId"), m_live.browserId);
     } else { // unticking "remember" wipes what was stored before
         settings.remove(QStringLiteral("apiKey"));
         settings.remove(QStringLiteral("clearance"));
         settings.remove(QStringLiteral("userAgent"));
+        settings.remove(QStringLiteral("shuffleToken"));
+        settings.remove(QStringLiteral("correlationUserId"));
+        settings.remove(QStringLiteral("browserId"));
     }
     settings.endGroup();
 
@@ -2448,6 +2594,8 @@ void MainWindow::closeEvent(QCloseEvent *event)
         delete m_webTransport;
         m_webTransport = nullptr;
     }
+    if (m_shuffle)
+        m_shuffle->closeSocket();
     // ----------------------
 
     if (!m_discardSettings)

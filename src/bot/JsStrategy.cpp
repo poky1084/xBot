@@ -68,7 +68,19 @@ private:
 // the JsHost object; objects are printed as JSON.
 const char kPrelude[] = R"JS(
 (function (host, g) {
+    function num(v) {
+        var s = String(v);
+        if (!isFinite(v) || s.indexOf("e") < 0) return s;
+        // Expand exponent notation (2.26e-6 -> 0.00000226).
+        var m = s.match(/^(-?)(\d+)(?:\.(\d+))?e([+-]\d+)$/);
+        if (!m) return s;
+        var digits = m[2] + (m[3] || ""), exp = parseInt(m[4], 10) + m[2].length;
+        if (exp <= 0) return m[1] + "0." + new Array(1 - exp).join("0") + digits;
+        if (exp >= digits.length) return m[1] + digits + new Array(exp - digits.length + 1).join("0");
+        return m[1] + digits.slice(0, exp) + "." + digits.slice(exp);
+    }
     function fmt(v) {
+        if (typeof v === "number") return num(v);
         if (typeof v === "string") return v;
         if (v === null) return "null";
         if (v === undefined) return "undefined";
@@ -92,6 +104,9 @@ const char kPrelude[] = R"JS(
     g.resetstats = function () { host.resetStats(); };
     g.resetseed = function (seed) {
         host.resetSeed(seed === undefined || seed === null ? "" : String(seed));
+    };
+    g.vault = function (amount) {
+        host.vault(amount === undefined || amount === null ? NaN : Number(amount));
     };
     g.console = {
         log: out, info: out, debug: out, warn: out,

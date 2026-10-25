@@ -6,6 +6,7 @@
 #include <QString>
 
 #include <memory>
+#include <cmath>
 
 class QJSEngine;
 class QJSValue;
@@ -29,6 +30,13 @@ public:
     Q_INVOKABLE void stop(const QString &reason) { m_owner->requestStop(reason); }
     Q_INVOKABLE void resetStats() { m_owner->requestResetStats(); }
     Q_INVOKABLE void resetSeed(const QString &clientSeed) { m_owner->requestResetSeed(clientSeed); }
+    Q_INVOKABLE void vault(double amount)
+    {
+        if (std::isnan(amount))
+            m_owner->log(QStringLiteral("Please specify vault amount."), true);
+        else
+            m_owner->requestVault(amount);
+    }
 
 private:
     ScriptStrategy *m_owner;
@@ -64,6 +72,7 @@ private:
 //                 alphanumeric one is used. Safe to call at any time; in live mode the
 //                 rotation waits for a bet in flight and the next bet waits until the
 //                 server confirmed it.
+//   vault(amount)  deposits amount of the current currency into the vault (live mode), e.g. vault(0.001).
 //
 // Sandbox: QJSEngine has no file, network or OS access. A call that runs longer
 // than the time limit is interrupted. Unlike Lua there is no memory limit.

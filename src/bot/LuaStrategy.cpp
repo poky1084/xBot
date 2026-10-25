@@ -8,6 +8,8 @@ extern "C" {
 
 #include <QByteArray>
 #include <QDateTime>
+#include <QLocale>
+#include <QString>
 
 #include <algorithm>
 #include <cmath>
@@ -341,6 +343,18 @@ QString joinArgs(lua_State *L)
     QStringList parts;
     const int n = lua_gettop(L);
     for (int i = 1; i <= n; ++i) {
+        // Floats are written in full positional notation (0.00000226) instead of
+        // Lua's default scientific notation (2.26e-06).
+        if (lua_type(L, i) == LUA_TNUMBER && !lua_isinteger(L, i)) {
+            const double v = lua_tonumber(L, i);
+            if (std::isfinite(v)) {
+                QString txt = QString::number(v, 'f', QLocale::FloatingPointShortest);
+                if (!txt.contains(QLatin1Char('.')))
+                    txt += QStringLiteral(".0"); // keep Lua's "5.0" for whole floats
+                parts << txt;
+                continue;
+            }
+        }
         size_t len = 0;
         const char *s = luaL_tolstring(L, i, &len);
         parts << QString::fromUtf8(s, int(len));
@@ -391,6 +405,20 @@ int l_resetseed(lua_State *L)
     }
     if (LuaStrategy *s = self(L))
         s->requestResetSeed(seed);
+    return 0;
+}
+
+// vault(amount): deposits `amount` of the current currency into the vault (Shuffle, live).
+int l_vault(lua_State *L)
+{
+    LuaStrategy *s = self(L);
+    if (!s)
+        return 0;
+    if (lua_gettop(L) < 1 || !lua_isnumber(L, 1)) {
+        s->log(QStringLiteral("Please specify vault amount."), true);
+        return 0;
+    }
+    s->requestVault(static_cast<double>(lua_tonumber(L, 1)));
     return 0;
 }
 
@@ -556,6 +584,8 @@ LuaStrategy::Status LuaStrategy::init(const QString &source, double balance,
     lua_setglobal(m_L, "resetstats");
     lua_pushcfunction(m_L, l_resetseed);
     lua_setglobal(m_L, "resetseed");
+    lua_pushcfunction(m_L, l_vault);
+    lua_setglobal(m_L, "vault");
 
     lua_newtable(m_L); // minimal os table
     lua_pushcfunction(m_L, l_ostime);

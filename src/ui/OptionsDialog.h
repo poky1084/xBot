@@ -7,6 +7,8 @@
 class QCheckBox;
 class QComboBox;
 class QDoubleSpinBox;
+class QFormLayout;
+class QGroupBox;
 class QLabel;
 class QLineEdit;
 class QPushButton;
@@ -53,6 +55,10 @@ signals:
 
 private:
     void updateAuthFields();
+    // Adapts the "Live betting" box to the casino chosen in the Casino menu
+    // (Shuffle: Token, Direct mode only, CORRELATION_USER_ID, BROWSER_ID).
+    void applyCasinoUi();
+    void setFormRowVisible(QWidget *field, bool visible);
     void onClearData();
 	void onGrabCookie();
     QComboBox *m_themeCombo = nullptr;
@@ -60,6 +66,13 @@ private:
     QDoubleSpinBox *m_startBalanceSpin = nullptr;
     QLineEdit *m_clientSeedEdit = nullptr;
     QCheckBox *m_randomSeedCheck = nullptr;
+
+    LiveSettings m_base;            // settings last handed to setLiveSettings()
+    bool m_shuffle = false;
+    QGroupBox *m_liveBox = nullptr;
+    QFormLayout *m_liveForm = nullptr;
+    QLineEdit *m_correlationEdit = nullptr;
+    QLineEdit *m_browserIdEdit = nullptr;
 
     QCheckBox *m_liveEnable = nullptr;
     QComboBox *m_authCombo = nullptr;

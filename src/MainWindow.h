@@ -37,6 +37,7 @@ class LogWidget;
 class LuaEditorDock;
 class ManualBetPanel;
 class OptionsDialog;
+class ShuffleTransport;
 class SimulatedProvider;
 class StakeClient;
 
@@ -82,6 +83,7 @@ private slots:
     void onRunScript(const QString &script, ScriptLanguage language);
     void onAbout();
     void onGameSelected(Game game);
+    void onCasinoSelected(LiveSettings::Casino casino);
 
     // Live betting
     void onBalancesReady(const QMap<QString, double> &balances);
@@ -117,6 +119,8 @@ private:
     void loadConditions();
     void saveConditions();
 	void updateConnectionStatus();
+    void updateCasinoMenu();
+    void closeHiddenBrowser();
 	
     // Live betting helpers
     bool configureConnection(const LiveSettings &settings, QString *errorOut = nullptr);
@@ -149,6 +153,11 @@ private:
     StakeClient *m_stake = nullptr;
     CookieTransport *m_cookie = nullptr;
     ExtensionTransport *m_ext = nullptr;
+    ShuffleTransport *m_shuffle = nullptr;   // Shuffle "Direct mode" (no WebView2 / extension)
+    QActionGroup *m_casinoGroup = nullptr;   // Casino menu: Stake / Shuffle
+    QAction *m_actCasinoStake = nullptr;
+    QAction *m_actCasinoShuffle = nullptr;
+    QString m_currencyByCasino[2];           // bet currency remembered per casino (Stake, Shuffle)
     QTimer *m_balanceTimer = nullptr;
     LiveSettings m_live;
     QPointer<OptionsDialog> m_optionsDialog;

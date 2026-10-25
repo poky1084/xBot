@@ -51,6 +51,8 @@ struct lua_State;
 //                        10-character alphanumeric client seed is used. Safe to call
 //                        at any time; in live mode the rotation waits for a bet that is
 //                        in flight and the next bet waits until the server confirmed it
+//         vault(amount)  deposits amount of the current currency into the vault (live
+//                        mode), e.g. vault(0.001)
 //
 // Syntax extras (translated to plain Lua before compiling): "!x" = "not x", "!=" = "~=",
 // and the compound assignments += -= *= /= //= %= ^= ..= ("nextbet *= 2").

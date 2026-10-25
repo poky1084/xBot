@@ -37,6 +37,8 @@ set(SOURCES
 	src/bot/ScriptStrategy.h
 	src/bot/JsStrategy.cpp
 	src/bot/JsStrategy.h
+	src/bot/ShuffleTransport.cpp
+	src/bot/ShuffleTransport.h
     src/ui/BetHistoryModel.cpp
     src/ui/BetHistoryModel.h
     src/ui/BalanceGraphWidget.cpp

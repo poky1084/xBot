@@ -2,7 +2,9 @@
 
 #include "bot/StakeTransport.h"
 
+#include <QList>
 #include <QMap>
+#include <QMetaObject>
 #include <QObject>
 #include <QString>
 
@@ -57,11 +59,14 @@ class StakeClient : public QObject
 public:
     explicit StakeClient(QObject *parent = nullptr);
 
-    void setTransport(IStakeTransport *transport) { m_transport = transport; }
+    // The transport decides the casino: a ShuffleTransport switches this client to
+    // Shuffle's GraphQL API (dice only; balances come from its websocket).
+    void setTransport(IStakeTransport *transport);
     IStakeTransport *transport() const { return m_transport; }
+    bool isShuffle() const;
 
     // API currency code, lowercase ("btc", "usdt", ...).
-    void setCurrency(const QString &currency) { m_currency = currency.trimmed().toLower(); }
+    void setCurrency(const QString &currency);
     QString currency() const { return m_currency; }
 
     // Login check + balances (UserBalances GraphQL query).
@@ -73,6 +78,10 @@ public:
     // RotateSeedPair GraphQL mutation: sets a new client seed and rotates the
     // server seed. Result arrives through seedRotated() / seedRotateFailed().
     void rotateSeedPair(const QString &clientSeed);
+
+    // Moves `amount` of the current currency into the vault (Shuffle: VaultDeposit,
+    // Stake: CreateVaultDeposit mutation). Result arrives through vaultDeposited() / vaultFailed().
+    void vaultDeposit(double amount);
 
     // BetLookup GraphQL query: resolves a numeric bet id to its public iid
     // ("casino:xxxx") used by the ?modal=bet&iid= link. `done` is called exactly
@@ -94,10 +103,18 @@ signals:
                      const QString &seedHash, const QString &nextSeedHash);
     void seedRotateFailed(const QString &error);
 
+    // Result of vaultDeposit(): the deposited amount (as confirmed by the server) / the error.
+    void vaultDeposited(double amount, const QString &currency);
+    void vaultFailed(const QString &error);
+
 private:
     void postBet(const QString &endpoint, const QJsonObject &body, double requestedAmount);
+    void placeShuffleDice(const DiceBetRequest &request);
+    void rotateShuffleSeed(const QString &clientSeed);
+    void stakeVaultDeposit(double amount);
     static QString randomIdentifier();
 
     IStakeTransport *m_transport = nullptr;
+    QList<QMetaObject::Connection> m_shuffleConnections;
     QString m_currency;
 };
