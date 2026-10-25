@@ -55,6 +55,20 @@ public:
     void closeSocket();
     bool socketReady() const { return m_acked; }
 
+    // Keep-alive: while on, the balance socket is opened as soon as the credentials are
+    // complete and reopened after every drop (backing off 3 s .. 30 s), so the balances
+    // stay current even while another casino is the active one. Not retried after the
+    // server rejected the token (4401 / 4403) until the credentials change.
+    void setKeepAlive(bool on);
+    bool keepAlive() const { return m_keepAlive; }
+
+    // True when the socket is logged in and `currency` (lowercase) has been refreshed since
+    // it was opened, i.e. the last balance reported for it can be trusted right now.
+    bool hasFreshBalance(const QString &currency) const
+    {
+        return m_acked && m_fresh.contains(currency.trimmed().toLower());
+    }
+
 signals:
     // Every balance known so far (lowercase currency code -> available amount).
     void balancesUpdated(const QMap<QString, double> &balances);
@@ -63,7 +77,8 @@ signals:
 private:
     QString correlationId() const;
     QString bearerToken() const;
-    void openSocket();
+    void openSocket(bool automaticRetry = false);
+    void scheduleReconnect();
     void onSocketText(const QString &message);
     void onSocketClosed();
     void sendJson(const QJsonObject &obj);
@@ -78,6 +93,10 @@ private:
     QPointer<QWebSocket> m_socket;
     QTimer *m_ackTimer = nullptr;       // no connection_ack in time
     QTimer *m_fallbackTimer = nullptr;  // no balance pushed in time -> read it over HTTPS
+    QTimer *m_reconnectTimer = nullptr; // keep-alive: reopen the socket after a drop
+    bool m_keepAlive = false;
+    bool m_authRejected = false;        // 4401 / 4403: do not retry until the credentials change
+    int m_retryDelayMs = 3000;
     bool m_acked = false;
     bool m_connectFailureReported = false;
     bool m_httpInFlight = false;

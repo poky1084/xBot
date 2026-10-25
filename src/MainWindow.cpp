@@ -440,6 +440,10 @@ MainWindow::MainWindow(QWidget *parent)
     m_balanceTimer = new QTimer(this);
     m_balanceTimer->setInterval(10000);
     connect(m_balanceTimer, &QTimer::timeout, this, &MainWindow::onBalanceTimer);
+    connect(m_shuffle, &ShuffleTransport::balancesUpdated, this,
+            &MainWindow::onShuffleBalancesUpdated);
+    connect(m_shuffle, &ShuffleTransport::balancesFailed, this,
+            &MainWindow::onShuffleBackgroundError);
     connect(m_stake, &StakeClient::balancesReady, this, &MainWindow::onBalancesReady);
     connect(m_stake, &StakeClient::balancesFailed, this, &MainWindow::onBalancesFailed);
 	connect(m_stake, &StakeClient::sessionLost, this, [this](const QString &reason) {
@@ -1843,8 +1847,7 @@ void MainWindow::onOpenOptions()
     if (!accepted) {
         // A login test may have reconfigured the connection with unsaved values.
         configureConnection(m_live);
-        if (!m_live.enabled)
-            m_shuffle->closeSocket(); // a login test may have left Shuffle's balance socket open
+        updateShuffleBackground(m_live); // closes a socket a login test may have left open
         return;
     }
 
@@ -1943,9 +1946,20 @@ bool MainWindow::configureConnection(const LiveSettings &s, QString *errorOut)
         }
         m_stake->setTransport(m_shuffle);
         m_stake->setCurrency(s.currency);
+        updateShuffleBackground(s, false);
         return true;
     }
-    m_shuffle->closeSocket();
+    // Stake is active: Shuffle's balance socket stays open in the background (when Shuffle
+    // credentials are filled in), so its balance is current the moment we switch back.
+    {
+        ShuffleCredentials sc;
+        sc.site = s.shuffleSite;
+        sc.token = s.shuffleToken;
+        sc.correlationUserId = s.correlationUserId;
+        sc.browserId = s.browserId;
+        m_shuffle->setCredentials(sc);
+        updateShuffleBackground(s, false);
+    }
 
     StakeCredentials cred;
     cred.site = s.site;
@@ -2003,6 +2017,11 @@ void MainWindow::applyLiveSettings(const LiveSettings &requested)
     m_engine->setLiveEnabled(live); // also marks the balance as "not yet fetched"
     if (casinoChanged && live)
         m_engine->invalidateLiveBalance(); // the old casino's balance must not be used for the new one
+    refreshShuffleBalanceVar();
+    // Switching to Shuffle: its balance has been tracked in the background, so load it into
+    // the session stats right now instead of waiting for a new login round trip.
+    if (live && m_live.isShuffle())
+        loadCachedShuffleBalance();
     // Bet sizes always carry 8 decimals and 0 is a valid bet, in both modes.
     m_manualPanel->setBetPrecision(8, 0.0);
     m_autoPanel->setBetPrecision(8, 0.0);
@@ -2027,7 +2046,7 @@ void MainWindow::applyLiveSettings(const LiveSettings &requested)
                      false);
     } else {
         m_balanceTimer->stop();
-        m_shuffle->closeSocket();
+        updateShuffleBackground(m_live); // live is off: stops and closes the Shuffle socket
         if (modeChanged)
             onLogMessage(tr("Back to simulation (play money)."), false);
     }
@@ -2070,6 +2089,7 @@ void MainWindow::onBalancesReady(const QMap<QString, double> &balances)
     if (m_live.currency.isEmpty() || (!shuffle && !balances.contains(m_live.currency))) {
         m_live.currency = cur;
         m_stake->setCurrency(cur);
+        refreshShuffleBalanceVar();
         onLogMessage(tr("Betting currency set to %1.").arg(cur.toUpper()), false);
     }
     if (!balances.contains(m_live.currency)) {
@@ -2087,6 +2107,72 @@ void MainWindow::onBalancesReady(const QMap<QString, double> &balances)
     updateSessionWidgets();
     updateStatusWidgets();
 	updateConnectionStatus();
+}
+
+// ------------------------------------------------------- Shuffle balance cache
+
+QString MainWindow::shuffleCurrency() const
+{
+    return (m_live.isShuffle() ? m_live.currency : m_currencyByCasino[1]).trimmed().toLower();
+}
+
+// Recompute m_shuffleBalance (the Shuffle bet currency's balance) from the cache.
+void MainWindow::refreshShuffleBalanceVar()
+{
+    const QString cur = shuffleCurrency();
+    m_shuffleBalanceKnown = !cur.isEmpty() && m_shuffleBalances.contains(cur);
+    m_shuffleBalance = m_shuffleBalanceKnown ? m_shuffleBalances.value(cur) : 0.0;
+}
+
+// Every BalanceUpdated push (and the HTTPS read after connecting) lands here, whichever
+// casino is active - this does not go through StakeClient.
+void MainWindow::onShuffleBalancesUpdated(const QMap<QString, double> &balances)
+{
+    m_shuffleBalances = balances;
+    m_lastShuffleBgError.clear();
+    refreshShuffleBalanceVar();
+}
+
+// Errors of the background socket while Stake is active (when Shuffle is active they come
+// through onBalancesFailed). Logged once per distinct message.
+void MainWindow::onShuffleBackgroundError(const QString &error)
+{
+    if (m_live.isShuffle() || !m_live.enabled)
+        return;
+    if (error == m_lastShuffleBgError)
+        return;
+    m_lastShuffleBgError = error;
+    onLogMessage(tr("Shuffle balance (background): %1").arg(error), true);
+}
+
+// Background socket policy: run while live betting is on and the Shuffle credentials are
+// complete, whichever casino is active.
+void MainWindow::updateShuffleBackground(const LiveSettings &s, bool closeIfOff)
+{
+    const bool want = s.enabled && m_shuffle->isReady();
+    m_shuffle->setKeepAlive(want);
+    if (want)
+        m_shuffle->requestBalances(); // opens the socket when it is not open yet
+    else if (closeIfOff)
+        m_shuffle->closeSocket();
+}
+
+// Puts the cached Shuffle balance into the session stats. Only done when the socket is
+// logged in and the figure was refreshed since, otherwise the normal fetch path is used.
+bool MainWindow::loadCachedShuffleBalance()
+{
+    const QString cur = m_live.currency.trimmed().toLower();
+    if (cur.isEmpty() || !m_shuffleBalances.contains(cur) || !m_shuffle->hasFreshBalance(cur))
+        return false;
+
+    m_balances = m_shuffleBalances;
+    m_isLoggedIn = true;
+    m_engine->syncBalance(m_shuffleBalances.value(cur));
+    m_manualPanel->setStartBalance(m_engine->stats().balance);
+    updateSessionWidgets();
+    updateStatusWidgets();
+    updateConnectionStatus();
+    return true;
 }
 
 void MainWindow::onBalancesFailed(const QString &error)
@@ -2182,6 +2268,7 @@ bool MainWindow::switchCurrencyFromScript(const QString &currency, double &balan
     }
     m_live.currency = cur;
     m_stake->setCurrency(cur);
+    refreshShuffleBalanceVar();
     balance = m_balances.value(cur);
     m_stake->fetchBalances(); // refresh the figure for the new currency
     return true;

@@ -20,6 +20,8 @@ namespace
 constexpr int kRequestTimeoutMs = 15000;
 constexpr int kAckTimeoutMs = 10000;
 constexpr int kBalanceFallbackMs = 3000;
+constexpr int kRetryMinMs = 3000;
+constexpr int kRetryMaxMs = 30000;
 
 const char kGraphqlPath[] = "main-api/graphql/api/graphql";
 
@@ -85,6 +87,13 @@ ShuffleTransport::ShuffleTransport(QObject *parent)
         // connection over HTTPS (values pushed by the websocket are never overwritten).
         fetchBalancesHttp();
     });
+
+    m_reconnectTimer = new QTimer(this);
+    m_reconnectTimer->setSingleShot(true);
+    connect(m_reconnectTimer, &QTimer::timeout, this, [this] {
+        if (m_keepAlive && !m_socket && !m_authRejected && isReady())
+            openSocket(true);
+    });
 }
 
 ShuffleTransport::~ShuffleTransport()
@@ -115,6 +124,10 @@ void ShuffleTransport::setCredentials(const ShuffleCredentials &cred)
         m_fresh.clear();
         m_wsFresh.clear();
         m_httpInFlight = false;
+        m_authRejected = false;
+        m_retryDelayMs = kRetryMinMs;
+        if (m_keepAlive && isReady())
+            m_reconnectTimer->start(0); // new credentials: reconnect right away
     }
     if (wasReady != isReady())
         emit readyChanged(isReady());
@@ -307,11 +320,12 @@ void ShuffleTransport::requestBalances()
         fetchBalancesHttp();
 }
 
-void ShuffleTransport::openSocket()
+void ShuffleTransport::openSocket(bool automaticRetry)
 {
     closeSocket();
     m_acked = false;
-    m_connectFailureReported = false;
+    if (!automaticRetry) // a silent keep-alive retry must not repeat the same error message
+        m_connectFailureReported = false;
     m_balances.clear(); // values cached before (e.g. before switching to Stake and back) are stale
     m_fresh.clear();
     m_wsFresh.clear();
@@ -369,6 +383,7 @@ void ShuffleTransport::closeSocket()
 {
     m_ackTimer->stop();
     m_fallbackTimer->stop();
+    m_reconnectTimer->stop();
     m_acked = false;
     if (m_socket) {
         QWebSocket *s = m_socket;
@@ -390,8 +405,9 @@ void ShuffleTransport::failConnection(const QString &why)
 {
     const bool wasAcked = m_acked;
     closeSocket();
-    // After a successful login a dropped socket is reopened by the next requestBalances()
-    // (the main window polls every few seconds) without bothering the user.
+    scheduleReconnect(); // keep-alive: no-op unless enabled
+    // After a successful login a dropped socket is reopened without bothering the user
+    // (keep-alive, or the next requestBalances() when the main window polls).
     if (wasAcked || m_connectFailureReported)
         return;
     m_connectFailureReported = true;
@@ -403,6 +419,8 @@ void ShuffleTransport::onSocketClosed()
     const int code = m_socket ? int(m_socket->closeCode()) : 0;
     const QString reason = m_socket ? m_socket->closeReason() : QString();
     QString why;
+    if (code == 4401 || code == 4403)
+        m_authRejected = true;
     if (code == 4401)
         why = tr("Shuffle websocket: unauthorized (4401) — the token was rejected or has expired.");
     else if (code == 4403)
@@ -425,6 +443,8 @@ void ShuffleTransport::onSocketText(const QString &message)
     if (type == QLatin1String("connection_ack")) {
         m_ackTimer->stop();
         m_acked = true;
+        m_connectFailureReported = false;
+        m_retryDelayMs = kRetryMinMs;
 
         QJsonObject sub;
         sub.insert(QStringLiteral("id"), QUuid::createUuid().toString(QUuid::WithoutBraces));
@@ -480,6 +500,28 @@ void ShuffleTransport::onSocketText(const QString &message)
         emit balancesFailed(tr("Balance subscription error: %1")
                                 .arg(msg.isEmpty() ? QStringLiteral("unknown") : msg));
     }
+}
+
+void ShuffleTransport::setKeepAlive(bool on)
+{
+    if (m_keepAlive == on)
+        return;
+    m_keepAlive = on;
+    if (!on) {
+        m_reconnectTimer->stop();
+        return;
+    }
+    m_retryDelayMs = kRetryMinMs;
+    if (!m_socket && !m_authRejected && isReady())
+        openSocket();
+}
+
+void ShuffleTransport::scheduleReconnect()
+{
+    if (!m_keepAlive || m_authRejected || m_socket || !isReady())
+        return;
+    m_reconnectTimer->start(m_retryDelayMs);
+    m_retryDelayMs = qMin(m_retryDelayMs * 2, kRetryMaxMs);
 }
 
 void ShuffleTransport::emitBalances()

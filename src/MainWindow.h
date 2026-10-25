@@ -122,6 +122,14 @@ private:
     void updateCasinoMenu();
     void closeHiddenBrowser();
     void ensureHiddenBrowser(const LiveSettings &s);
+
+    // Shuffle balance cache: kept current by Shuffle's own websocket, whichever casino is active.
+    void onShuffleBalancesUpdated(const QMap<QString, double> &balances);
+    void onShuffleBackgroundError(const QString &error);
+    void updateShuffleBackground(const LiveSettings &s, bool closeIfOff = true); // run / stop the background socket
+    QString shuffleCurrency() const;                     // bet currency of Shuffle (active or not)
+    void refreshShuffleBalanceVar();
+    bool loadCachedShuffleBalance();                     // instant load into the session stats
 	
     // Live betting helpers
     bool configureConnection(const LiveSettings &settings, QString *errorOut = nullptr);
@@ -268,6 +276,13 @@ private:
 
     QString m_currencyTag = QStringLiteral("USDT");
     QMap<QString, double> m_balances; // last balances fetched from the server (lowercase code -> amount)
+
+    // Shuffle's current balance, updated on every BalanceUpdated push even while Stake is the
+    // active casino. m_shuffleBalance is the one of the Shuffle bet currency; the map holds all.
+    QMap<QString, double> m_shuffleBalances;
+    double m_shuffleBalance = 0.0;
+    bool m_shuffleBalanceKnown = false;
+    QString m_lastShuffleBgError;
     double m_startBalance = BotConstants::kStartBalance;
 
     // Rolling betting-speed measurement (bets per second).
