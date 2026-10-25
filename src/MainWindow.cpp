@@ -915,8 +915,8 @@ void MainWindow::createCentralWidget()
     connect(m_betTable, &QWidget::customContextMenuRequested, this,
             &MainWindow::onBetTableContextMenu);
 
-    // Game, #, Nonce, Time, Amount, Target, Roll, Multiplier, Payout, Profit, Bet ID
-    const int widths[] = {56, 44, 64, 76, 90, 76, 64, 80, 90, 96, 64};
+    // Game, #, Nonce, Time, Amount, Target, Roll, Multiplier, Payout, Profit, Bet ID, Casino
+    const int widths[] = {56, 44, 64, 76, 90, 76, 64, 80, 90, 96, 64, 72};
     for (int c = 0; c < BetHistoryModel::ColumnCount; ++c)
         m_betTable->setColumnWidth(c, widths[c]);
 

@@ -22,7 +22,8 @@ public:
         ColMultiplier,
         ColPayout,
         ColProfit,
-        ColBetId,       // last column: "View" link -> click resolves to the public iid
+        ColBetId,       // "View" link -> click resolves to the public iid
+        ColCasino,      // last column: casino the bet was played on
         ColumnCount
     };
 

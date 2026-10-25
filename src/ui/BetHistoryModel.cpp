@@ -68,6 +68,10 @@ QVariant BetHistoryModel::data(const QModelIndex &index, int role) const
             return {};
         return m_resolved.contains(rec.betId) ? m_resolved.value(rec.betId)
                                               : QStringLiteral("View");
+    case ColCasino:
+        if (rec.casino.isEmpty())
+            return {};
+        return rec.casino.at(0).toUpper() + rec.casino.mid(1);
     case ColGame:
         return rec.game == Game::Limbo ? QStringLiteral("limbo") : QStringLiteral("dice");
     case ColIndex:
@@ -105,6 +109,8 @@ QVariant BetHistoryModel::headerData(int section, Qt::Orientation orientation, i
     switch (section) {
     case ColBetId:
         return tr("Bet ID");
+    case ColCasino:
+        return tr("Casino");
     case ColGame:
         return tr("Game");
     case ColIndex:

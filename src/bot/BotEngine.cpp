@@ -585,6 +585,8 @@ BetRecord BotEngine::recordBet(const BotConfig &cfg, double betSize, double roll
     BetRecord rec;
     rec.nonce = nonce;
     rec.betId = betId;
+    if (m_casinoGetter)
+        rec.casino = m_casinoGetter().trimmed().toLower(); // casino selected when the bet was made
 
     const double profit = payout - betSize;
 

@@ -110,6 +110,7 @@ struct BetRecord
     qint64 index = 0;
     qint64 nonce = 0;
     QString betId;            // server bet id (live bets only; empty in simulation)
+    QString casino;           // casino selected when the bet was made ("stake" / "shuffle")
     QDateTime time;
     Game game = Game::Dice;
     double bet = 0.0;

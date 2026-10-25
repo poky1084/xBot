@@ -60,7 +60,7 @@ public:
     explicit StakeClient(QObject *parent = nullptr);
 
     // The transport decides the casino: a ShuffleTransport switches this client to
-    // Shuffle's GraphQL API (dice only; balances come from its websocket).
+    // Shuffle's GraphQL API (dice and limbo; balances come from its websocket).
     void setTransport(IStakeTransport *transport);
     IStakeTransport *transport() const { return m_transport; }
     bool isShuffle() const;
@@ -110,6 +110,7 @@ signals:
 private:
     void postBet(const QString &endpoint, const QJsonObject &body, double requestedAmount);
     void placeShuffleDice(const DiceBetRequest &request);
+    void placeShuffleLimbo(const LimboBetRequest &request);
     void rotateShuffleSeed(const QString &clientSeed);
     void stakeVaultDeposit(double amount);
     static QString randomIdentifier();

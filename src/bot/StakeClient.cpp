@@ -587,8 +587,7 @@ void StakeClient::placeLimbo(const LimboBetRequest &request)
     }
 
     if (isShuffle()) {
-        const LiveBetResult r = failed(tr("Limbo is not supported for Shuffle yet (dice only)."));
-        QTimer::singleShot(0, this, [this, r] { emit diceFinished(r); });
+        placeShuffleLimbo(request);
         return;
     }
 
@@ -757,6 +756,104 @@ void StakeClient::placeShuffleDice(const DiceBetRequest &request)
             r.multiplier = (r.amount > 0.0 && r.payout > 0.0)
                                ? r.payout / r.amount
                                : (chance > 0.0 ? 99.0 / chance : 0.0);
+        }
+        emit diceFinished(r);
+    });
+}
+
+// Shuffle limbo: the LimboPlay GraphQL mutation (same query the JavaScript bot uses).
+// amount is a string with 8 decimals, bet the multiplier target with 2 decimals.
+void StakeClient::placeShuffleLimbo(const LimboBetRequest &request)
+{
+    const double target = std::round(request.multiplierTarget * 100.0) / 100.0;
+
+    QJsonObject data;
+    data.insert(QStringLiteral("amount"), QString::number(request.amount, 'f', 8));
+    data.insert(QStringLiteral("bet"), QString::number(target, 'f', 2));
+    data.insert(QStringLiteral("currency"), m_currency.toUpper());
+    data.insert(QStringLiteral("windowId"), randomClientSeed(10));
+
+    QJsonObject variables;
+    variables.insert(QStringLiteral("data"), data);
+
+    QJsonObject body;
+    body.insert(QStringLiteral("operationName"), QStringLiteral("LimboPlay"));
+    body.insert(QStringLiteral("variables"), variables);
+    body.insert(QStringLiteral("query"), QStringLiteral(
+        "mutation LimboPlay($data: LimboPlayInput!) {\n"
+        "  limboPlay(data: $data) {\n"
+        "    id\n"
+        "    currency\n"
+        "    amount\n"
+        "    payout\n"
+        "    afterBalance\n"
+        "    shuffleOriginalActions {\n"
+        "      id\n"
+        "      action {\n"
+        "        limbo {\n"
+        "          resultRaw\n"
+        "          resultValue\n"
+        "          userValue\n"
+        "          __typename\n"
+        "        }\n"
+        "        __typename\n"
+        "      }\n"
+        "      __typename\n"
+        "    }\n"
+        "    __typename\n"
+        "  }\n"
+        "}"));
+
+    const double requestedAmount = request.amount;
+    m_transport->post(QStringLiteral("main-api/graphql/api/graphql"), body,
+                      [this, requestedAmount](const TransportReply &reply) {
+        if (!reply.ok) {
+            const bool isTimeout = (reply.status == 0);
+            const bool unknown = (reply.status >= 500);
+            if (reply.status == 0)
+                emit sessionLost(reply.error);
+            emit diceFinished(failed(reply.error, {}, isTimeout, unknown));
+            return;
+        }
+
+        QString type;
+        const QString apiError = firstErrorText(reply.json, &type);
+        if (!apiError.isEmpty()) {
+            LiveBetResult r = failed(apiError, type, isRetryable(type, apiError), false);
+            r.retryDelayMs = fastRetryDelayMs(type, apiError);
+            emit diceFinished(r);
+            return;
+        }
+
+        const QJsonObject play = reply.json.value(QStringLiteral("data")).toObject()
+                                     .value(QStringLiteral("limboPlay")).toObject();
+        const QJsonArray actions = play.value(QStringLiteral("shuffleOriginalActions")).toArray();
+        const QJsonObject limbo = actions.isEmpty()
+            ? QJsonObject()
+            : actions.first().toObject().value(QStringLiteral("action")).toObject()
+                  .value(QStringLiteral("limbo")).toObject();
+        if (play.isEmpty() || limbo.isEmpty()) {
+            emit diceFinished(failed(tr("Unexpected bet response (no limboPlay result)."), {}, true, false));
+            return;
+        }
+
+        LiveBetResult r;
+        r.ok = true;
+        r.amount = play.contains(QStringLiteral("amount")) ? numberOf(play.value(QStringLiteral("amount")))
+                                                           : requestedAmount;
+        r.payout = numberOf(play.value(QStringLiteral("payout")));
+        r.roll = numberOf(limbo.value(QStringLiteral("resultValue")));
+        r.betId = play.value(QStringLiteral("id")).toString();
+        r.nonce = -1; // the mutation does not return the seed nonce
+
+        const double userValue = numberOf(limbo.value(QStringLiteral("userValue")));
+
+        // The server's payout is the truth; for a 0 bet fall back to comparing the result.
+        r.win = r.amount > 0.0 ? r.payout > 0.0 : r.roll >= userValue;
+        if (r.win) {
+            r.multiplier = (r.amount > 0.0 && r.payout > 0.0)
+                               ? r.payout / r.amount
+                               : userValue;
         }
         emit diceFinished(r);
     });
