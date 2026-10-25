@@ -273,6 +273,8 @@ void BotEngine::start()
     m_seedWaitTimer.stop();
     m_nextBetSize = m_config.baseBet;
     m_runCfg = m_config;
+    m_awaitTransport = false;
+    m_runCfg.casino = m_casinoGetter ? m_casinoGetter().trimmed().toLower() : QString();
     m_runCfg.currency = currentCurrency(); // what a script sees in `currency` at start-up
     m_announcedGame = m_config.game;
     m_runStartProfit = m_stats.profit;
@@ -305,8 +307,8 @@ void BotEngine::start()
             m_script->close();
             return;
         }
-        // The script may have chosen another currency in its body (currency = "btc").
-        if (applyScriptCurrency()) {
+        // The script may have chosen another casino / currency in its body.
+        if (applyScriptCasino() || applyScriptCurrency()) {
             emit stopped(tr("%1 error").arg(lang)); // see applyScriptCurrency(): already reported
             return;
         }
@@ -429,6 +431,43 @@ void BotEngine::seedRotationFinished(bool ok)
 QString BotEngine::currentCurrency() const
 {
     return m_currencyGetter ? m_currencyGetter().trimmed().toLower() : QString();
+}
+
+// A script set `casino`: switch the site the bets go to. The session (stats, history,
+// balance graph) is deliberately kept. Returns true when that was not possible; the run
+// is then halted / not started.
+bool BotEngine::applyScriptCasino()
+{
+    const QString have = m_casinoGetter ? m_casinoGetter().trimmed().toLower() : QString();
+    const QString want = m_runCfg.casino.trimmed().toLower();
+    if (want.isEmpty() || want == have || !m_casinoSwitcher) {
+        m_runCfg.casino = have;
+        return false;
+    }
+
+    QString err;
+    if (!m_casinoSwitcher(want, err)) {
+        const QString msg = tr("cannot switch casino to %1: %2").arg(want, err);
+        emit scriptOutput(msg, true);
+        emit scriptError(msg);
+        if (m_running) {
+            stopWithReason(tr("halted (%1)").arg(msg));
+        } else {
+            m_scriptActive = false;
+            m_script->close();
+        }
+        return true;
+    }
+
+    m_runCfg.casino = want;
+    // The new casino's connection (e.g. the hidden Stake browser) needs a moment: hold the
+    // next bet back until it is ready instead of failing and retrying.
+    m_awaitTransport = true;
+    m_awaitTimer.start();
+    // The new casino brings its own bet currency; do not try to "switch back" to the old one.
+    m_runCfg.currency = currentCurrency();
+    emit logMessage(tr("Casino switched to %1.").arg(want), false);
+    return false;
 }
 
 // A script set `currency`: switch the betting currency (before the next bet is placed).
@@ -632,8 +671,8 @@ bool BotEngine::advanceProgression(bool win, const BotConfig &cfg)
                                          : tr("stopped by %1 script: %2").arg(lang, why));
             return true;
         }
-        // dobet() may have set `currency`: switch before the next bet is placed.
-        if (applyScriptCurrency())
+        // dobet() may have set `casino` / `currency`: switch before the next bet is placed.
+        if (applyScriptCasino() || applyScriptCurrency())
             return true;
         //notifyGameChange();
         return false;
@@ -679,6 +718,19 @@ void BotEngine::placeNextBet()
     if (liveMode()) {
         if (m_inFlight)
             return;
+        if (m_awaitTransport) {
+            QString why;
+            if (m_live && m_live->transport() && m_live->transport()->isReady(&why)) {
+                m_awaitTransport = false;
+            } else if (m_awaitTimer.elapsed() > 60000) {
+                m_awaitTransport = false;
+                stopWithReason(tr("halted (casino connection not ready: %1)").arg(why));
+                return;
+            } else {
+                m_timer.start(300); // check again shortly
+                return;
+            }
+        }
         // Real money: never silently shrink a bet to "whatever is left". If the
         // progression asks for more than the balance, stop instead.
         const double bet = m_nextBetSize;

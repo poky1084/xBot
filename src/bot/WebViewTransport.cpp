@@ -10,6 +10,10 @@ bool WebViewTransport::isReady(QString *whyNot) const
         if (whyNot) *whyNot = "Browser is not open.";
         return false;
     }
+    if (!m_browser->isPageLoaded()) {
+        if (whyNot) *whyNot = "Browser page is still loading.";
+        return false;
+    }
     return true;
 }
 

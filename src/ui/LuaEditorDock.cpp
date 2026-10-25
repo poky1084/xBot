@@ -988,7 +988,7 @@ void LuaEditorDock::onHelp()
 {
     const bool js = m_lang == ScriptLanguage::JavaScript;
     const QString common = tr(
-        "<b>Set (read / write)</b><br>"
+		"<code>casino</code> = <code>\"stake\"</code> or <code>\"shuffle\"</code> (set casino to play on)<br><br>"
         "<code>game</code> – <code>\"dice\"</code> or <code>\"limbo\"</code> (default: the game "
         "selected in the Game menu); can be changed at any time, e.g. in <code>dobet()</code><br>"
         "<code>currency</code> – currency code to bet in, e.g. <code>\"btc\"</code> or "
@@ -1038,15 +1038,7 @@ void LuaEditorDock::onHelp()
                    "such statement per line (or end it with <code>;</code>) and keep the left side "
                    "free of function calls, because it is evaluated twice.<br><br>");
     }
-    text += tr("The script body runs once when the run starts (use it for the first bet). "
-               "<i>Run</i> starts the script on its own: the Manual and Auto Bet tabs (amount, chance, "
-               "side, stop limits, delay) and the condition blocks are not used, so the script must "
-               "set <code>nextbet</code> and <code>chance</code> (dice) or <code>target</code> (limbo) and end the run with "
-               "<code>stop()</code>. "
-               "Scripts run sandboxed: no file, network or OS access, and a call that takes longer "
-               "than 2 s is aborted.<br><br>"
-               "Use the language box in the toolbar to switch between Lua and JavaScript; each "
-               "language keeps its own script and file. The language is locked while a run is active.");
+    
     QMessageBox::information(this, tr("%1 strategy reference").arg(scriptLanguageName(m_lang)), text);
 }
 

@@ -3,13 +3,28 @@
 #include <QString>
 #include <QtGlobal>
 
+// ---- Casino selection in code ---------------------------------------------------
+// Change this one value ("stake" or "shuffle") to pick the casino at startup.
+// It takes priority over the value saved in the settings; the Casino menu can still
+// switch for the current session.
+namespace AppConfig {
+inline const QString casino = QStringLiteral("stake");
+}
+
 // Connection settings for live (real-money) betting.
 struct LiveSettings
 {
     enum class Casino { Stake, Shuffle };
 
+    // "shuffle" (any case) -> Shuffle, anything else -> Stake.
+    static Casino fromName(const QString &name)
+    {
+        return name.compare(QLatin1String("shuffle"), Qt::CaseInsensitive) == 0 ? Casino::Shuffle
+                                                                               : Casino::Stake;
+    }
+
     bool enabled = false;          // never persisted: every launch starts in simulation
-    Casino casino = Casino::Stake; // selected in the "Casino" menu
+    Casino casino = fromName(AppConfig::casino); // set by AppConfig::casino, switchable in the "Casino" menu
 
     // ---- Stake
     bool extensionMode = false;    // false = cookie (cf_clearance), true = browser extension

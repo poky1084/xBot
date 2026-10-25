@@ -525,6 +525,9 @@ MainWindow::MainWindow(QWidget *parent)
         m_stake->vaultDeposit(amount);
     });
     // `currency = "btc"` in a Lua / JavaScript strategy
+    m_engine->setCasinoHooks(
+        [this]() { return m_live.isShuffle() ? QStringLiteral("shuffle") : QStringLiteral("stake"); },
+        [this](const QString &casino, QString &err) { return switchCasinoFromScript(casino, err); });
     m_engine->setCurrencyHooks(
         [this]() { return m_engine->liveMode() ? m_live.currency : m_currencyTag.toLower(); },
         [this](const QString &cur, double &balance, QString &err) {
@@ -682,7 +685,7 @@ void MainWindow::createMenus()
         a->setCheckable(true);
         m_casinoGroup->addAction(a);
     }
-    m_actCasinoStake->setChecked(true);
+    (m_live.isShuffle() ? m_actCasinoShuffle : m_actCasinoStake)->setChecked(true);
     connect(m_actCasinoStake, &QAction::triggered, this,
             [this] { onCasinoSelected(LiveSettings::Casino::Stake); });
     connect(m_actCasinoShuffle, &QAction::triggered, this,
@@ -1195,13 +1198,8 @@ void MainWindow::onCasinoSelected(LiveSettings::Casino casino)
     next.casino = casino;
     next.currency = m_currencyByCasino[int(casino)];
 
-    const bool wasLive = m_live.enabled;
+    // The session (history, balance graph, stats) is kept when the casino changes.
     applyLiveSettings(next);
-    if (wasLive) {
-        // Bets of two casinos must not share one history / balance.
-        resetSessionState();
-        m_clientSeedPending = true;
-    }
     updateCasinoMenu();
     onLogMessage(tr("Casino: %1 — open Tools → Options to enter its credentials and log in.")
                      .arg(casino == LiveSettings::Casino::Shuffle ? tr("Shuffle") : tr("Stake")),
@@ -1830,6 +1828,46 @@ void MainWindow::onOpenOptions()
 
 // ---------------------------------------------------------------- live betting
 
+// The hidden WebView2 browser (Stake's cookie mode) is created once and kept open, also
+// while Shuffle is the active casino, so switching back to Stake needs no page load.
+void MainWindow::ensureHiddenBrowser(const LiveSettings &s)
+{
+    StakeCredentials cred;
+    cred.site = s.site;
+    cred.apiKey = s.apiKey;
+    cred.clearance = s.clearance;
+    cred.userAgent = s.userAgent;
+
+    if (!m_webTransport) {
+        m_webTransport = new WebViewTransport(this);
+    }
+    m_webTransport->setCredentials(cred);
+
+    // Recreate the hidden browser if the site / user agent changed since it
+    // was created (e.g. the user just typed new values in Settings).
+    if (m_hiddenBrowser && (m_browserSite != s.site || m_browserUA != s.userAgent)) {
+        m_webTransport->setBrowser(nullptr);
+        m_hiddenBrowser->close();
+        delete m_hiddenBrowser;
+        m_hiddenBrowser = nullptr;
+    }
+
+    if (!m_hiddenBrowser) {
+        m_hiddenBrowser = new CookieGrabberDialog(s.site, s.userAgent, nullptr);
+        m_hiddenBrowser->setAttribute(Qt::WA_DontShowOnScreen);
+        m_hiddenBrowser->show();
+        m_browserSite = s.site;
+        m_browserUA = s.userAgent;
+
+        // Fetch the balance as soon as the page is actually loaded.
+        connect(m_hiddenBrowser, &CookieGrabberDialog::pageLoaded, this, [this] {
+            if (m_live.enabled && !m_live.isShuffle() && m_stake)
+                m_stake->fetchBalances();
+        });
+    }
+
+}
+
 bool MainWindow::configureConnection(const LiveSettings &s, QString *errorOut)
 {
     if (s.isShuffle()) {
@@ -1840,8 +1878,25 @@ bool MainWindow::configureConnection(const LiveSettings &s, QString *errorOut)
         sc.correlationUserId = s.correlationUserId;
         sc.browserId = s.browserId;
         m_shuffle->setCredentials(sc);
-        m_ext->stop();
-        closeHiddenBrowser();
+        if (s.extensionMode) {
+            // Keep the extension server (and its connected browser) alive while Shuffle is
+            // active, so switching back to Stake finds it still connected.
+            StakeCredentials cred;
+            cred.site = s.site;
+            cred.apiKey = s.apiKey;
+            cred.clearance = s.clearance;
+            cred.userAgent = s.userAgent;
+            m_ext->setCredentials(cred);
+            QString extErr;
+            if (!m_ext->start(s.extensionPort, &extErr))
+                onLogMessage(tr("Could not start the extension server on 127.0.0.1:%1 (%2)")
+                                 .arg(s.extensionPort)
+                                 .arg(extErr),
+                             true);
+        } else {
+            m_ext->stop();
+            ensureHiddenBrowser(s); // keep WebView2 open for a quick switch back to Stake
+        }
         m_stake->setTransport(m_shuffle);
         m_stake->setCurrency(s.currency);
         return true;
@@ -1871,34 +1926,7 @@ bool MainWindow::configureConnection(const LiveSettings &s, QString *errorOut)
     } else {
         m_ext->stop();
         
-        if (!m_webTransport) {
-            m_webTransport = new WebViewTransport(this);
-        }
-        m_webTransport->setCredentials(cred);
-
-        // Recreate the hidden browser if the site / user agent changed since it
-        // was created (e.g. the user just typed new values in Settings).
-        if (m_hiddenBrowser && (m_browserSite != s.site || m_browserUA != s.userAgent)) {
-            m_webTransport->setBrowser(nullptr);
-            m_hiddenBrowser->close();
-            delete m_hiddenBrowser;
-            m_hiddenBrowser = nullptr;
-        }
-
-        if (!m_hiddenBrowser) {
-            m_hiddenBrowser = new CookieGrabberDialog(s.site, s.userAgent, nullptr);
-            m_hiddenBrowser->setAttribute(Qt::WA_DontShowOnScreen);
-            m_hiddenBrowser->show();
-            m_browserSite = s.site;
-            m_browserUA = s.userAgent;
-
-            // Fetch the balance as soon as the page is actually loaded.
-            connect(m_hiddenBrowser, &CookieGrabberDialog::pageLoaded, this, [this] {
-                if (m_live.enabled && m_stake)
-                    m_stake->fetchBalances();
-            });
-        }
-
+        ensureHiddenBrowser(s);
         m_webTransport->setBrowser(m_hiddenBrowser);
         m_stake->setTransport(m_webTransport);
     }
@@ -2066,6 +2094,26 @@ double MainWindow::displayBalance() const
         return s.balance;
     // While a run is active the session is initialised (resetstats() can leave it at 0 bets).
     return (s.bets > 0 || m_engine->isRunning()) ? s.balance : m_startBalance;
+}
+
+bool MainWindow::switchCasinoFromScript(const QString &casino, QString &error)
+{
+    const LiveSettings::Casino want = LiveSettings::fromName(casino);
+    if (want == m_live.casino)
+        return true;
+    if (m_engine->betInFlight()) {
+        error = tr("a bet is still in flight");
+        return false;
+    }
+    // Each casino remembers its own bet currency.
+    m_currencyByCasino[int(m_live.casino)] = m_live.currency;
+
+    LiveSettings next = m_live;
+    next.casino = want;
+    next.currency = m_currencyByCasino[int(want)];
+    applyLiveSettings(next); // same live / simulation mode: no session reset
+    updateCasinoMenu();
+    return true;
 }
 
 bool MainWindow::switchCurrencyFromScript(const QString &currency, double &balance, QString &error)
@@ -2463,10 +2511,9 @@ void MainWindow::loadSettings()
     // Live connection settings. `enabled` is deliberately never restored: every
     // launch starts in simulation and live betting must be switched on again.
     settings.beginGroup(QStringLiteral("Live"));
-    m_live.casino = settings.value(QStringLiteral("casino"), QStringLiteral("stake")).toString()
-                            == QLatin1String("shuffle")
-                        ? LiveSettings::Casino::Shuffle
-                        : LiveSettings::Casino::Stake;
+    // The casino is chosen in code (AppConfig::casino in bot/LiveSettings.h); the value
+    // saved from the Casino menu no longer overrides it at startup.
+    m_live.casino = LiveSettings::fromName(AppConfig::casino);
     m_live.site = settings.value(QStringLiteral("site"), m_live.site).toString();
     m_live.shuffleSite = settings.value(QStringLiteral("shuffleSite"), m_live.shuffleSite).toString();
     m_live.extensionMode = settings.value(QStringLiteral("extensionMode"), false).toBool();

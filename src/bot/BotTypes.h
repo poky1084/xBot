@@ -84,6 +84,7 @@ struct BotConfig
     double startBalance = BotConstants::kStartBalance;
     int delayMs = 0;         // delay between auto-bets
     int stopAfterBets = 0;     // 0 = unlimited
+    QString casino;            // scripts: "stake" / "shuffle"; empty = unchanged
     QString currency;          // scripts: lowercase currency code to bet in ("btc", "usdt", ...); empty = unchanged
 
     OnResultRule onWin{false, 0.0};

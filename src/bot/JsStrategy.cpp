@@ -264,6 +264,8 @@ JsStrategy::Status JsStrategy::init(const QString &source, double balance, doubl
     }
 
     m_engine->globalObject().setProperty(QStringLiteral("game"), gameName(runCfg.game));
+    if (!runCfg.casino.isEmpty())
+        m_engine->globalObject().setProperty(QStringLiteral("casino"), runCfg.casino);
     if (!runCfg.currency.isEmpty())
         m_engine->globalObject().setProperty(QStringLiteral("currency"), runCfg.currency);
     publish("startbalance", balance);
@@ -354,6 +356,23 @@ bool JsStrategy::readOutputs(double &nextBet, BotConfig &runCfg)
         }
     } else {
         m_error = QStringLiteral("game must be the string \"dice\" or \"limbo\"");
+        return false;
+    }
+
+    // ---- casino (optional): "stake" or "shuffle"
+    const QJSValue casino = readGlobal("casino");
+    if (casino.isUndefined() || casino.isNull()) {
+        // keep the current casino
+    } else if (casino.isString()) {
+        const QString k = casino.toString().trimmed().toLower();
+        if (k == QLatin1String("stake") || k == QLatin1String("shuffle")) {
+            runCfg.casino = k;
+        } else if (!k.isEmpty()) {
+            m_error = QStringLiteral("casino must be \"stake\" or \"shuffle\" (got \"%1\")").arg(k);
+            return false;
+        }
+    } else {
+        m_error = QStringLiteral("casino must be the string \"stake\" or \"shuffle\"");
         return false;
     }
 

@@ -7,6 +7,7 @@
 #include "bot/LuaStrategy.h"
 #include "bot/ScriptStrategy.h"
 
+#include <QElapsedTimer>
 #include <QTimer>
 
 #include <functional>
@@ -51,6 +52,18 @@ public:
     {
         m_currencyGetter = std::move(getter);
         m_currencySwitcher = std::move(switcher);
+    }
+
+    // Casino hooks (set by MainWindow) for the script variable `casino` ("stake" / "shuffle").
+    //   getter:   the casino bets go to right now.
+    //   switcher: switches to the other one WITHOUT resetting the session; false + error
+    //             if that is not possible.
+    using CasinoGetter = std::function<QString()>;
+    using CasinoSwitcher = std::function<bool(const QString &casino, QString &error)>;
+    void setCasinoHooks(CasinoGetter getter, CasinoSwitcher switcher)
+    {
+        m_casinoGetter = std::move(getter);
+        m_casinoSwitcher = std::move(switcher);
     }
 
     const SessionStats &stats() const { return m_stats; }
@@ -128,6 +141,7 @@ private:
     void finishScriptDrain(bool feedLastBet);
     void notifyGameChange();
     QString currentCurrency() const;
+    bool applyScriptCasino();   // true if switching failed and the run was halted
     bool applyScriptCurrency(); // true if switching failed and the run was halted
     double resetStatsFromScript();
     void rotateSeedFromScript(const QString &clientSeed);
@@ -143,6 +157,10 @@ private:
     QString m_scriptSource;
     ScriptLanguage m_scriptLanguage = ScriptLanguage::Lua;
     bool m_scriptActive = false;
+    bool m_awaitTransport = false;  // casino was just switched: wait until its connection is ready
+    QElapsedTimer m_awaitTimer;
+    CasinoGetter m_casinoGetter;
+    CasinoSwitcher m_casinoSwitcher;
     CurrencyGetter m_currencyGetter;
     CurrencySwitcher m_currencySwitcher;
     bool m_scriptDraining = false; // stopped, waiting for the last in-flight scripted bet

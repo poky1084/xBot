@@ -121,6 +121,7 @@ private:
 	void updateConnectionStatus();
     void updateCasinoMenu();
     void closeHiddenBrowser();
+    void ensureHiddenBrowser(const LiveSettings &s);
 	
     // Live betting helpers
     bool configureConnection(const LiveSettings &settings, QString *errorOut = nullptr);
@@ -136,6 +137,8 @@ private:
     double displayBalance() const;
     QString currencyLabel() const;
     // `currency = "btc"` in a Lua / JavaScript strategy
+    // `casino = "shuffle"` in a Lua / JavaScript strategy (keeps the session)
+    bool switchCasinoFromScript(const QString &casino, QString &error);
     bool switchCurrencyFromScript(const QString &currency, double &balance, QString &error);
 
     // Core
