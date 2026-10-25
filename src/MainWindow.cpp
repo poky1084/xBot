@@ -57,7 +57,9 @@
 #include <QScreen>
 #include <QScrollArea>
 #include <QSettings>
+#include <QPointer>
 #include <QTimer>
+#include <memory>
 #include <QSplitter>
 #include <QStandardPaths>
 #include <QPolygonF>
@@ -1775,12 +1777,36 @@ void MainWindow::onOpenOptions()
         }
         dialog.setExtensionStatus(m_ext->isListening(), m_ext->isConnected());
 
-        // Browser was just (re)created and is still loading: wait for it.
-        if (m_hiddenBrowser && !m_hiddenBrowser->isPageLoaded()) {
+        // Shuffle direct mode talks to Shuffle straight from the app (HTTPS + websocket) and
+        // never uses the hidden WebView2 browser (which only loads Stake's site), so there is
+        // nothing to wait for. Waiting on it made the login hang on "Loading browser…"
+        // whenever that unrelated Stake page was slow or failed to load.
+        const LiveSettings cur = dialog.liveSettings();
+        const bool needsBrowser = !cur.isShuffle() && !cur.extensionMode;
+        // Stake cookie mode: the browser was just (re)created and is still loading: wait for
+        // it, but not forever.
+        if (needsBrowser && m_hiddenBrowser && !m_hiddenBrowser->isPageLoaded()) {
             dialog.setLoginStatus(tr("Loading browser…"), true);
-            connect(m_hiddenBrowser, &CookieGrabberDialog::pageLoaded, this,
-                    [this] { m_stake->fetchBalances(); },
+            QPointer<OptionsDialog> dlg(&dialog);
+            auto done = std::make_shared<bool>(false);
+            connect(m_hiddenBrowser, &CookieGrabberDialog::pageLoaded, dlg.data(),
+                    [this, done] {
+                        if (*done)
+                            return;
+                        *done = true;
+                        m_stake->fetchBalances();
+                    },
                     Qt::SingleShotConnection); // Qt 6.0+
+            // Give up after 30 s so the dialog never stays stuck on "Loading browser…".
+            QTimer::singleShot(30000, dlg.data(), [dlg, done] {
+                if (*done || !dlg)
+                    return;
+                *done = true;
+                dlg->setLoginStatus(
+                    tr("The browser page did not finish loading (Cloudflare check or network "
+                       "problem?). Press Log in to try again."),
+                    false);
+            });
             return;
         }
         m_stake->fetchBalances(); // answer arrives in onBalancesReady/Failed
