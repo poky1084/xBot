@@ -80,7 +80,7 @@ struct BotConfig
     BetSide side = BetSide::Under;
     double target = 50.5;      // dice: roll target, 0.01 .. 99.99
     double multiplierTarget = 2.0; // limbo: target multiplier, 1.01 .. 1,000,000
-    double baseBet = 0.001;
+    double baseBet = 0.00000000;
     double startBalance = BotConstants::kStartBalance;
     int delayMs = 0;         // delay between auto-bets
     int stopAfterBets = 0;     // 0 = unlimited
