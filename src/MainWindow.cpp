@@ -1608,12 +1608,31 @@ void MainWindow::onBetTableContextMenu(const QPoint &pos)
     const bool shuffleRow = rowCasino.isEmpty() ? m_live.isShuffle()
                                                 : rowCasino == QLatin1String("shuffle");
 
-    // Shuffle: nothing to look up, just make the bet id copiable.
+    // Shuffle: nothing to look up; the bet id is copiable and opens the public bet
+    // modal on the configured Shuffle mirror (md-id = this row's bet id).
     if (shuffleRow) {
+        // Use the Site / mirror currently set in Options (accepts "host" or "https://host/").
+        QString host = m_live.shuffleSite.trimmed();
+        const int scheme = host.indexOf(QLatin1String("://"));
+        if (scheme >= 0)
+            host = host.mid(scheme + 3);
+        const int slash = host.indexOf(QLatin1Char('/'));
+        if (slash >= 0)
+            host = host.left(slash);
+        if (host.isEmpty())
+            host = QStringLiteral("shuffle.com");
+
+        const QUrl openUrl(QStringLiteral("https://%1/?modal=bet&md-id=%2")
+                               .arg(host, QString::fromLatin1(QUrl::toPercentEncoding(betId))));
+
         QMenu menu;
         QAction *copyAct = menu.addAction(tr("Copy Bet id:  %1").arg(betId));
-        if (menu.exec(globalPos) == copyAct)
+        QAction *openAct = menu.addAction(tr("Open in browser"));
+        QAction *chosen = menu.exec(globalPos);
+        if (chosen == copyAct)
             QApplication::clipboard()->setText(betId);
+        else if (chosen == openAct)
+            QDesktopServices::openUrl(openUrl);
         return;
     }
 
