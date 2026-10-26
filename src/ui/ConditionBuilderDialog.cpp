@@ -257,9 +257,19 @@ void ConditionBuilderDialog::moveSelected(int dir)
 
 void ConditionBuilderDialog::accept()
 {
+    const QString name = m_name->text().trimmed();
+
+    // Auto-save: clicking OK stores the current blocks under the strategy name
+    // (same as pressing Save, but without clearing the editor), so edits are
+    // never lost just because Save wasn't clicked first.
+    if (!name.isEmpty()) {
+        m_strategies[name] = m_blocks;
+        autoSaveStrategies();
+    }
+
     m_resultBlocks = m_blocks;
     m_resultStrategies = m_strategies;
-    m_resultName = m_name->text().trimmed();
+    m_resultName = name;
     QDialog::accept();
 }
 
