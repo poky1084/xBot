@@ -1151,7 +1151,7 @@ void MainWindow::createLuaDock()
 
 void MainWindow::updateWindowTitle()
 {
-    setWindowTitle(tr("xBot - %1").arg(gameName(m_game)));
+    setWindowTitle(tr("xBot - %1").arg(m_live.isShuffle() ? tr("Shuffle") : tr("Stake")));
 }
 
 void MainWindow::setGame(Game game)
@@ -2308,6 +2308,7 @@ void MainWindow::updateModeWidgets()
         m_tabs->setTabEnabled(fairIdx, true);
     m_actRotate->setEnabled(!m_rotatingSeed);
 	updateConnectionStatus(); 
+    updateWindowTitle();
 }
 
 void MainWindow::onAbout()
