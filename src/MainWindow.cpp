@@ -613,8 +613,8 @@ void MainWindow::createActions()
     connect(m_actOptions, &QAction::triggered, this, &MainWindow::onOpenOptions);
 
     // "+" toolbar button: pick any file.
-    m_actOpenFile = new QAction(QIcon(QStringLiteral(":/icons/list-add.svg")), tr("Select file..."), this);
-    m_actOpenFile->setToolTip(tr("Select a file"));
+    m_actOpenFile = new QAction(QIcon(QStringLiteral(":/icons/list-add.svg")), tr("New window"), this);
+    m_actOpenFile->setToolTip(tr("New window"));
     connect(m_actOpenFile, &QAction::triggered, this, &MainWindow::onOpenFile);
 
     // Condition builder button, next to Options.
@@ -1743,13 +1743,19 @@ void MainWindow::onToggleDarkTheme(bool enabled)
 
 void MainWindow::onOpenFile()
 {
-    const QString startDir = m_selectedFile.isEmpty() ? QString()
-                                                      : QFileInfo(m_selectedFile).absolutePath();
-    const QString path = QFileDialog::getOpenFileName(this, tr("Select file"), startDir);
-    if (path.isEmpty())
-        return;
-    m_selectedFile = path;
-    onLogMessage(tr("Selected file: %1").arg(QDir::toNativeSeparators(path)), false);
+    // "+" button: open a new, independent instance of the main window.
+    // It is deleted automatically when closed; the app quits when the last
+    // window is closed.
+    // The new window loads the latest saved data on its own (loadSettings()
+    // runs in the MainWindow constructor).
+    auto *window = new MainWindow();
+    window->setAttribute(Qt::WA_DeleteOnClose);
+
+    // Cascade the new window so it doesn't sit exactly on top of this one.
+    window->move(pos() + QPoint(30, 30));
+    window->show();
+    window->raise();
+    window->activateWindow();
 }
 
 void MainWindow::onOpenConditionBuilder()
