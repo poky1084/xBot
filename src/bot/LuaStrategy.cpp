@@ -715,22 +715,22 @@ bool LuaStrategy::readOutputs(double &nextBet, BotConfig &runCfg)
     }
     lua_pop(m_L, 1);
 
-    // ---- casino (optional): "stake" or "shuffle"
+    // ---- casino (optional): "stake", "shuffle" or "goated"
     lua_getglobal(m_L, "casino");
     if (lua_isnil(m_L, -1)) {
         // keep the current casino
     } else if (lua_type(m_L, -1) == LUA_TSTRING) {
         const QString k = QString::fromUtf8(lua_tostring(m_L, -1)).trimmed().toLower();
-        if (k == QLatin1String("stake") || k == QLatin1String("shuffle")) {
+        if (k == QLatin1String("stake") || k == QLatin1String("shuffle") || k == QLatin1String("goated")) {
             runCfg.casino = k;
         } else if (!k.isEmpty()) {
             lua_pop(m_L, 1);
-            m_error = QStringLiteral("casino must be \"stake\" or \"shuffle\" (got \"%1\")").arg(k);
+            m_error = QStringLiteral("casino must be \"stake\", \"shuffle\" or \"goated\" (got \"%1\")").arg(k);
             return false;
         }
     } else {
         lua_pop(m_L, 1);
-        m_error = QStringLiteral("casino must be the string \"stake\" or \"shuffle\"");
+        m_error = QStringLiteral("casino must be the string \"stake\", \"shuffle\" or \"goated\"");
         return false;
     }
     lua_pop(m_L, 1);

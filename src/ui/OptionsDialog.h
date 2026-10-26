@@ -56,12 +56,14 @@ signals:
 private:
     void updateAuthFields();
     // Adapts the "Live betting" box to the casino chosen in the Casino menu
-    // (Shuffle: Token, Direct mode only, CORRELATION_USER_ID, BROWSER_ID).
+    // (Shuffle: Token, Direct mode only, CORRELATION_USER_ID, BROWSER_ID;
+    // Goated: just the Token).
     void applyCasinoUi();
     void setFormRowVisible(QWidget *field, bool visible);
     void onClearData();
 	void onGrabCookie();
     void onShuffleLogin();
+    void onGoatedLogin();
     QComboBox *m_themeCombo = nullptr;
     QComboBox *m_currencyCombo = nullptr;
     QDoubleSpinBox *m_startBalanceSpin = nullptr;
@@ -70,6 +72,7 @@ private:
 
     LiveSettings m_base;            // settings last handed to setLiveSettings()
     bool m_shuffle = false;
+    bool m_goated = false;
     QGroupBox *m_liveBox = nullptr;
     QFormLayout *m_liveForm = nullptr;
     QLineEdit *m_correlationEdit = nullptr;
@@ -86,6 +89,7 @@ private:
     QPushButton *m_loginBtn = nullptr;
 	QPushButton *m_grabCookieBtn = nullptr;
     QPushButton *m_shuffleLoginBtn = nullptr;
+    QPushButton *m_goatedLoginBtn = nullptr;
     QLabel *m_loginStatus = nullptr;
     QCheckBox *m_rememberCheck = nullptr;
     quint16 m_extensionPort = 4444;

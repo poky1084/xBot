@@ -37,6 +37,7 @@ class LogWidget;
 class LuaEditorDock;
 class ManualBetPanel;
 class OptionsDialog;
+class GoatedTransport;
 class ShuffleTransport;
 class SimulatedProvider;
 class StakeClient;
@@ -120,6 +121,8 @@ private:
     void saveConditions();
 	void updateConnectionStatus();
     void updateCasinoMenu();
+    static QString casinoDisplayName(LiveSettings::Casino casino);
+    QAction *casinoAction(LiveSettings::Casino casino) const;
     void closeHiddenBrowser();
     void ensureHiddenBrowser(const LiveSettings &s);
 
@@ -165,10 +168,13 @@ private:
     CookieTransport *m_cookie = nullptr;
     ExtensionTransport *m_ext = nullptr;
     ShuffleTransport *m_shuffle = nullptr;   // Shuffle "Direct mode" (no WebView2 / extension)
-    QActionGroup *m_casinoGroup = nullptr;   // Casino menu: Stake / Shuffle
+    GoatedTransport *m_goated = nullptr;     // Goated "Direct mode" (plain HTTPS, token only)
+    QActionGroup *m_casinoGroup = nullptr;   // Casino menu: Stake / Shuffle / Goated
     QAction *m_actCasinoStake = nullptr;
     QAction *m_actCasinoShuffle = nullptr;
-    QString m_currencyByCasino[2];           // bet currency remembered per casino (Stake, Shuffle)
+    QAction *m_actCasinoGoated = nullptr;
+    // bet currency remembered per casino, indexed by int(LiveSettings::Casino)
+    QString m_currencyByCasino[LiveSettings::kCasinoCount];
     QTimer *m_balanceTimer = nullptr;
     LiveSettings m_live;
     QPointer<OptionsDialog> m_optionsDialog;

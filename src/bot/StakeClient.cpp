@@ -1,8 +1,10 @@
 #include "bot/StakeClient.h"
 
+#include "bot/GoatedTransport.h"
 #include "bot/ShuffleTransport.h"
 
 #include <QJsonArray>
+#include <QJsonDocument>
 #include <QRandomGenerator>
 #include <QTimer>
 
@@ -124,11 +126,23 @@ void StakeClient::setTransport(IStakeTransport *transport)
         m_shuffleConnections << connect(shuffle, &ShuffleTransport::balancesFailed, this,
                                         &StakeClient::balancesFailed);
     }
+    if (auto *goated = qobject_cast<GoatedTransport *>(transport)) {
+        // Goated: balances are read over HTTPS; same signals as the other casinos.
+        m_shuffleConnections << connect(goated, &GoatedTransport::balancesUpdated, this,
+                                        &StakeClient::balancesReady);
+        m_shuffleConnections << connect(goated, &GoatedTransport::balancesFailed, this,
+                                        &StakeClient::balancesFailed);
+    }
 }
 
 bool StakeClient::isShuffle() const
 {
     return qobject_cast<ShuffleTransport *>(m_transport) != nullptr;
+}
+
+bool StakeClient::isGoated() const
+{
+    return qobject_cast<GoatedTransport *>(m_transport) != nullptr;
 }
 
 void StakeClient::setCurrency(const QString &currency)
@@ -164,6 +178,10 @@ void StakeClient::rotateSeedPair(const QString &clientSeed)
 {
     if (isShuffle()) {
         rotateShuffleSeed(clientSeed);
+        return;
+    }
+    if (isGoated()) {
+        rotateGoatedSeed(clientSeed);
         return;
     }
 
@@ -328,6 +346,10 @@ void StakeClient::rotateShuffleSeed(const QString &clientSeed)
 // Shuffle: VaultDeposit mutation (POST https://<site>/main-api/graphql/api/graphql).
 void StakeClient::vaultDeposit(double amount)
 {
+    if (isGoated()) {
+        goatedVaultDeposit(amount);
+        return;
+    }
     if (!isShuffle()) {
         stakeVaultDeposit(amount);
         return;
@@ -469,6 +491,11 @@ void StakeClient::fetchBalances()
         shuffle->requestBalances();
         return;
     }
+    // Goated: GET /user/wallet/balances; results arrive through the transport's signals.
+    if (auto *goated = qobject_cast<GoatedTransport *>(m_transport)) {
+        goated->requestBalances();
+        return;
+    }
 
     QJsonObject body;
     body.insert(QStringLiteral("operationName"), QStringLiteral("UserBalances"));
@@ -517,7 +544,7 @@ void StakeClient::fetchBalances()
 void StakeClient::lookupBetIid(const QString &betId, std::function<void(const QString &)> done)
 {
     QString why;
-    if (betId.isEmpty() || !m_transport || isShuffle() || !m_transport->isReady(&why)) {
+    if (betId.isEmpty() || !m_transport || isShuffle() || isGoated() || !m_transport->isReady(&why)) {
         QTimer::singleShot(0, this, [done] { done(QString()); });
         return;
     }
@@ -561,6 +588,10 @@ void StakeClient::placeDice(const DiceBetRequest &request)
         placeShuffleDice(request);
         return;
     }
+    if (isGoated()) {
+        placeGoatedDice(request);
+        return;
+    }
 
     const double target = std::round(request.target * 100.0) / 100.0;
 
@@ -591,6 +622,10 @@ void StakeClient::placeLimbo(const LimboBetRequest &request)
 
     if (isShuffle()) {
         placeShuffleLimbo(request);
+        return;
+    }
+    if (isGoated()) {
+        placeGoatedLimbo(request);
         return;
     }
 
@@ -761,6 +796,389 @@ void StakeClient::placeShuffleDice(const DiceBetRequest &request)
                                : (chance > 0.0 ? 99.0 / chance : 0.0);
         }
         emit diceFinished(r);
+    });
+}
+
+// ---------------------------------------------------------------- Goated dice
+namespace
+{
+// Looks `names` up in `o` and then, breadth-first, in nested objects (depth <= 3), because the
+// bet may come wrapped ({"data": {"bet": {...}}}). Returns true and fills `out` when found.
+bool findGoatedValue(const QJsonObject &o, const QStringList &names, QJsonValue *out, int depth = 0)
+{
+    for (const QString &n : names) {
+        const QJsonValue v = o.value(n);
+        if (!v.isUndefined() && !v.isNull() && !v.isObject() && !v.isArray()) {
+            *out = v;
+            return true;
+        }
+    }
+    if (depth >= 3)
+        return false;
+    for (auto it = o.constBegin(); it != o.constEnd(); ++it) {
+        if (it.value().isObject() && findGoatedValue(it.value().toObject(), names, out, depth + 1))
+            return true;
+    }
+    return false;
+}
+
+bool goatedNumber(const QJsonObject &o, const QStringList &names, double *out)
+{
+    QJsonValue v;
+    if (!findGoatedValue(o, names, &v))
+        return false;
+    if (v.isDouble()) {
+        *out = v.toDouble();
+        return true;
+    }
+    if (v.isString()) {
+        bool ok = false;
+        const double d = v.toString().toDouble(&ok);
+        if (ok) {
+            *out = d;
+            return true;
+        }
+    }
+    return false;
+}
+
+bool goatedBool(const QJsonObject &o, const QStringList &names, bool *out)
+{
+    QJsonValue v;
+    if (!findGoatedValue(o, names, &v))
+        return false;
+    if (v.isBool()) {
+        *out = v.toBool();
+        return true;
+    }
+    if (v.isString()) {
+        const QString s = v.toString().trimmed().toLower();
+        if (s == QLatin1String("win") || s == QLatin1String("won") || s == QLatin1String("true")) {
+            *out = true;
+            return true;
+        }
+        if (s == QLatin1String("loss") || s == QLatin1String("lose") || s == QLatin1String("lost")
+            || s == QLatin1String("false")) {
+            *out = false;
+            return true;
+        }
+    }
+    return false;
+}
+
+// Error text of a Goated answer: "message" / "error" (string or object) / "errors":[...].
+QString goatedErrorText(const QJsonObject &json)
+{
+    const QJsonValue err = json.value(QStringLiteral("error"));
+    if (err.isString() && !err.toString().isEmpty())
+        return err.toString();
+    if (err.isObject()) {
+        const QString m = err.toObject().value(QStringLiteral("message")).toString();
+        if (!m.isEmpty())
+            return m;
+    }
+    const QJsonArray errs = json.value(QStringLiteral("errors")).toArray();
+    if (!errs.isEmpty()) {
+        const QJsonValue first = errs.first();
+        const QString m = first.isString() ? first.toString()
+                                           : first.toObject().value(QStringLiteral("message")).toString();
+        if (!m.isEmpty())
+            return m;
+    }
+    return json.value(QStringLiteral("message")).toString();
+}
+} // namespace
+
+// Goated dice: POST https://apis.goated.com/casino/dice/v2
+//   {"user_value": 51, "roll_type": "OVER", "amount": 0.1, "currency": "USDC", "is_fiat": false}
+// The answer's layout was not captured, so it is read defensively (several field names, and
+// the bet may be wrapped in "data"). If no roll can be found the raw answer is logged.
+void StakeClient::placeGoatedDice(const DiceBetRequest &request)
+{
+    const double target = std::round(request.target * 100.0) / 100.0;
+
+    QJsonObject body;
+    body.insert(QStringLiteral("user_value"), target);
+    body.insert(QStringLiteral("roll_type"),
+                request.over ? QStringLiteral("OVER") : QStringLiteral("UNDER"));
+    body.insert(QStringLiteral("amount"), std::round(request.amount * 1e8) / 1e8);
+    body.insert(QStringLiteral("currency"), m_currency.toUpper());
+    body.insert(QStringLiteral("is_fiat"), false);
+
+    const double requestedAmount = request.amount;
+    const bool over = request.over;
+    m_transport->post(QStringLiteral("casino/dice/v2"), body,
+                      [this, requestedAmount, target, over](const TransportReply &reply) {
+        if (!reply.ok) {
+            const bool isTimeout = (reply.status == 0);
+            const bool unknown = (reply.status >= 500);
+            if (reply.status == 0)
+                emit sessionLost(reply.error);
+            emit diceFinished(failed(reply.error, {}, isTimeout, unknown));
+            return;
+        }
+
+        const QJsonObject &json = reply.json;
+        const QString errText = goatedErrorText(json);
+        const bool successFalse = json.contains(QStringLiteral("success"))
+                                  && !json.value(QStringLiteral("success")).toBool();
+        if (successFalse || reply.status >= 400) {
+            const QString msg = errText.isEmpty()
+                ? tr("Goated bet rejected (HTTP %1).").arg(reply.status) : errText;
+            LiveBetResult r = failed(msg, {}, isRetryable({}, msg), false);
+            r.retryDelayMs = fastRetryDelayMs({}, msg);
+            emit diceFinished(r);
+            return;
+        }
+
+        // Rate limit notice injected by the transport (HTTP 429 with a non-JSON body).
+        if (!errText.isEmpty() && isRetryable({}, errText)) {
+            LiveBetResult r = failed(errText, {}, true, false);
+            r.retryDelayMs = fastRetryDelayMs({}, errText);
+            emit diceFinished(r);
+            return;
+        }
+
+        double roll = 0.0;
+        const bool haveRoll = goatedNumber(json,
+            {QStringLiteral("roll"), QStringLiteral("roll_result"), QStringLiteral("roll_value"),
+             QStringLiteral("rolled"), QStringLiteral("result_value"), QStringLiteral("result"),
+             QStringLiteral("number"), QStringLiteral("outcome")}, &roll);
+        if (!haveRoll) {
+            const QString raw = QString::fromUtf8(QJsonDocument(json).toJson(QJsonDocument::Compact)).left(400);
+            // The bet may or may not have been placed: do not retry blindly.
+            emit diceFinished(failed(errText.isEmpty()
+                                         ? tr("Unexpected Goated bet response (no roll found): %1").arg(raw)
+                                         : errText,
+                                     {}, false, true));
+            return;
+        }
+
+        double amount = requestedAmount;
+        goatedNumber(json, {QStringLiteral("amount"), QStringLiteral("bet_amount"),
+                            QStringLiteral("wager")}, &amount);
+        double payout = 0.0;
+        const bool havePayout = goatedNumber(json,
+            {QStringLiteral("payout"), QStringLiteral("win_amount"), QStringLiteral("payout_amount"),
+             QStringLiteral("winnings"), QStringLiteral("profit_amount")}, &payout);
+        double multiplier = 0.0;
+        const bool haveMult = goatedNumber(json,
+            {QStringLiteral("multiplier"), QStringLiteral("payout_multiplier"),
+             QStringLiteral("payoutMultiplier")}, &multiplier);
+
+        bool win = false;
+        if (!goatedBool(json, {QStringLiteral("win"), QStringLiteral("won"), QStringLiteral("is_win"),
+                               QStringLiteral("isWin"), QStringLiteral("is_winner"),
+                               QStringLiteral("result_type"), QStringLiteral("outcome")}, &win)) {
+            if (amount > 0.0 && havePayout)
+                win = payout > 0.0;
+            else
+                win = over ? roll > target : roll < target;
+        }
+
+        LiveBetResult r;
+        r.ok = true;
+        r.amount = amount;
+        r.roll = roll;
+        r.win = win;
+        r.payout = havePayout ? payout : 0.0;
+        if (win) {
+            const double chance = over ? 100.0 - target : target;
+            r.multiplier = haveMult ? multiplier
+                           : (amount > 0.0 && havePayout && payout > 0.0)
+                                 ? payout / amount
+                                 : (chance > 0.0 ? 99.0 / chance : 0.0);
+            if (!havePayout)
+                r.payout = amount * r.multiplier;
+        }
+
+        QJsonValue idv;
+        if (findGoatedValue(json, {QStringLiteral("id"), QStringLiteral("bet_id"), QStringLiteral("betId"),
+                                   QStringLiteral("_id")}, &idv))
+            r.betId = idv.isString() ? idv.toString() : QString::number(qint64(idv.toDouble()));
+        double nonce = -1;
+        if (goatedNumber(json, {QStringLiteral("nonce")}, &nonce))
+            r.nonce = qint64(nonce);
+        emit diceFinished(r);
+    });
+}
+
+// Goated limbo: POST https://apis.goated.com/casino/limbo/bet
+//   {"multiplier": 2, "amount": 0.001, "currency": "USDC", "is_fiat": false}
+// Answer: {"success":true,"data":{"id","multiplier_user":2,"multiplier_output":2.21 (the result),
+//   "multiplier":2 (paid multiplier),"payout":0.002,"amount":0.001,"nonce":978,...}}
+void StakeClient::placeGoatedLimbo(const LimboBetRequest &request)
+{
+    const double target = std::round(request.multiplierTarget * 100.0) / 100.0;
+
+    QJsonObject body;
+    body.insert(QStringLiteral("multiplier"), target);
+    body.insert(QStringLiteral("amount"), std::round(request.amount * 1e8) / 1e8);
+    body.insert(QStringLiteral("currency"), m_currency.toUpper());
+    body.insert(QStringLiteral("is_fiat"), false);
+
+    const double requestedAmount = request.amount;
+    m_transport->post(QStringLiteral("casino/limbo/bet"), body,
+                      [this, requestedAmount, target](const TransportReply &reply) {
+        if (!reply.ok) {
+            const bool isTimeout = (reply.status == 0);
+            const bool unknown = (reply.status >= 500);
+            if (reply.status == 0)
+                emit sessionLost(reply.error);
+            emit diceFinished(failed(reply.error, {}, isTimeout, unknown));
+            return;
+        }
+
+        const QJsonObject &json = reply.json;
+        const QString errText = goatedErrorText(json);
+        const bool successFalse = json.contains(QStringLiteral("success"))
+                                  && !json.value(QStringLiteral("success")).toBool();
+        if (successFalse || reply.status >= 400 || (!errText.isEmpty() && isRetryable({}, errText))) {
+            const QString msg = errText.isEmpty()
+                ? tr("Goated bet rejected (HTTP %1).").arg(reply.status) : errText;
+            LiveBetResult r = failed(msg, {}, isRetryable({}, msg), false);
+            r.retryDelayMs = fastRetryDelayMs({}, msg);
+            emit diceFinished(r);
+            return;
+        }
+
+        double result = 0.0;
+        if (!goatedNumber(json, {QStringLiteral("multiplier_output"), QStringLiteral("result"),
+                                 QStringLiteral("roll_value")}, &result)) {
+            const QString raw = QString::fromUtf8(QJsonDocument(json).toJson(QJsonDocument::Compact)).left(400);
+            emit diceFinished(failed(errText.isEmpty()
+                                         ? tr("Unexpected Goated bet response (no result found): %1").arg(raw)
+                                         : errText,
+                                     {}, false, true));
+            return;
+        }
+
+        double amount = requestedAmount;
+        goatedNumber(json, {QStringLiteral("amount")}, &amount);
+        double payout = 0.0;
+        const bool havePayout = goatedNumber(json, {QStringLiteral("payout")}, &payout);
+
+        LiveBetResult r;
+        r.ok = true;
+        r.amount = amount;
+        r.roll = result;
+        r.payout = havePayout ? payout : 0.0;
+        // The server's payout is the truth; for a 0 bet fall back to comparing the result.
+        r.win = (amount > 0.0 && havePayout) ? payout > 0.0 : result >= target;
+        if (r.win) {
+            double mult = 0.0;
+            r.multiplier = (amount > 0.0 && payout > 0.0) ? payout / amount
+                           : goatedNumber(json, {QStringLiteral("multiplier"),
+                                                 QStringLiteral("multiplier_user")}, &mult) && mult > 0.0
+                                 ? mult : target;
+            if (!havePayout)
+                r.payout = amount * r.multiplier;
+        }
+
+        QJsonValue idv;
+        if (findGoatedValue(json, {QStringLiteral("id"), QStringLiteral("bet_id")}, &idv))
+            r.betId = idv.isString() ? idv.toString() : QString::number(qint64(idv.toDouble()));
+        double nonce = -1;
+        if (goatedNumber(json, {QStringLiteral("nonce")}, &nonce))
+            r.nonce = qint64(nonce);
+        emit diceFinished(r);
+    });
+}
+
+// Goated: POST https://apis.goated.com/casino/provably-fair/rotate-seed {"client_seed": "..."}
+// Answer: {"success":true,"data":{"server_seed_hash","next_server_seed_hash","client_seed","nonce":0,...}}
+void StakeClient::rotateGoatedSeed(const QString &clientSeed)
+{
+    QString why;
+    if (!m_transport || !m_transport->isReady(&why)) {
+        const QString msg = m_transport ? why : tr("No transport configured.");
+        QTimer::singleShot(0, this, [this, msg] { emit seedRotateFailed(msg); });
+        return;
+    }
+
+    QJsonObject body;
+    body.insert(QStringLiteral("client_seed"), clientSeed);
+
+    m_transport->post(QStringLiteral("casino/provably-fair/rotate-seed"), body,
+                      [this, clientSeed](const TransportReply &reply) {
+        if (!reply.ok) {
+            if (reply.status == 0)
+                emit sessionLost(reply.error);
+            emit seedRotateFailed(reply.error);
+            return;
+        }
+        const QJsonObject &json = reply.json;
+        const bool successFalse = json.contains(QStringLiteral("success"))
+                                  && !json.value(QStringLiteral("success")).toBool();
+        if (successFalse || reply.status >= 400) {
+            const QString msg = goatedErrorText(json);
+            emit seedRotateFailed(msg.isEmpty() ? tr("Goated seed rotation rejected (HTTP %1).").arg(reply.status)
+                                                : msg);
+            return;
+        }
+        const QJsonObject data = json.value(QStringLiteral("data")).toObject();
+        if (data.isEmpty()) {
+            emit seedRotateFailed(tr("Unexpected seed rotation response."));
+            return;
+        }
+        const QString active = data.value(QStringLiteral("client_seed")).toString();
+        emit seedRotated(active.isEmpty() ? clientSeed : active,
+                         qint64(numberOf(data.value(QStringLiteral("nonce")))),
+                         data.value(QStringLiteral("server_seed_hash")).toString(),
+                         data.value(QStringLiteral("next_server_seed_hash")).toString());
+    });
+}
+
+// Goated: POST https://apis.goated.com/user/vault/transfer/in {"currency": "USDC", "amount": 0.001}
+// Answer: {"success":true,"data":{"vault_balance":{...},"wallet_balance":{...}}} - the amount is
+// not echoed, so the requested one is reported once the server accepted the transfer.
+void StakeClient::goatedVaultDeposit(double amount)
+{
+    QString why;
+    if (!m_transport || !m_transport->isReady(&why)) {
+        const QString msg = m_transport ? why : tr("No transport configured.");
+        QTimer::singleShot(0, this, [this, msg] { emit vaultFailed(msg); });
+        return;
+    }
+    if (!(amount > 0.0)) {
+        QTimer::singleShot(0, this, [this] { emit vaultFailed(tr("Please specify vault amount.")); });
+        return;
+    }
+    if (m_currency.isEmpty()) {
+        QTimer::singleShot(0, this, [this] {
+            emit vaultFailed(tr("No currency selected — log in and pick one in Options."));
+        });
+        return;
+    }
+
+    const QString currency = m_currency.toUpper();
+    const double rounded = std::round(amount * 1e8) / 1e8;
+    QJsonObject body;
+    body.insert(QStringLiteral("currency"), currency);
+    body.insert(QStringLiteral("amount"), rounded);
+
+    m_transport->post(QStringLiteral("user/vault/transfer/in"), body,
+                      [this, currency, rounded](const TransportReply &reply) {
+        if (!reply.ok) {
+            if (reply.status == 0)
+                emit sessionLost(reply.error);
+            emit vaultFailed(reply.error);
+            return;
+        }
+        const QJsonObject &json = reply.json;
+        const bool successFalse = json.contains(QStringLiteral("success"))
+                                  && !json.value(QStringLiteral("success")).toBool();
+        if (successFalse || reply.status >= 400) {
+            const QString msg = goatedErrorText(json);
+            emit vaultFailed(msg.isEmpty() ? tr("Goated vault transfer rejected (HTTP %1).").arg(reply.status)
+                                           : msg);
+            return;
+        }
+        if (!json.value(QStringLiteral("data")).isObject()) {
+            emit vaultFailed(tr("Unexpected vault response."));
+            return;
+        }
+        emit vaultDeposited(rounded, currency);
     });
 }
 

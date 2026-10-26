@@ -11,6 +11,7 @@
 #include "ui/LuaEditorDock.h"
 #include "ui/ManualBetPanel.h"
 #include "ui/OptionsDialog.h"
+#include "bot/GoatedTransport.h"
 #include "bot/ShuffleTransport.h"
 #include "bot/StakeClient.h"
 #include "bot/StakeTransport.h"
@@ -433,6 +434,7 @@ MainWindow::MainWindow(QWidget *parent)
     m_cookie = new CookieTransport(this);
     m_ext = new ExtensionTransport(this);
     m_shuffle = new ShuffleTransport(this);
+    m_goated = new GoatedTransport(this);
     m_stake = new StakeClient(this);
     m_stake->setTransport(m_cookie);
     m_engine->setLiveClient(m_stake);
@@ -535,7 +537,7 @@ MainWindow::MainWindow(QWidget *parent)
     });
     // `currency = "btc"` in a Lua / JavaScript strategy
     m_engine->setCasinoHooks(
-        [this]() { return m_live.isShuffle() ? QStringLiteral("shuffle") : QStringLiteral("stake"); },
+        [this]() { return m_live.casinoName(); },
         [this](const QString &casino, QString &err) { return switchCasinoFromScript(casino, err); });
     m_engine->setCurrencyHooks(
         [this]() { return m_engine->liveMode() ? m_live.currency : m_currencyTag.toLower(); },
@@ -690,15 +692,18 @@ void MainWindow::createMenus()
     m_casinoGroup->setExclusive(true);
     m_actCasinoStake = casinoMenu->addAction(tr("&Stake"));
     m_actCasinoShuffle = casinoMenu->addAction(tr("S&huffle"));
-    for (QAction *a : {m_actCasinoStake, m_actCasinoShuffle}) {
+    m_actCasinoGoated = casinoMenu->addAction(tr("&Goated"));
+    for (QAction *a : {m_actCasinoStake, m_actCasinoShuffle, m_actCasinoGoated}) {
         a->setCheckable(true);
         m_casinoGroup->addAction(a);
     }
-    (m_live.isShuffle() ? m_actCasinoShuffle : m_actCasinoStake)->setChecked(true);
+    casinoAction(m_live.casino)->setChecked(true);
     connect(m_actCasinoStake, &QAction::triggered, this,
             [this] { onCasinoSelected(LiveSettings::Casino::Stake); });
     connect(m_actCasinoShuffle, &QAction::triggered, this,
             [this] { onCasinoSelected(LiveSettings::Casino::Shuffle); });
+    connect(m_actCasinoGoated, &QAction::triggered, this,
+            [this] { onCasinoSelected(LiveSettings::Casino::Goated); });
 
     QMenu *gameMenu = menuBar()->addMenu(tr("&Game"));
     m_gameGroup = new QActionGroup(this);
@@ -1154,7 +1159,7 @@ void MainWindow::createLuaDock()
 
 void MainWindow::updateWindowTitle()
 {
-    setWindowTitle(tr("xBot - %1").arg(m_live.isShuffle() ? tr("Shuffle") : tr("Stake")));
+    setWindowTitle(tr("xBot - %1").arg(casinoDisplayName(m_live.casino)));
 }
 
 void MainWindow::setGame(Game game)
@@ -1182,12 +1187,30 @@ void MainWindow::onGameSelected(Game game)
     setGame(game);
 }
 
+QString MainWindow::casinoDisplayName(LiveSettings::Casino casino)
+{
+    switch (casino) {
+    case LiveSettings::Casino::Shuffle: return tr("Shuffle");
+    case LiveSettings::Casino::Goated:  return tr("Goated");
+    default:                            return tr("Stake");
+    }
+}
+
+QAction *MainWindow::casinoAction(LiveSettings::Casino casino) const
+{
+    switch (casino) {
+    case LiveSettings::Casino::Shuffle: return m_actCasinoShuffle;
+    case LiveSettings::Casino::Goated:  return m_actCasinoGoated;
+    default:                            return m_actCasinoStake;
+    }
+}
+
 void MainWindow::updateCasinoMenu()
 {
-    if (!m_actCasinoStake || !m_actCasinoShuffle)
+    if (!m_actCasinoStake || !m_actCasinoShuffle || !m_actCasinoGoated)
         return;
     const QSignalBlocker blocker(m_casinoGroup);
-    (m_live.isShuffle() ? m_actCasinoShuffle : m_actCasinoStake)->setChecked(true);
+    casinoAction(m_live.casino)->setChecked(true);
 }
 
 void MainWindow::onCasinoSelected(LiveSettings::Casino casino)
@@ -1211,7 +1234,7 @@ void MainWindow::onCasinoSelected(LiveSettings::Casino casino)
     applyLiveSettings(next);
     updateCasinoMenu();
     onLogMessage(tr("Casino: %1 — open Tools → Options to enter its credentials and log in.")
-                     .arg(casino == LiveSettings::Casino::Shuffle ? tr("Shuffle") : tr("Stake")),
+                     .arg(casinoDisplayName(casino)),
                  false);
 }
 
@@ -1589,8 +1612,10 @@ void MainWindow::onBetTableClicked(const QModelIndex &index)
     const QString betId = m_model->betIdAt(index.row());
     if (betId.isEmpty() || m_model->isResolved(betId))
         return;                      // nothing to do / already revealed
-    if (m_model->recordAt(index.row()).casino.compare(QLatin1String("shuffle"), Qt::CaseInsensitive) == 0)
-        return;                      // Shuffle ids are used as they are
+    const QString clickedCasino = m_model->recordAt(index.row()).casino;
+    if (clickedCasino.compare(QLatin1String("shuffle"), Qt::CaseInsensitive) == 0
+        || clickedCasino.compare(QLatin1String("goated"), Qt::CaseInsensitive) == 0)
+        return;                      // Shuffle / Goated ids are used as they are
     resolveBetIid(betId);
 }
 
@@ -1610,6 +1635,17 @@ void MainWindow::onBetTableContextMenu(const QPoint &pos)
     const QString rowCasino = m_model->recordAt(index.row()).casino.trimmed().toLower();
     const bool shuffleRow = rowCasino.isEmpty() ? m_live.isShuffle()
                                                 : rowCasino == QLatin1String("shuffle");
+    const bool goatedRow = rowCasino.isEmpty() ? m_live.isGoated()
+                                               : rowCasino == QLatin1String("goated");
+
+    // Goated: the bet id can only be copied (no public bet page is known).
+    if (goatedRow) {
+        QMenu menu;
+        QAction *copyAct = menu.addAction(tr("Copy Bet id:  %1").arg(betId));
+        if (menu.exec(globalPos) == copyAct)
+            QApplication::clipboard()->setText(betId);
+        return;
+    }
 
     // Shuffle: nothing to look up; the bet id is copiable and opens the public bet
     // modal on the configured Shuffle mirror (md-id = this row's bet id).
@@ -1836,7 +1872,7 @@ void MainWindow::onOpenOptions()
         // nothing to wait for. Waiting on it made the login hang on "Loading browser…"
         // whenever that unrelated Stake page was slow or failed to load.
         const LiveSettings cur = dialog.liveSettings();
-        const bool needsBrowser = !cur.isShuffle() && !cur.extensionMode;
+        const bool needsBrowser = !cur.isShuffle() && !cur.isGoated() && !cur.extensionMode;
         // Stake cookie mode: the browser was just (re)created and is still loading: wait for
         // it, but not forever.
         if (needsBrowser && m_hiddenBrowser && !m_hiddenBrowser->isPageLoaded()) {
@@ -1940,7 +1976,7 @@ void MainWindow::ensureHiddenBrowser(const LiveSettings &s)
 
         // Fetch the balance as soon as the page is actually loaded.
         connect(m_hiddenBrowser, &CookieGrabberDialog::pageLoaded, this, [this] {
-            if (m_live.enabled && !m_live.isShuffle() && m_stake)
+            if (m_live.enabled && !m_live.isShuffle() && !m_live.isGoated() && m_stake)
                 m_stake->fetchBalances();
         });
     }
@@ -1949,6 +1985,26 @@ void MainWindow::ensureHiddenBrowser(const LiveSettings &s)
 
 bool MainWindow::configureConnection(const LiveSettings &s, QString *errorOut)
 {
+    if (s.isGoated()) {
+        // Direct mode: plain HTTPS straight from the app, only the token is needed. The
+        // Stake browser / extension are left as they are for a quick switch back.
+        GoatedCredentials gc;
+        gc.token = s.goatedToken;
+        m_goated->setCredentials(gc);
+
+        // Shuffle's balance socket keeps running in the background like it does for Stake.
+        ShuffleCredentials sc;
+        sc.site = s.shuffleSite;
+        sc.token = s.shuffleToken;
+        sc.correlationUserId = s.correlationUserId;
+        sc.browserId = s.browserId;
+        m_shuffle->setCredentials(sc);
+        updateShuffleBackground(s, false);
+
+        m_stake->setTransport(m_goated);
+        m_stake->setCurrency(s.currency);
+        return true;
+    }
     if (s.isShuffle()) {
         // Direct mode: HTTPS + websocket straight from the app. No WebView2, no extension.
         ShuffleCredentials sc;
@@ -2073,7 +2129,7 @@ void MainWindow::applyLiveSettings(const LiveSettings &requested)
         m_balanceTimer->start();
         onLogMessage(tr("Live betting enabled (%1, %2). Fetching balance…")
                          .arg(m_live.activeSite(),
-                              m_live.isShuffle() ? tr("direct")
+                              (m_live.isShuffle() || m_live.isGoated()) ? tr("direct")
                                                  : (m_live.extensionMode ? tr("extension") : tr("cookie"))),
                      false);
     } else {
@@ -2324,10 +2380,12 @@ void MainWindow::updateModeWidgets()
         const bool ready = m_stake->transport() && m_stake->transport()->isReady(&why);
         m_statusMode->setText(tr("%1 · %2%3")
                                   .arg(m_live.activeSite(),
-                                       m_live.isShuffle() ? tr("direct")
-                                                          : (m_live.extensionMode ? tr("extension")
-                                                                                  : tr("cookie")),
-                                       (ready || m_live.isShuffle() || !m_live.extensionMode) ? QString() : tr(" (not connected)")));
+                                       (m_live.isShuffle() || m_live.isGoated())
+                                           ? tr("direct")
+                                           : (m_live.extensionMode ? tr("extension")
+                                                                   : tr("cookie")),
+                                       (ready || m_live.isShuffle() || m_live.isGoated()
+                                        || !m_live.extensionMode) ? QString() : tr(" (not connected)")));
         m_statusMode->setStyleSheet(QStringLiteral("color:#c9372a;font-weight:bold;"));
     } else {
         m_statusMode->setText(tr("Simulation"));
@@ -2692,6 +2750,7 @@ void MainWindow::loadSettings()
     m_live.extensionMode = settings.value(QStringLiteral("extensionMode"), false).toBool();
     m_currencyByCasino[0] = settings.value(QStringLiteral("currency")).toString();
     m_currencyByCasino[1] = settings.value(QStringLiteral("shuffleCurrency")).toString();
+    m_currencyByCasino[2] = settings.value(QStringLiteral("goatedCurrency")).toString();
     m_live.currency = m_currencyByCasino[int(m_live.casino)];
     m_live.remember = settings.value(QStringLiteral("remember"), false).toBool();
 	m_live.enabled = settings.value(QStringLiteral("enabled"), false).toBool();
@@ -2701,6 +2760,7 @@ void MainWindow::loadSettings()
         m_live.clearance = settings.value(QStringLiteral("clearance")).toString();
         m_live.userAgent = settings.value(QStringLiteral("userAgent")).toString();
         m_live.shuffleToken = settings.value(QStringLiteral("shuffleToken")).toString();
+        m_live.goatedToken = settings.value(QStringLiteral("goatedToken")).toString();
         m_live.correlationUserId = settings.value(QStringLiteral("correlationUserId")).toString();
         m_live.browserId = settings.value(QStringLiteral("browserId")).toString();
     }
@@ -2751,13 +2811,13 @@ void MainWindow::saveSettings()
 
     m_currencyByCasino[int(m_live.casino)] = m_live.currency;
     settings.beginGroup(QStringLiteral("Live"));
-    settings.setValue(QStringLiteral("casino"),
-                      m_live.isShuffle() ? QStringLiteral("shuffle") : QStringLiteral("stake"));
+    settings.setValue(QStringLiteral("casino"), m_live.casinoName());
     settings.setValue(QStringLiteral("site"), m_live.site);
     settings.setValue(QStringLiteral("shuffleSite"), m_live.shuffleSite);
     settings.setValue(QStringLiteral("extensionMode"), m_live.extensionMode);
     settings.setValue(QStringLiteral("currency"), m_currencyByCasino[0]);
     settings.setValue(QStringLiteral("shuffleCurrency"), m_currencyByCasino[1]);
+    settings.setValue(QStringLiteral("goatedCurrency"), m_currencyByCasino[2]);
     settings.setValue(QStringLiteral("remember"), m_live.remember);
 	settings.setValue(QStringLiteral("enabled"), m_live.enabled);
 	
@@ -2766,6 +2826,7 @@ void MainWindow::saveSettings()
         settings.setValue(QStringLiteral("clearance"), m_live.clearance);
         settings.setValue(QStringLiteral("userAgent"), m_live.userAgent);
         settings.setValue(QStringLiteral("shuffleToken"), m_live.shuffleToken);
+        settings.setValue(QStringLiteral("goatedToken"), m_live.goatedToken);
         settings.setValue(QStringLiteral("correlationUserId"), m_live.correlationUserId);
         settings.setValue(QStringLiteral("browserId"), m_live.browserId);
     } else { // unticking "remember" wipes what was stored before
@@ -2773,6 +2834,7 @@ void MainWindow::saveSettings()
         settings.remove(QStringLiteral("clearance"));
         settings.remove(QStringLiteral("userAgent"));
         settings.remove(QStringLiteral("shuffleToken"));
+        settings.remove(QStringLiteral("goatedToken"));
         settings.remove(QStringLiteral("correlationUserId"));
         settings.remove(QStringLiteral("browserId"));
     }

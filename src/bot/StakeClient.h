@@ -60,10 +60,12 @@ public:
     explicit StakeClient(QObject *parent = nullptr);
 
     // The transport decides the casino: a ShuffleTransport switches this client to
-    // Shuffle's GraphQL API (dice and limbo; balances come from its websocket).
+    // Shuffle's GraphQL API (dice and limbo; balances come from its websocket), a
+    // GoatedTransport to Goated's REST API (dice and limbo; balances over HTTPS).
     void setTransport(IStakeTransport *transport);
     IStakeTransport *transport() const { return m_transport; }
     bool isShuffle() const;
+    bool isGoated() const;
 
     // API currency code, lowercase ("btc", "usdt", ...).
     void setCurrency(const QString &currency);
@@ -111,6 +113,10 @@ private:
     void postBet(const QString &endpoint, const QJsonObject &body, double requestedAmount);
     void placeShuffleDice(const DiceBetRequest &request);
     void placeShuffleLimbo(const LimboBetRequest &request);
+    void placeGoatedDice(const DiceBetRequest &request);
+    void placeGoatedLimbo(const LimboBetRequest &request);
+    void rotateGoatedSeed(const QString &clientSeed);
+    void goatedVaultDeposit(double amount);
     void rotateShuffleSeed(const QString &clientSeed);
     void stakeVaultDeposit(double amount);
     static QString randomIdentifier();

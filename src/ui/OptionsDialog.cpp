@@ -1,4 +1,5 @@
 #include "ui/CookieGrabberDialog.h"
+#include "ui/GoatedLoginDialog.h"
 #include "ui/OptionsDialog.h"
 #include "ui/ShuffleLoginDialog.h"
 
@@ -135,6 +136,15 @@ OptionsDialog::OptionsDialog(QWidget *parent)
     m_shuffleLoginBtn->setEnabled(ShuffleLoginDialog::isAvailable());
     liveForm->addRow(QString(), m_shuffleLoginBtn);
     connect(m_shuffleLoginBtn, &QPushButton::clicked, this, &OptionsDialog::onShuffleLogin);
+
+    // Goated only: opens the site, waits for the login, then fills the Token.
+    m_goatedLoginBtn = new QPushButton(tr("Open Goated && Log in - to autofill token"));
+    m_goatedLoginBtn->setToolTip(
+        tr("Opens the site in a browser window. After you log in, the Token is filled in "
+           "automatically."));
+    m_goatedLoginBtn->setEnabled(GoatedLoginDialog::isAvailable());
+    liveForm->addRow(QString(), m_goatedLoginBtn);
+    connect(m_goatedLoginBtn, &QPushButton::clicked, this, &OptionsDialog::onGoatedLogin);
 
     m_clearanceEdit = new QLineEdit;
     m_clearanceEdit->setEchoMode(QLineEdit::Password);
@@ -320,14 +330,18 @@ void OptionsDialog::setFormRowVisible(QWidget *field, bool visible)
 void OptionsDialog::applyCasinoUi()
 {
     const bool shuffle = m_shuffle;
+    const bool goated = m_goated;
+    const bool direct = shuffle || goated; // both use "Direct mode" (plain HTTPS)
 
-    m_liveBox->setTitle(shuffle ? tr("Live betting — Shuffle") : tr("Live betting"));
+    m_liveBox->setTitle(goated ? tr("Live betting — Goated")
+                               : shuffle ? tr("Live betting — Shuffle") : tr("Live betting"));
 
-    // Login method: Shuffle has the one "Direct mode" (no WebView2, no browser extension).
+    // Login method: Shuffle and Goated have the one "Direct mode" (no WebView2, no browser
+    // extension).
     {
         const QSignalBlocker blocker(m_authCombo);
         m_authCombo->clear();
-        if (shuffle) {
+        if (direct) {
             m_authCombo->addItem(tr("Direct mode"));
         } else {
             m_authCombo->addItem(tr("Cookie (cf_clearance)"));
@@ -336,30 +350,34 @@ void OptionsDialog::applyCasinoUi()
         m_authCombo->setCurrentIndex(0);
     }
 
-    // "API key" is the "Token" on Shuffle.
+    // "API key" is the "Token" on Shuffle and Goated.
     if (auto *label = qobject_cast<QLabel *>(m_liveForm->labelForField(m_apiKeyEdit)))
-        label->setText(shuffle ? tr("Token:") : tr("API key:"));
-    m_apiKeyEdit->setPlaceholderText(shuffle ? tr("authorization token (JWT)")
-                                             : tr("x-access-token (API key)"));
+        label->setText(direct ? tr("Token:") : tr("API key:"));
+    m_apiKeyEdit->setPlaceholderText(goated ? tr("g3_token (JWT)")
+                                            : shuffle ? tr("authorization token (JWT)")
+                                                      : tr("x-access-token (API key)"));
     m_siteEdit->setPlaceholderText(shuffle ? QStringLiteral("shuffle.com")
                                            : QStringLiteral("stake.com"));
-    m_rememberCheck->setText(shuffle ? tr("Remember token and IDs on this computer")
-                                     : tr("Remember API key and cookie on this computer"));
+    m_rememberCheck->setText(goated ? tr("Remember token on this computer")
+                                    : shuffle ? tr("Remember token and IDs on this computer")
+                                              : tr("Remember API key and cookie on this computer"));
 
+    setFormRowVisible(m_siteEdit, !goated);        // Goated: the token is the only input
     setFormRowVisible(m_correlationEdit, shuffle);
     setFormRowVisible(m_browserIdEdit, shuffle);
     setFormRowVisible(m_shuffleLoginBtn, shuffle);
-    setFormRowVisible(m_extStatus, !shuffle);
+    setFormRowVisible(m_goatedLoginBtn, goated);
+    setFormRowVisible(m_extStatus, !direct);
 }
 
 void OptionsDialog::updateAuthFields()
 {
-    const bool ext = !m_shuffle && m_authCombo->currentIndex() == 1;
+    const bool ext = !m_shuffle && !m_goated && m_authCombo->currentIndex() == 1;
     m_clearanceEdit->setEnabled(!ext);
     m_userAgentEdit->setEnabled(!ext);
     m_extStatus->setEnabled(ext);
     if (m_grabCookieBtn)
-        m_grabCookieBtn->setEnabled(!ext && !m_shuffle && CookieGrabberDialog::isAvailable());
+        m_grabCookieBtn->setEnabled(!ext && !m_shuffle && !m_goated && CookieGrabberDialog::isAvailable());
 }
 
 LiveSettings OptionsDialog::liveSettings() const
@@ -367,8 +385,11 @@ LiveSettings OptionsDialog::liveSettings() const
     // Start from what we were given so the other casino's values are kept.
     LiveSettings s = m_base;
     s.enabled = m_liveEnable->isChecked();
-    s.casino = m_shuffle ? LiveSettings::Casino::Shuffle : LiveSettings::Casino::Stake;
-    if (m_shuffle) {
+    s.casino = m_goated ? LiveSettings::Casino::Goated
+                        : m_shuffle ? LiveSettings::Casino::Shuffle : LiveSettings::Casino::Stake;
+    if (m_goated) {
+        s.goatedToken = m_apiKeyEdit->text().trimmed();
+    } else if (m_shuffle) {
         const QString site = m_siteEdit->text().trimmed();
         s.shuffleSite = site.isEmpty() ? QStringLiteral("shuffle.com") : site;
         s.shuffleToken = m_apiKeyEdit->text().trimmed();
@@ -391,10 +412,14 @@ void OptionsDialog::setLiveSettings(const LiveSettings &s)
 {
     m_base = s;
     m_shuffle = s.isShuffle();
+    m_goated = s.isGoated();
     applyCasinoUi();
 
     m_liveEnable->setChecked(s.enabled);
-    if (m_shuffle) {
+    if (m_goated) {
+        m_authCombo->setCurrentIndex(0); // Direct mode
+        m_apiKeyEdit->setText(s.goatedToken);
+    } else if (m_shuffle) {
         m_authCombo->setCurrentIndex(0); // Direct mode
         m_siteEdit->setText(s.shuffleSite);
         m_apiKeyEdit->setText(s.shuffleToken);
@@ -470,4 +495,14 @@ void OptionsDialog::onShuffleLogin()
     m_correlationEdit->setText(dlg.correlationUserId());
     m_browserIdEdit->setText(dlg.browserId());
     setLoginStatus(tr("Logged in to Shuffle — press Log in to verify."), true);
+}
+
+void OptionsDialog::onGoatedLogin()
+{
+    GoatedLoginDialog dlg(this);
+    if (dlg.exec() != QDialog::Accepted)
+        return;
+
+    m_apiKeyEdit->setText(dlg.token());
+    setLoginStatus(tr("Logged in to Goated — press Log in to verify."), true);
 }
