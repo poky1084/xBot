@@ -50,7 +50,8 @@ bool containsCI(const QString &haystack, const char *needle)
 // / IsSeedRotateError.)
 bool isRetryable(const QString &type, const QString &msg)
 {
-    const bool parallel = containsCI(type, "parallelCasinoBet") && !containsCI(type, "internalError");
+    const bool parallel = (containsCI(type, "parallelCasinoBet") && !containsCI(type, "internalError"))
+                          || containsCI(msg, "only one bet at a time"); // Wolfbet
     const bool rateLimit = containsCI(msg, "slow down") || msg.contains(QLatin1String("429"));
     const bool seedRotate = containsCI(msg, "new seed pair") || containsCI(msg, "choose a new seed")
                             || containsCI(msg, "seedRotate") || containsCI(type, "seedRotate")
@@ -65,7 +66,8 @@ int fastRetryDelayMs(const QString &type, const QString &msg)
     const bool rateLimit = containsCI(msg, "slow down") || msg.contains(QLatin1String("429"));
     if (rateLimit)
         return 0;
-    if (containsCI(type, "parallelCasinoBet") && !containsCI(type, "internalError"))
+    if ((containsCI(type, "parallelCasinoBet") && !containsCI(type, "internalError"))
+        || containsCI(msg, "only one bet at a time"))
         return 40;
     if (containsCI(msg, "new seed pair") || containsCI(msg, "choose a new seed")
         || containsCI(msg, "seedRotate") || containsCI(type, "seedRotate")
