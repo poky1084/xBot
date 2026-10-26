@@ -4,9 +4,8 @@
 #include <QtGlobal>
 
 // ---- Casino selection in code ---------------------------------------------------
-// Change this one value ("stake" or "shuffle") to pick the casino at startup.
-// It takes priority over the value saved in the settings; the Casino menu can still
-// switch for the current session.
+// Default casino ("stake" or "shuffle") used on the first launch only. After that the
+// casino last selected (Casino menu / script) is saved on exit and restored at startup.
 namespace AppConfig {
 inline const QString casino = QStringLiteral("stake");
 }

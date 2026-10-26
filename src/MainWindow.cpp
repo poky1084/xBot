@@ -2665,9 +2665,10 @@ void MainWindow::loadSettings()
     // Live connection settings. `enabled` is deliberately never restored: every
     // launch starts in simulation and live betting must be switched on again.
     settings.beginGroup(QStringLiteral("Live"));
-    // The casino is chosen in code (AppConfig::casino in bot/LiveSettings.h); the value
-    // saved from the Casino menu no longer overrides it at startup.
-    m_live.casino = LiveSettings::fromName(AppConfig::casino);
+    // Restore the casino that was active when the app was last closed; on a first launch
+    // (nothing saved yet) fall back to the default in AppConfig::casino (bot/LiveSettings.h).
+    m_live.casino = LiveSettings::fromName(
+        settings.value(QStringLiteral("casino"), AppConfig::casino).toString());
     m_live.site = settings.value(QStringLiteral("site"), m_live.site).toString();
     m_live.shuffleSite = settings.value(QStringLiteral("shuffleSite"), m_live.shuffleSite).toString();
     m_live.extensionMode = settings.value(QStringLiteral("extensionMode"), false).toBool();
