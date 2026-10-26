@@ -2295,7 +2295,7 @@ void MainWindow::updateModeWidgets()
                                        m_live.isShuffle() ? tr("direct")
                                                           : (m_live.extensionMode ? tr("extension")
                                                                                   : tr("cookie")),
-                                       ready ? QString() : tr(" (not connected)")));
+                                       (ready || m_live.isShuffle() || !m_live.extensionMode) ? QString() : tr(" (not connected)")));
         m_statusMode->setStyleSheet(QStringLiteral("color:#c9372a;font-weight:bold;"));
     } else {
         m_statusMode->setText(tr("Simulation"));

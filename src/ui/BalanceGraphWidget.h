@@ -23,5 +23,5 @@ private:
 
     int m_hoverIndex = -1; // sample under the mouse, -1 = none
     QVector<double> m_samples;
-    static constexpr int kMaxSamples = 600;
+    static constexpr int kMaxSamples = 100;
 };
