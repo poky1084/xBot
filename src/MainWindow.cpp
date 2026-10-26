@@ -417,7 +417,10 @@ private:
 MainWindow::MainWindow(QWidget *parent)
     : QMainWindow(parent)
 {
-    qApp->setStyle(new CheckStyle(QStringLiteral("Fusion"))); // custom check box drawing
+    // Custom check box drawing. Installed once for the whole app: re-setting the
+    // app style when a second window opens would re-polish every existing window.
+    if (!dynamic_cast<CheckStyle *>(qApp->style()))
+        qApp->setStyle(new CheckStyle(QStringLiteral("Fusion")));
     updateWindowTitle();
     setWindowIcon(QIcon(QStringLiteral(":/icons/tray.svg")));
 
@@ -697,9 +700,6 @@ void MainWindow::createMenus()
     connect(m_actCasinoShuffle, &QAction::triggered, this,
             [this] { onCasinoSelected(LiveSettings::Casino::Shuffle); });
 
-    QMenu *fileMenu = menuBar()->addMenu(tr("&File"));
-    fileMenu->addAction(tr("E&xit"), qApp, &QApplication::closeAllWindows);
-
     QMenu *gameMenu = menuBar()->addMenu(tr("&Game"));
     m_gameGroup = new QActionGroup(this);
     m_gameGroup->setExclusive(true);
@@ -737,6 +737,9 @@ void MainWindow::createMenus()
     toolsMenu->addAction(m_actStats);
     toolsMenu->addAction(m_actOptions);
     toolsMenu->addAction(m_actConditions);
+
+    QMenu *fileMenu = menuBar()->addMenu(tr("&File"));
+    fileMenu->addAction(tr("E&xit"), qApp, &QApplication::closeAllWindows);
 
     QMenu *helpMenu = menuBar()->addMenu(tr("&Help"));
     helpMenu->addAction(tr("&About"), this, &MainWindow::onAbout);
@@ -1751,6 +1754,10 @@ void MainWindow::onOpenFile()
     auto *window = new MainWindow();
     window->setAttribute(Qt::WA_DeleteOnClose);
 
+    // Start with the same theme as the window it was opened from; after that the
+    // two windows switch themes independently.
+    window->m_actDarkTheme->setChecked(m_actDarkTheme->isChecked());
+
     // Cascade the new window so it doesn't sit exactly on top of this one.
     window->move(pos() + QPoint(30, 30));
     window->show();
@@ -2614,7 +2621,12 @@ void MainWindow::applyTheme(bool dark)
     QString sheet = QString::fromUtf8(dark ? kDarkStylesheet : kLightStylesheet);
     if (!dark)
         sheet += comboArrowRules(QColor(0x40, 0x40, 0x40));
-    qApp->setStyleSheet(sheet);
+    // Applied to this window only (cascades to its children and to dialogs parented
+    // to it), so each window keeps its own theme. An app-wide sheet would restyle
+    // every open window at once.
+    if (!qApp->styleSheet().isEmpty())
+        qApp->setStyleSheet(QString());
+    setStyleSheet(sheet);
     if (m_model)
         m_model->setStripeColor(dark ? QColor(0x29, 0x2d, 0x31) : QColor(0xf6, 0xf8, 0xfb));
     if (m_luaDock)
