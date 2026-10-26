@@ -38,6 +38,7 @@ class LuaEditorDock;
 class ManualBetPanel;
 class OptionsDialog;
 class GoatedTransport;
+class WolfbetTransport;
 class ShuffleTransport;
 class SimulatedProvider;
 class StakeClient;
@@ -144,6 +145,11 @@ private:
     void snapshotLeavingCasinoBalance();                 // remember the engine balance of the casino being left
     bool loadCachedCasinoBalance();                      // instant load (Goated / Stake) into the session stats
     void applyGoatedCredentials(const LiveSettings &s);  // Goated token for the direct transport (background reads)
+    // Wolfbet balance cache (plain HTTPS, same idea as Goated's)
+    void onWolfbetBalancesUpdated(const QMap<QString, double> &balances);
+    QString wolfbetCurrency() const;                     // bet currency of Wolfbet (active or not)
+    void refreshWolfbetBalanceVar();
+    void applyWolfbetCredentials(const LiveSettings &s); // Wolfbet token for the direct transport (background reads)
     // Stake's balance is read through its extension / hidden browser while Shuffle or Goated is
     // the active casino, so the Stake cache is always current.
     void onStakeBackgroundBalances(const QMap<QString, double> &balances);
@@ -192,10 +198,12 @@ private:
     ExtensionTransport *m_ext = nullptr;
     ShuffleTransport *m_shuffle = nullptr;   // Shuffle "Direct mode" (no WebView2 / extension)
     GoatedTransport *m_goated = nullptr;     // Goated "Direct mode" (plain HTTPS, token only)
-    QActionGroup *m_casinoGroup = nullptr;   // Casino menu: Stake / Shuffle / Goated
+    WolfbetTransport *m_wolfbet = nullptr;   // Wolfbet "Direct mode" (plain HTTPS, token only)
+    QActionGroup *m_casinoGroup = nullptr;   // Casino menu: Stake / Shuffle / Goated / Wolfbet
     QAction *m_actCasinoStake = nullptr;
     QAction *m_actCasinoShuffle = nullptr;
     QAction *m_actCasinoGoated = nullptr;
+    QAction *m_actCasinoWolfbet = nullptr;
     // bet currency remembered per casino, indexed by int(LiveSettings::Casino)
     QString m_currencyByCasino[LiveSettings::kCasinoCount];
     QTimer *m_balanceTimer = nullptr;
@@ -319,6 +327,9 @@ private:
     QMap<QString, double> m_goatedBalances;
     double m_goatedBalance = 0.0;
     bool m_goatedBalanceKnown = false;
+    QMap<QString, double> m_wolfbetBalances;
+    double m_wolfbetBalance = 0.0;
+    bool m_wolfbetBalanceKnown = false;
     QMap<QString, double> m_stakeBalances;
     double m_stakeBalance = 0.0;
     bool m_stakeBalanceKnown = false;

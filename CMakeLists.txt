@@ -41,6 +41,8 @@ set(SOURCES
 	src/bot/ShuffleTransport.h
 	src/bot/GoatedTransport.cpp
 	src/bot/GoatedTransport.h
+	src/bot/WolfbetTransport.cpp
+	src/bot/WolfbetTransport.h
     src/ui/BetHistoryModel.cpp
     src/ui/BetHistoryModel.h
     src/ui/BalanceGraphWidget.cpp
@@ -71,6 +73,8 @@ set(SOURCES
 	src/ui/ShuffleLoginDialog.h
 	src/ui/GoatedLoginDialog.cpp
 	src/ui/GoatedLoginDialog.h
+	src/ui/WolfbetLoginDialog.cpp
+	src/ui/WolfbetLoginDialog.h
     resources/resources.qrc
 	resources/app.rc
 )

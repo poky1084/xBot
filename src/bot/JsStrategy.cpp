@@ -359,20 +359,21 @@ bool JsStrategy::readOutputs(double &nextBet, BotConfig &runCfg)
         return false;
     }
 
-    // ---- casino (optional): "stake", "shuffle" or "goated"
+    // ---- casino (optional): "stake", "shuffle", "goated" or "wolfbet"
     const QJSValue casino = readGlobal("casino");
     if (casino.isUndefined() || casino.isNull()) {
         // keep the current casino
     } else if (casino.isString()) {
         const QString k = casino.toString().trimmed().toLower();
-        if (k == QLatin1String("stake") || k == QLatin1String("shuffle") || k == QLatin1String("goated")) {
+        if (k == QLatin1String("stake") || k == QLatin1String("shuffle") || k == QLatin1String("goated")
+            || k == QLatin1String("wolfbet")) {
             runCfg.casino = k;
         } else if (!k.isEmpty()) {
-            m_error = QStringLiteral("casino must be \"stake\", \"shuffle\" or \"goated\" (got \"%1\")").arg(k);
+            m_error = QStringLiteral("casino must be \"stake\", \"shuffle\", \"goated\" or \"wolfbet\" (got \"%1\")").arg(k);
             return false;
         }
     } else {
-        m_error = QStringLiteral("casino must be the string \"stake\", \"shuffle\" or \"goated\"");
+        m_error = QStringLiteral("casino must be the string \"stake\", \"shuffle\", \"goated\" or \"wolfbet\"");
         return false;
     }
 

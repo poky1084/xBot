@@ -61,11 +61,13 @@ public:
 
     // The transport decides the casino: a ShuffleTransport switches this client to
     // Shuffle's GraphQL API (dice and limbo; balances come from its websocket), a
-    // GoatedTransport to Goated's REST API (dice and limbo; balances over HTTPS).
+    // GoatedTransport to Goated's REST API (dice and limbo; balances over HTTPS), a
+    // WolfbetTransport to Wolfbet's REST API (dice only; balances over HTTPS).
     void setTransport(IStakeTransport *transport);
     IStakeTransport *transport() const { return m_transport; }
     bool isShuffle() const;
     bool isGoated() const;
+    bool isWolfbet() const;
 
     // API currency code, lowercase ("btc", "usdt", ...).
     void setCurrency(const QString &currency);
@@ -123,6 +125,9 @@ private:
     void placeShuffleLimbo(const LimboBetRequest &request);
     void placeGoatedDice(const DiceBetRequest &request);
     void placeGoatedLimbo(const LimboBetRequest &request);
+    void placeWolfbetDice(const DiceBetRequest &request);
+    void placeWolfbetLimbo(const LimboBetRequest &request);
+    void rotateWolfbetSeed();
     void rotateGoatedSeed(const QString &clientSeed);
     void goatedVaultDeposit(double amount);
     void rotateShuffleSeed(const QString &clientSeed);

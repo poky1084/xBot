@@ -2,6 +2,7 @@
 #include "ui/GoatedLoginDialog.h"
 #include "ui/OptionsDialog.h"
 #include "ui/ShuffleLoginDialog.h"
+#include "ui/WolfbetLoginDialog.h"
 
 #include <QCheckBox>
 #include <QComboBox>
@@ -145,6 +146,15 @@ OptionsDialog::OptionsDialog(QWidget *parent)
     m_goatedLoginBtn->setEnabled(GoatedLoginDialog::isAvailable());
     liveForm->addRow(QString(), m_goatedLoginBtn);
     connect(m_goatedLoginBtn, &QPushButton::clicked, this, &OptionsDialog::onGoatedLogin);
+
+    // Wolfbet only: opens the site, waits for the login, then fills the Token.
+    m_wolfbetLoginBtn = new QPushButton(tr("Open Wolfbet && Log in - to autofill token"));
+    m_wolfbetLoginBtn->setToolTip(
+        tr("Opens the site in a browser window. After you log in, the Token is filled in "
+           "automatically."));
+    m_wolfbetLoginBtn->setEnabled(WolfbetLoginDialog::isAvailable());
+    liveForm->addRow(QString(), m_wolfbetLoginBtn);
+    connect(m_wolfbetLoginBtn, &QPushButton::clicked, this, &OptionsDialog::onWolfbetLogin);
 
     m_clearanceEdit = new QLineEdit;
     m_clearanceEdit->setEchoMode(QLineEdit::Password);
@@ -331,12 +341,15 @@ void OptionsDialog::applyCasinoUi()
 {
     const bool shuffle = m_shuffle;
     const bool goated = m_goated;
-    const bool direct = shuffle || goated; // both use "Direct mode" (plain HTTPS)
+    const bool wolfbet = m_wolfbet;
+    const bool tokenOnly = goated || wolfbet;        // the token is the only input
+    const bool direct = shuffle || tokenOnly; // all use "Direct mode" (plain HTTPS)
 
-    m_liveBox->setTitle(goated ? tr("Live betting — Goated")
-                               : shuffle ? tr("Live betting — Shuffle") : tr("Live betting"));
+    m_liveBox->setTitle(wolfbet ? tr("Live betting — Wolfbet")
+                                : goated ? tr("Live betting — Goated")
+                                         : shuffle ? tr("Live betting — Shuffle") : tr("Live betting"));
 
-    // Login method: Shuffle and Goated have the one "Direct mode" (no WebView2, no browser
+    // Login method: Shuffle, Goated and Wolfbet have the one "Direct mode" (no WebView2, no browser
     // extension).
     {
         const QSignalBlocker blocker(m_authCombo);
@@ -350,34 +363,36 @@ void OptionsDialog::applyCasinoUi()
         m_authCombo->setCurrentIndex(0);
     }
 
-    // "API key" is the "Token" on Shuffle and Goated.
+    // "API key" is the "Token" on Shuffle, Goated and Wolfbet.
     if (auto *label = qobject_cast<QLabel *>(m_liveForm->labelForField(m_apiKeyEdit)))
         label->setText(direct ? tr("Token:") : tr("API key:"));
-    m_apiKeyEdit->setPlaceholderText(goated ? tr("g3_token (JWT)")
-                                            : shuffle ? tr("authorization token (JWT)")
-                                                      : tr("x-access-token (API key)"));
+    m_apiKeyEdit->setPlaceholderText(wolfbet ? tr("\"token\" cookie (value / JWT)")
+                                             : goated ? tr("g3_token (JWT)")
+                                                      : shuffle ? tr("authorization token (JWT)")
+                                                                : tr("x-access-token (API key)"));
     m_siteEdit->setPlaceholderText(shuffle ? QStringLiteral("shuffle.com")
                                            : QStringLiteral("stake.com"));
-    m_rememberCheck->setText(goated ? tr("Remember token on this computer")
+    m_rememberCheck->setText(tokenOnly ? tr("Remember token on this computer")
                                     : shuffle ? tr("Remember token and IDs on this computer")
                                               : tr("Remember API key and cookie on this computer"));
 
-    setFormRowVisible(m_siteEdit, !goated);        // Goated: the token is the only input
+    setFormRowVisible(m_siteEdit, !tokenOnly);     // Goated / Wolfbet: the token is the only input
     setFormRowVisible(m_correlationEdit, shuffle);
     setFormRowVisible(m_browserIdEdit, shuffle);
     setFormRowVisible(m_shuffleLoginBtn, shuffle);
     setFormRowVisible(m_goatedLoginBtn, goated);
+    setFormRowVisible(m_wolfbetLoginBtn, wolfbet);
     setFormRowVisible(m_extStatus, !direct);
 }
 
 void OptionsDialog::updateAuthFields()
 {
-    const bool ext = !m_shuffle && !m_goated && m_authCombo->currentIndex() == 1;
+    const bool ext = !m_shuffle && !m_goated && !m_wolfbet && m_authCombo->currentIndex() == 1;
     m_clearanceEdit->setEnabled(!ext);
     m_userAgentEdit->setEnabled(!ext);
     m_extStatus->setEnabled(ext);
     if (m_grabCookieBtn)
-        m_grabCookieBtn->setEnabled(!ext && !m_shuffle && !m_goated && CookieGrabberDialog::isAvailable());
+        m_grabCookieBtn->setEnabled(!ext && !m_shuffle && !m_goated && !m_wolfbet && CookieGrabberDialog::isAvailable());
 }
 
 LiveSettings OptionsDialog::liveSettings() const
@@ -385,9 +400,12 @@ LiveSettings OptionsDialog::liveSettings() const
     // Start from what we were given so the other casino's values are kept.
     LiveSettings s = m_base;
     s.enabled = m_liveEnable->isChecked();
-    s.casino = m_goated ? LiveSettings::Casino::Goated
-                        : m_shuffle ? LiveSettings::Casino::Shuffle : LiveSettings::Casino::Stake;
-    if (m_goated) {
+    s.casino = m_wolfbet ? LiveSettings::Casino::Wolfbet
+               : m_goated ? LiveSettings::Casino::Goated
+                          : m_shuffle ? LiveSettings::Casino::Shuffle : LiveSettings::Casino::Stake;
+    if (m_wolfbet) {
+        s.wolfbetToken = m_apiKeyEdit->text().trimmed();
+    } else if (m_goated) {
         s.goatedToken = m_apiKeyEdit->text().trimmed();
     } else if (m_shuffle) {
         const QString site = m_siteEdit->text().trimmed();
@@ -413,10 +431,14 @@ void OptionsDialog::setLiveSettings(const LiveSettings &s)
     m_base = s;
     m_shuffle = s.isShuffle();
     m_goated = s.isGoated();
+    m_wolfbet = s.isWolfbet();
     applyCasinoUi();
 
     m_liveEnable->setChecked(s.enabled);
-    if (m_goated) {
+    if (m_wolfbet) {
+        m_authCombo->setCurrentIndex(0); // Direct mode
+        m_apiKeyEdit->setText(s.wolfbetToken);
+    } else if (m_goated) {
         m_authCombo->setCurrentIndex(0); // Direct mode
         m_apiKeyEdit->setText(s.goatedToken);
     } else if (m_shuffle) {
@@ -505,4 +527,14 @@ void OptionsDialog::onGoatedLogin()
 
     m_apiKeyEdit->setText(dlg.token());
     setLoginStatus(tr("Logged in to Goated — press Log in to verify."), true);
+}
+
+void OptionsDialog::onWolfbetLogin()
+{
+    WolfbetLoginDialog dlg(this);
+    if (dlg.exec() != QDialog::Accepted)
+        return;
+
+    m_apiKeyEdit->setText(dlg.token());
+    setLoginStatus(tr("Logged in to Wolfbet — press Log in to verify."), true);
 }
