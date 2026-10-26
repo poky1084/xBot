@@ -449,6 +449,8 @@ MainWindow::MainWindow(QWidget *parent)
             &MainWindow::onShuffleBalancesUpdated);
     connect(m_shuffle, &ShuffleTransport::balancesFailed, this,
             &MainWindow::onShuffleBackgroundError);
+    connect(m_goated, &GoatedTransport::balancesUpdated, this,
+            &MainWindow::onGoatedBalancesUpdated);
     connect(m_stake, &StakeClient::balancesReady, this, &MainWindow::onBalancesReady);
     connect(m_stake, &StakeClient::balancesFailed, this, &MainWindow::onBalancesFailed);
 	connect(m_stake, &StakeClient::sessionLost, this, [this](const QString &reason) {
@@ -1983,6 +1985,13 @@ void MainWindow::ensureHiddenBrowser(const LiveSettings &s)
 
 }
 
+void MainWindow::applyGoatedCredentials(const LiveSettings &s)
+{
+    GoatedCredentials gc;
+    gc.token = s.goatedToken;
+    m_goated->setCredentials(gc);
+}
+
 bool MainWindow::configureConnection(const LiveSettings &s, QString *errorOut)
 {
     if (s.isGoated()) {
@@ -2032,6 +2041,7 @@ bool MainWindow::configureConnection(const LiveSettings &s, QString *errorOut)
             m_ext->stop();
             ensureHiddenBrowser(s); // keep WebView2 open for a quick switch back to Stake
         }
+        applyGoatedCredentials(s); // so Goated's balance can be read in the background
         m_stake->setTransport(m_shuffle);
         m_stake->setCurrency(s.currency);
         updateShuffleBackground(s, false);
@@ -2048,6 +2058,7 @@ bool MainWindow::configureConnection(const LiveSettings &s, QString *errorOut)
         m_shuffle->setCredentials(sc);
         updateShuffleBackground(s, false);
     }
+    applyGoatedCredentials(s); // so Goated's balance can be read in the background
 
     StakeCredentials cred;
     cred.site = s.site;
@@ -2086,7 +2097,14 @@ void MainWindow::applyLiveSettings(const LiveSettings &requested)
     const bool wasEnabled = m_live.enabled;
     const bool casinoChanged = (m_live.casino != next.casino);
 
-   
+    // Remember the balance of the casino we are leaving (Goated / Stake) before m_live changes.
+    if (wasEnabled && casinoChanged)
+        snapshotLeavingCasinoBalance();
+    // Another account or live betting switched off: the cached figures no longer apply.
+    if (!next.enabled || m_live.goatedToken != next.goatedToken)
+        m_goatedBalances.clear();
+    if (!next.enabled || m_live.apiKey != next.apiKey || m_live.site != next.site)
+        m_stakeBalances.clear();
 
     m_live = next;
     m_balances.clear();
@@ -2106,10 +2124,15 @@ void MainWindow::applyLiveSettings(const LiveSettings &requested)
     if (casinoChanged && live)
         m_engine->invalidateLiveBalance(); // the old casino's balance must not be used for the new one
     refreshShuffleBalanceVar();
+    refreshGoatedBalanceVar();
+    refreshStakeBalanceVar();
     // Switching to Shuffle: its balance has been tracked in the background, so load it into
     // the session stats right now instead of waiting for a new login round trip.
     if (live && m_live.isShuffle())
         loadCachedShuffleBalance();
+    // Same for Goated / Stake: show the last known balance at once; the fetch below confirms it.
+    else if (live && casinoChanged)
+        loadCachedCasinoBalance();
     // Bet sizes always carry 8 decimals and 0 is a valid bet, in both modes.
     m_manualPanel->setBetPrecision(8, 0.0);
     m_autoPanel->setBetPrecision(8, 0.0);
@@ -2126,6 +2149,8 @@ void MainWindow::applyLiveSettings(const LiveSettings &requested)
     m_lastBalanceError.clear();
     if (live) {
         m_stake->fetchBalances();
+        if (!m_live.isGoated() && m_goated->isReady())
+            m_goated->requestBalances(); // keep Goated's cached balance current in the background
         m_balanceTimer->start();
         onLogMessage(tr("Live betting enabled (%1, %2). Fetching balance…")
                          .arg(m_live.activeSite(),
@@ -2144,6 +2169,12 @@ void MainWindow::applyLiveSettings(const LiveSettings &requested)
 void MainWindow::onBalancesReady(const QMap<QString, double> &balances)
 {
     m_balances = balances;
+    // Only Stake's own answers (a login test for another casino must not land in its cache).
+    if (m_live.enabled && m_live.casino == LiveSettings::Casino::Stake
+        && !m_stake->isShuffle() && !m_stake->isGoated()) {
+        m_stakeBalances = balances;
+        refreshStakeBalanceVar();
+    }
     m_lastBalanceError.clear();
     const QStringList codes = balances.keys();
 	m_isLoggedIn = true; 
@@ -2178,6 +2209,8 @@ void MainWindow::onBalancesReady(const QMap<QString, double> &balances)
         m_live.currency = cur;
         m_stake->setCurrency(cur);
         refreshShuffleBalanceVar();
+        refreshGoatedBalanceVar();
+        refreshStakeBalanceVar();
         onLogMessage(tr("Betting currency set to %1.").arg(cur.toUpper()), false);
     }
     if (!balances.contains(m_live.currency)) {
@@ -2263,6 +2296,87 @@ bool MainWindow::loadCachedShuffleBalance()
     return true;
 }
 
+// ------------------------------------------------- Goated / Stake balance cache
+
+QString MainWindow::goatedCurrency() const
+{
+    return (m_live.isGoated() ? m_live.currency : m_currencyByCasino[int(LiveSettings::Casino::Goated)])
+        .trimmed().toLower();
+}
+
+QString MainWindow::stakeCurrency() const
+{
+    return (m_live.casino == LiveSettings::Casino::Stake
+                ? m_live.currency
+                : m_currencyByCasino[int(LiveSettings::Casino::Stake)])
+        .trimmed().toLower();
+}
+
+// Recompute m_goatedBalance (the Goated bet currency's balance) from the cache.
+void MainWindow::refreshGoatedBalanceVar()
+{
+    const QString cur = goatedCurrency();
+    m_goatedBalanceKnown = !cur.isEmpty() && m_goatedBalances.contains(cur);
+    m_goatedBalance = m_goatedBalanceKnown ? m_goatedBalances.value(cur) : 0.0;
+}
+
+// Recompute m_stakeBalance (the Stake bet currency's balance) from the cache.
+void MainWindow::refreshStakeBalanceVar()
+{
+    const QString cur = stakeCurrency();
+    m_stakeBalanceKnown = !cur.isEmpty() && m_stakeBalances.contains(cur);
+    m_stakeBalance = m_stakeBalanceKnown ? m_stakeBalances.value(cur) : 0.0;
+}
+
+// Every Goated balance read (the active casino's fetches and the background reads while
+// another casino is active) lands here.
+void MainWindow::onGoatedBalancesUpdated(const QMap<QString, double> &balances)
+{
+    // Ignore a read made with other credentials (e.g. a login test in the Options dialog).
+    if (!m_live.enabled || m_goated->credentials().token != GoatedTransport::cleanToken(m_live.goatedToken))
+        return;
+    m_goatedBalances = balances;
+    refreshGoatedBalanceVar();
+}
+
+// Called right before the casino changes: the engine's running balance is the freshest figure
+// there is for the casino being left (bets placed since the last 10 s refresh are included).
+// Shuffle is skipped, its websocket keeps the cache current by itself.
+void MainWindow::snapshotLeavingCasinoBalance()
+{
+    if (!m_engine->liveMode() || !m_engine->hasLiveBalance() || m_live.isShuffle())
+        return;
+    const QString cur = m_live.currency.trimmed().toLower();
+    if (cur.isEmpty())
+        return;
+    const double balance = m_engine->stats().balance;
+    if (m_live.isGoated())
+        m_goatedBalances.insert(cur, balance);
+    else
+        m_stakeBalances.insert(cur, balance);
+}
+
+// Puts the cached balance of the (new) active casino, Goated or Stake, into the session stats
+// so the sidebar and status bar show it immediately. The figure may be a few seconds old, so
+// betting stays blocked until the server's answer (already requested) arrives.
+bool MainWindow::loadCachedCasinoBalance()
+{
+    if (m_live.isShuffle())
+        return false;
+    const QMap<QString, double> &cache = m_live.isGoated() ? m_goatedBalances : m_stakeBalances;
+    const QString cur = m_live.currency.trimmed().toLower();
+    if (cur.isEmpty() || !cache.contains(cur))
+        return false;
+
+    m_balances = cache;
+    m_engine->syncBalance(cache.value(cur));
+    m_engine->invalidateLiveBalance(); // display only: wait for the fresh server balance to bet
+    m_manualPanel->setStartBalance(m_engine->stats().balance);
+    updateSessionWidgets();
+    updateStatusWidgets();
+    return true;
+}
+
 void MainWindow::onBalancesFailed(const QString &error)
 {
     if (m_optionsDialog)
@@ -2304,8 +2418,13 @@ void MainWindow::onExtensionReadyChanged(bool ready)
 
 void MainWindow::onBalanceTimer()
 {
-    if (m_live.enabled)
-        m_stake->fetchBalances();
+    if (!m_live.enabled)
+        return;
+    m_stake->fetchBalances();
+    // Goated has no push channel: while another casino is active, read its balance now and
+    // then so the cached figure is current when switching to it (answers only fill the cache).
+    if (!m_live.isGoated() && m_goated->isReady())
+        m_goated->requestBalances();
 }
 
 double MainWindow::displayBalance() const
@@ -2357,6 +2476,8 @@ bool MainWindow::switchCurrencyFromScript(const QString &currency, double &balan
     m_live.currency = cur;
     m_stake->setCurrency(cur);
     refreshShuffleBalanceVar();
+    refreshGoatedBalanceVar();
+    refreshStakeBalanceVar();
     balance = m_balances.value(cur);
     m_stake->fetchBalances(); // refresh the figure for the new currency
     return true;

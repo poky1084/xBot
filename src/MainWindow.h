@@ -133,6 +133,17 @@ private:
     QString shuffleCurrency() const;                     // bet currency of Shuffle (active or not)
     void refreshShuffleBalanceVar();
     bool loadCachedShuffleBalance();                     // instant load into the session stats
+
+    // Goated / Stake balance cache, same idea as Shuffle's: the last known balance of each casino
+    // is kept in a variable while another casino is active, so switching back shows it at once.
+    void onGoatedBalancesUpdated(const QMap<QString, double> &balances);
+    QString goatedCurrency() const;                      // bet currency of Goated (active or not)
+    QString stakeCurrency() const;                       // bet currency of Stake (active or not)
+    void refreshGoatedBalanceVar();
+    void refreshStakeBalanceVar();
+    void snapshotLeavingCasinoBalance();                 // remember the engine balance of the casino being left
+    bool loadCachedCasinoBalance();                      // instant load (Goated / Stake) into the session stats
+    void applyGoatedCredentials(const LiveSettings &s);  // Goated token for the direct transport (background reads)
 	
     // Live betting helpers
     bool configureConnection(const LiveSettings &settings, QString *errorOut = nullptr);
@@ -288,6 +299,15 @@ private:
     QMap<QString, double> m_shuffleBalances;
     double m_shuffleBalance = 0.0;
     bool m_shuffleBalanceKnown = false;
+
+    // Same for Goated and Stake: last known balances (lowercase code -> amount) of each casino,
+    // and the balance of its bet currency in m_goatedBalance / m_stakeBalance.
+    QMap<QString, double> m_goatedBalances;
+    double m_goatedBalance = 0.0;
+    bool m_goatedBalanceKnown = false;
+    QMap<QString, double> m_stakeBalances;
+    double m_stakeBalance = 0.0;
+    bool m_stakeBalanceKnown = false;
     QString m_lastShuffleBgError;
     double m_startBalance = BotConstants::kStartBalance;
 
