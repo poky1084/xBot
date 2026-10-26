@@ -451,6 +451,8 @@ MainWindow::MainWindow(QWidget *parent)
             &MainWindow::onShuffleBackgroundError);
     connect(m_goated, &GoatedTransport::balancesUpdated, this,
             &MainWindow::onGoatedBalancesUpdated);
+    connect(m_stake, &StakeClient::backgroundBalancesReady, this,
+            &MainWindow::onStakeBackgroundBalances);
     connect(m_stake, &StakeClient::balancesReady, this, &MainWindow::onBalancesReady);
     connect(m_stake, &StakeClient::balancesFailed, this, &MainWindow::onBalancesFailed);
 	connect(m_stake, &StakeClient::sessionLost, this, [this](const QString &reason) {
@@ -1343,7 +1345,7 @@ void MainWindow::onRunScript(const QString &script, ScriptLanguage language)
     //m_luaDock->appendConsole(tr("— run started —"), false);
     m_luaRunning = true;
     m_engine->start();
-    m_luaRunning = m_engine->isRunning();
+    m_luaRunning = m_engine->isRunning() || m_engine->startPending();
     m_luaDock->setRunning(m_luaRunning);
 }
 
@@ -1980,6 +1982,8 @@ void MainWindow::ensureHiddenBrowser(const LiveSettings &s)
         connect(m_hiddenBrowser, &CookieGrabberDialog::pageLoaded, this, [this] {
             if (m_live.enabled && !m_live.isShuffle() && !m_live.isGoated() && m_stake)
                 m_stake->fetchBalances();
+            else
+                requestStakeBackgroundBalance(); // Shuffle / Goated active: fill Stake's cache
         });
     }
 
@@ -1990,6 +1994,84 @@ void MainWindow::applyGoatedCredentials(const LiveSettings &s)
     GoatedCredentials gc;
     gc.token = s.goatedToken;
     m_goated->setCredentials(gc);
+}
+
+// Stake's session (extension server or hidden WebView2 browser) is kept up while Goated is the
+// active casino, like it already is for Shuffle, so Stake's balance can be read in the
+// background and a switch back finds it connected. Only when Stake credentials are set.
+void MainWindow::keepStakeSessionAlive(const LiveSettings &s)
+{
+    if (s.apiKey.isEmpty() && !s.extensionMode)
+        return;
+    if (s.extensionMode) {
+        StakeCredentials cred;
+        cred.site = s.site;
+        cred.apiKey = s.apiKey;
+        cred.clearance = s.clearance;
+        cred.userAgent = s.userAgent;
+        m_ext->setCredentials(cred);
+        QString extErr;
+        if (!m_ext->start(s.extensionPort, &extErr))
+            onLogMessage(tr("Could not start the extension server on 127.0.0.1:%1 (%2)")
+                             .arg(s.extensionPort)
+                             .arg(extErr),
+                         true);
+    } else {
+        m_ext->stop();
+        ensureHiddenBrowser(s);
+        m_webTransport->setBrowser(m_hiddenBrowser); // so it can read Stake's balance
+    }
+}
+
+IStakeTransport *MainWindow::stakeSessionTransport() const
+{
+    if (m_live.extensionMode)
+        return m_ext;
+    return m_webTransport; // may be null before the hidden browser was created
+}
+
+// Reads Stake's balances through its own session while another casino is active. The answer
+// only fills the cache (onStakeBackgroundBalances).
+void MainWindow::requestStakeBackgroundBalance()
+{
+    if (!m_live.enabled || m_live.casino == LiveSettings::Casino::Stake)
+        return;
+    if (m_live.apiKey.isEmpty() && !m_live.extensionMode)
+        return;
+    if (IStakeTransport *t = stakeSessionTransport())
+        m_stake->fetchBalancesVia(t); // does nothing unless the transport is ready
+}
+
+void MainWindow::fetchActiveBalance(int minGapMs)
+{
+    QElapsedTimer &clock = m_activeFetchClock[int(m_live.casino)];
+    if (clock.isValid() && clock.elapsed() < minGapMs)
+        return;
+    clock.start();
+    m_stake->fetchBalances();
+}
+
+void MainWindow::refreshBackgroundBalances()
+{
+    if (!m_live.enabled)
+        return;
+    // At most one round of background reads every 10 s, however often the casino is switched.
+    if (m_bgBalanceClock.isValid() && m_bgBalanceClock.elapsed() < 10000)
+        return;
+    m_bgBalanceClock.start();
+    if (!m_live.isShuffle())
+        updateShuffleBackground(m_live, false); // reopens a dropped socket, re-reads the balances
+    if (!m_live.isGoated() && m_goated->isReady())
+        m_goated->requestBalances();
+    requestStakeBackgroundBalance();
+}
+
+void MainWindow::onStakeBackgroundBalances(const QMap<QString, double> &balances)
+{
+    if (!m_live.enabled || m_live.casino == LiveSettings::Casino::Stake)
+        return; // Stake is active: its normal fetch fills the cache
+    m_stakeBalances = balances;
+    refreshStakeBalanceVar();
 }
 
 bool MainWindow::configureConnection(const LiveSettings &s, QString *errorOut)
@@ -2009,6 +2091,7 @@ bool MainWindow::configureConnection(const LiveSettings &s, QString *errorOut)
         sc.browserId = s.browserId;
         m_shuffle->setCredentials(sc);
         updateShuffleBackground(s, false);
+        keepStakeSessionAlive(s);
 
         m_stake->setTransport(m_goated);
         m_stake->setCurrency(s.currency);
@@ -2040,6 +2123,7 @@ bool MainWindow::configureConnection(const LiveSettings &s, QString *errorOut)
         } else {
             m_ext->stop();
             ensureHiddenBrowser(s); // keep WebView2 open for a quick switch back to Stake
+            m_webTransport->setBrowser(m_hiddenBrowser); // so it can read Stake's balance
         }
         applyGoatedCredentials(s); // so Goated's balance can be read in the background
         m_stake->setTransport(m_shuffle);
@@ -2148,9 +2232,11 @@ void MainWindow::applyLiveSettings(const LiveSettings &requested)
 
     m_lastBalanceError.clear();
     if (live) {
-        m_stake->fetchBalances();
-        if (!m_live.isGoated() && m_goated->isReady())
-            m_goated->requestBalances(); // keep Goated's cached balance current in the background
+        m_engine->markLiveConnecting(); // Start / Roll wait for the login instead of failing
+        fetchActiveBalance(4000);       // not again within 4 s: quick script switches would hit rate limits
+        // The casino just left is read again right away (exact server figure), the others too.
+        refreshBackgroundBalances();
+        m_balanceTimer->setInterval(m_isLoggedIn ? 10000 : 2000); // quick retries until logged in
         m_balanceTimer->start();
         onLogMessage(tr("Live betting enabled (%1, %2). Fetching balance…")
                          .arg(m_live.activeSite(),
@@ -2357,8 +2443,9 @@ void MainWindow::snapshotLeavingCasinoBalance()
 }
 
 // Puts the cached balance of the (new) active casino, Goated or Stake, into the session stats
-// so the sidebar and status bar show it immediately. The figure may be a few seconds old, so
-// betting stays blocked until the server's answer (already requested) arrives.
+// so the sidebar and status bar show it immediately and betting can start at once (the cached
+// figure is the engine's own balance from when the casino was left, or Goated's background
+// read). The fetch already requested confirms or corrects it a moment later.
 bool MainWindow::loadCachedCasinoBalance()
 {
     if (m_live.isShuffle())
@@ -2370,10 +2457,13 @@ bool MainWindow::loadCachedCasinoBalance()
 
     m_balances = cache;
     m_engine->syncBalance(cache.value(cur));
-    m_engine->invalidateLiveBalance(); // display only: wait for the fresh server balance to bet
+    // Credentials are set and the account was logged in before: stay logged in.
+    if (m_stake->transport() && m_stake->transport()->isReady())
+        m_isLoggedIn = true;
     m_manualPanel->setStartBalance(m_engine->stats().balance);
     updateSessionWidgets();
     updateStatusWidgets();
+    updateConnectionStatus();
     return true;
 }
 
@@ -2394,6 +2484,17 @@ void MainWindow::onBalancesFailed(const QString &error)
 
     if (!m_live.enabled)
         return;
+    // Rate limit (HTTP 429): a later refresh succeeds, nothing is wrong with the login.
+    if (error.contains(QLatin1String("too many requests"), Qt::CaseInsensitive)
+        || error.contains(QLatin1String("429"), Qt::CaseInsensitive)
+        || error.contains(QLatin1String("rate limit"), Qt::CaseInsensitive))
+        return;
+    // The hidden browser is still loading: the page-loaded handler / retry timer tries again.
+    if (error.contains(QLatin1String("still loading"), Qt::CaseInsensitive)
+        || error.contains(QLatin1String("not initialized"), Qt::CaseInsensitive)) {
+        updateConnectionStatus();
+        return;
+    }
     if (error != m_lastBalanceError) {
         m_lastBalanceError = error;
         onLogMessage(tr("Balance refresh failed: %1").arg(error), true);
@@ -2403,6 +2504,8 @@ void MainWindow::onBalancesFailed(const QString &error)
 
 void MainWindow::onExtensionReadyChanged(bool ready)
 {
+    if (ready)
+        requestStakeBackgroundBalance(); // Shuffle / Goated active: fill Stake's cache
     if (!m_stake || m_stake->transport() != m_ext)
         return;
     if (ready) {
@@ -2420,11 +2523,13 @@ void MainWindow::onBalanceTimer()
 {
     if (!m_live.enabled)
         return;
-    m_stake->fetchBalances();
-    // Goated has no push channel: while another casino is active, read its balance now and
-    // then so the cached figure is current when switching to it (answers only fill the cache).
-    if (!m_live.isGoated() && m_goated->isReady())
-        m_goated->requestBalances();
+    fetchActiveBalance(1500);
+    // Until the login went through, retry every 2 s so betting can start as early as possible.
+    m_balanceTimer->setInterval(m_isLoggedIn ? 10000 : 2000);
+    // Every casino that is not active is read in the background (Shuffle socket, Goated HTTPS,
+    // Stake extension / hidden browser): the answers only fill the caches, so the balance is
+    // current when switching casino, including from a script (throttled to every 10 s).
+    refreshBackgroundBalances();
 }
 
 double MainWindow::displayBalance() const

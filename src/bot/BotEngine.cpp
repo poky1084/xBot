@@ -11,6 +11,9 @@ namespace
 {
 constexpr int kMaxRetryStreak = 999999;
 constexpr int kSeedRotationTimeoutMs = 15000;
+constexpr int kConnectGraceMs = 60000;   // after (re)configuring the connection
+constexpr int kConnectWaitMs = 40000;    // how long Start / Roll wait for it
+constexpr int kConnectPollMs = 300;
 constexpr int kSeedRotationRetries = 3;
 constexpr int kSeedRotationRetryDelayMs = 500;
 constexpr int kAutoClientSeedLength = 10;
@@ -59,6 +62,18 @@ void BotEngine::syncBalance(double balance)
     else
         m_stats.balance = balance;
     m_liveBalanceKnown = true;
+}
+
+// True while the connection is still coming up, so a failed readiness check is only temporary:
+// the hidden browser page is loading, or the transport is ready and the first balance has not
+// arrived yet. A permanent problem (empty token, extension offline) is not waited for.
+bool BotEngine::connectionPending(const QString &whyNot) const
+{
+    if (!m_connectGraceActive || m_connectGrace.elapsed() > kConnectGraceMs)
+        return false;
+    if (whyNot.contains(QLatin1String("loading"), Qt::CaseInsensitive))
+        return true;
+    return m_live && m_live->transport() && m_live->transport()->isReady() && !m_liveBalanceKnown;
 }
 
 bool BotEngine::liveReady(QString *whyNot) const
@@ -193,10 +208,31 @@ BetRecord BotEngine::rollOnce(const BotConfig &cfg)
         if (m_inFlight)
             return {};
         QString why;
+        if (m_rollPending && !m_rollRetrying)
+            return {}; // a roll is already waiting for the connection
         if (!liveReady(&why)) {
+            if (connectionPending(why)
+                && (!m_rollPending || m_rollClock.elapsed() < kConnectWaitMs)) {
+                if (!m_rollPending) {
+                    m_rollPending = true;
+                    m_rollClock.start();
+                    emit logMessage(tr("Connecting to the casino… the bet is placed as soon as it is ready."),
+                                    false);
+                }
+                QTimer::singleShot(kConnectPollMs, this, [this, cfg] {
+                    if (!m_rollPending)
+                        return;
+                    m_rollRetrying = true;
+                    rollOnce(cfg);
+                    m_rollRetrying = false;
+                });
+                return {};
+            }
+            m_rollPending = false;
             emit logMessage(why, true);
             return {};
         }
+        m_rollPending = false;
         if (cfg.baseBet < 0.0 || cfg.baseBet > m_stats.balance) {
             emit logMessage(tr("Bet %1 exceeds the available balance %2.")
                                 .arg(cfg.baseBet, 0, 'f', 8)
@@ -227,6 +263,8 @@ void BotEngine::start()
 {
     if (m_running)
         return;
+    if (m_startPending && !m_startRetrying)
+        return; // already waiting for the connection
 
     if (liveMode()) {
         if (m_inFlight) {
@@ -235,10 +273,31 @@ void BotEngine::start()
         }
         QString why;
         if (!liveReady(&why)) {
+            // The connection is still logging in (e.g. right after launch): begin as soon as it
+            // is ready instead of failing.
+            if (connectionPending(why)
+                && (!m_startPending || m_startClock.elapsed() < kConnectWaitMs)) {
+                if (!m_startPending) {
+                    m_startPending = true;
+                    m_startClock.start();
+                    emit logMessage(tr("Connecting to the casino… betting starts as soon as it is ready."),
+                                    false);
+                }
+                QTimer::singleShot(kConnectPollMs, this, [this] {
+                    if (!m_startPending)
+                        return;
+                    m_startRetrying = true;
+                    start();
+                    m_startRetrying = false;
+                });
+                return;
+            }
+            m_startPending = false;
             emit logMessage(why, true);
             emit stopped(why);
             return;
         }
+        m_startPending = false;
         m_retryStreak = 0;
     } else {
         if (!m_provider) {
@@ -518,6 +577,12 @@ void BotEngine::notifyGameChange()
 
 void BotEngine::stop(const QString &reason)
 {
+    if (m_startPending) { // Start was waiting for the connection: cancel it
+        m_startPending = false;
+        emit logMessage(tr("Start cancelled."), false);
+        emit stopped(reason.isEmpty() ? tr("stopped by user") : reason);
+        return;
+    }
     if (!m_running)
         return;
     stopWithReason(reason.isEmpty() ? tr("stopped by user") : reason);

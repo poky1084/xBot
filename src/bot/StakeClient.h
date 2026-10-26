@@ -74,6 +74,11 @@ public:
     // Login check + balances (UserBalances GraphQL query).
     void fetchBalances();
 
+    // Stake's UserBalances query sent through `via` (the Stake extension / hidden browser) while
+    // another casino is the active transport. Answers arrive through backgroundBalancesReady() /
+    // backgroundBalancesFailed() and never touch the active casino's signals.
+    void fetchBalancesVia(IStakeTransport *via);
+
     void placeDice(const DiceBetRequest &request);
     void placeLimbo(const LimboBetRequest &request);
 
@@ -97,6 +102,8 @@ signals:
     // currency (lowercase) -> available amount
     void balancesReady(const QMap<QString, double> &balances);
     void balancesFailed(const QString &error);
+    void backgroundBalancesReady(const QMap<QString, double> &balances);
+    void backgroundBalancesFailed(const QString &error);
     void diceFinished(const LiveBetResult &result);
 	void sessionLost(const QString &reason);
 
@@ -110,6 +117,7 @@ signals:
     void vaultFailed(const QString &error);
 
 private:
+    void postBalanceQuery(IStakeTransport *via, bool background);
     void postBet(const QString &endpoint, const QJsonObject &body, double requestedAmount);
     void placeShuffleDice(const DiceBetRequest &request);
     void placeShuffleLimbo(const LimboBetRequest &request);

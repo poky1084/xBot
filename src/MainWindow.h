@@ -144,6 +144,18 @@ private:
     void snapshotLeavingCasinoBalance();                 // remember the engine balance of the casino being left
     bool loadCachedCasinoBalance();                      // instant load (Goated / Stake) into the session stats
     void applyGoatedCredentials(const LiveSettings &s);  // Goated token for the direct transport (background reads)
+    // Stake's balance is read through its extension / hidden browser while Shuffle or Goated is
+    // the active casino, so the Stake cache is always current.
+    void onStakeBackgroundBalances(const QMap<QString, double> &balances);
+    IStakeTransport *stakeSessionTransport() const;      // extension or hidden browser, per login method
+    void requestStakeBackgroundBalance();
+    // Reads the balance of every casino that is not the active one (Shuffle socket, Goated HTTPS,
+    // Stake extension / browser), so each cache is current when switching casino, e.g. from a script.
+    void refreshBackgroundBalances();
+    // Balance request of the active casino, skipped when one was sent less than `minGapMs` ago
+    // (quick casino switches from a script would otherwise trip the sites' rate limits).
+    void fetchActiveBalance(int minGapMs);
+    void keepStakeSessionAlive(const LiveSettings &s);   // extension server / hidden browser stay up
 	
     // Live betting helpers
     bool configureConnection(const LiveSettings &settings, QString *errorOut = nullptr);
@@ -187,6 +199,8 @@ private:
     // bet currency remembered per casino, indexed by int(LiveSettings::Casino)
     QString m_currencyByCasino[LiveSettings::kCasinoCount];
     QTimer *m_balanceTimer = nullptr;
+    QElapsedTimer m_bgBalanceClock; // last background balance read of the other casinos
+    QElapsedTimer m_activeFetchClock[LiveSettings::kCasinoCount]; // last active-casino request, per casino
     LiveSettings m_live;
     QPointer<OptionsDialog> m_optionsDialog;
     bool m_discardSettings = false; // "Clear data from PC" was used: don't save on exit

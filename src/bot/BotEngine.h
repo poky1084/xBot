@@ -96,6 +96,11 @@ public:
     bool betInFlight() const { return m_inFlight; }
     bool hasLiveBalance() const { return m_liveBalanceKnown; }
     void invalidateLiveBalance() { m_liveBalanceKnown = false; } // wait for a fresh server balance
+    // The live connection was just (re)configured and is logging in (hidden browser loading,
+    // first balance on its way): Start / Roll wait for it for a while instead of failing.
+    void markLiveConnecting() { m_connectGrace.start(); m_connectGraceActive = true; }
+    // Start was pressed while the connection was still coming up; it begins when ready.
+    bool startPending() const { return m_startPending; }
     // Overwrites the tracked balance with the server's figure (ignored while a
     // bet is in flight, because the figure may predate that bet).
     void syncBalance(double balance);
@@ -184,6 +189,15 @@ private:
     StakeClient *m_live = nullptr;
     bool m_liveEnabled = false;
     bool m_liveBalanceKnown = false;
+    bool connectionPending(const QString &whyNot) const;  // still logging in (not a permanent failure)
+    QElapsedTimer m_connectGrace;
+    bool m_connectGraceActive = false;
+    bool m_startPending = false;
+    bool m_startRetrying = false;
+    QElapsedTimer m_startClock;
+    bool m_rollPending = false;
+    bool m_rollRetrying = false;
+    QElapsedTimer m_rollClock;
     bool m_inFlight = false;
     bool m_inFlightManual = false;
     BotConfig m_inFlightCfg;

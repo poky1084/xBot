@@ -189,6 +189,10 @@ void GoatedTransport::requestBalances()
             emit balancesFailed(r.error);
             return;
         }
+        if (r.status == 429) { // rate limited: not a login problem
+            emit balancesFailed(tr("HTTP 429: Too Many Requests"));
+            return;
+        }
         const QJsonObject &o = r.json;
         if (o.contains(QStringLiteral("success")) && !o.value(QStringLiteral("success")).toBool()) {
             QString msg = o.value(QStringLiteral("message")).toString();

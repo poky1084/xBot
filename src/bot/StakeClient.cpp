@@ -497,27 +497,49 @@ void StakeClient::fetchBalances()
         return;
     }
 
+    postBalanceQuery(m_transport, false);
+}
+
+void StakeClient::fetchBalancesVia(IStakeTransport *via)
+{
+    if (!via || via == m_transport || !via->isReady())
+        return; // only for a Stake transport that is not the active one
+    postBalanceQuery(via, true);
+}
+
+void StakeClient::postBalanceQuery(IStakeTransport *via, bool background)
+{
     QJsonObject body;
     body.insert(QStringLiteral("operationName"), QStringLiteral("UserBalances"));
     body.insert(QStringLiteral("variables"), QJsonObject());
     body.insert(QStringLiteral("query"),
                 QStringLiteral("query UserBalances{user{balances{available{amount currency}}}}"));
 
-    IStakeTransport *requestedOn = m_transport;
-    m_transport->post(QStringLiteral("_api/graphql"), body, [this, requestedOn](const TransportReply &reply) {
-        if (requestedOn != m_transport)
-            return; // the casino / transport was switched meanwhile: stale answer
+    auto fail = [this, background](const QString &error) {
+        if (background)
+            emit backgroundBalancesFailed(error);
+        else
+            emit balancesFailed(error);
+    };
+
+    via->post(QStringLiteral("_api/graphql"), body,
+              [this, via, background, fail](const TransportReply &reply) {
+        // Active fetch: the casino / transport was switched meanwhile -> stale answer.
+        // Background fetch: the transport became the active one meanwhile -> its own
+        // fetchBalances() covers it.
+        if (background ? (via == m_transport) : (via != m_transport))
+            return;
         if (!reply.ok) {
-			if (reply.status == 0) {
+            if (!background && reply.status == 0) {
                 emit sessionLost(reply.error);
             }
-            emit balancesFailed(reply.error);
+            fail(reply.error);
             return;
         }
         QString type;
         const QString apiError = firstErrorText(reply.json, &type);
         if (!apiError.isEmpty()) {
-            emit balancesFailed(apiError);
+            fail(apiError);
             return;
         }
 
@@ -525,7 +547,7 @@ void StakeClient::fetchBalances()
                                        .value(QStringLiteral("user")).toObject()
                                        .value(QStringLiteral("balances"));
         if (!balsVal.isArray()) {
-            emit balancesFailed(tr("Login failed: unexpected response (is the API key valid?)"));
+            fail(tr("Login failed: unexpected response (is the API key valid?)"));
             return;
         }
 
@@ -537,7 +559,10 @@ void StakeClient::fetchBalances()
             if (!cur.isEmpty())
                 balances.insert(cur, numberOf(avail.value(QStringLiteral("amount"))));
         }
-        emit balancesReady(balances);
+        if (background)
+            emit backgroundBalancesReady(balances);
+        else
+            emit balancesReady(balances);
     });
 }
 
