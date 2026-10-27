@@ -392,7 +392,7 @@ void StakeClient::vaultDeposit(double amount)
     }
 
     QJsonObject data;
-    data.insert(QStringLiteral("currency"), m_currency.toUpper());
+    data.insert(QStringLiteral("currency"), ShuffleTransport::apiCurrency(m_currency));
     data.insert(QStringLiteral("amount"), QString::number(amount, 'f', 8));
 
     QJsonObject variables;
@@ -759,7 +759,7 @@ void StakeClient::placeShuffleDice(const DiceBetRequest &request)
     QJsonObject data;
     data.insert(QStringLiteral("amount"), QString::number(request.amount, 'f', 8));
     data.insert(QStringLiteral("bet"), QString::number(target, 'f', 2));
-    data.insert(QStringLiteral("currency"), m_currency.toUpper());
+    data.insert(QStringLiteral("currency"), ShuffleTransport::apiCurrency(m_currency));
     data.insert(QStringLiteral("direction"),
                 request.over ? QStringLiteral("ABOVE") : QStringLiteral("BELOW"));
 
@@ -1489,7 +1489,7 @@ void StakeClient::placeShuffleLimbo(const LimboBetRequest &request)
     QJsonObject data;
     data.insert(QStringLiteral("amount"), QString::number(request.amount, 'f', 8));
     data.insert(QStringLiteral("bet"), QString::number(target, 'f', 2));
-    data.insert(QStringLiteral("currency"), m_currency.toUpper());
+    data.insert(QStringLiteral("currency"), ShuffleTransport::apiCurrency(m_currency));
     data.insert(QStringLiteral("windowId"), randomClientSeed(10));
 
     QJsonObject variables;

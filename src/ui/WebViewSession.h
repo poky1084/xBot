@@ -2,18 +2,19 @@
 
 // WebView2 browsing sessions per main window.
 //
-// The first main window uses WebView2's default user-data folder, so its site logins
-// (cookies, local storage) persist between launches as before. A window opened with the
-// "+" button gets its own, brand-new user-data folder instead: every WebView2 window it
-// opens (hidden Stake browser, Shuffle / Goated / Wolfbet login windows) starts logged
-// out, and logging in there does not touch the other windows' sessions. Options-dialog
-// data (QSettings) is shared as before.
+// The main window in slot 0 uses WebView2's default user-data folder, so its site logins
+// (cookies, local storage) persist between launches as before. Every other main window
+// (opened with the "+" button) has its own user-data folder, WebView2Sessions/window-<slot>,
+// so logging in there does not touch the other windows' sessions. The folder is kept
+// between launches, so window 2 opened again with "+" is still logged in; it starts empty
+// (logged out) only the first time that window number is used. Each window's Options
+// data (QSettings) is its own, see ui/WindowSettings.h.
 //
 // The folder is stored as a dynamic property on the main window; WebView2 dialogs look it
 // up on themselves or their parent chain, so dialogs opened from that window (e.g. the
 // login dialogs opened from the Options dialog) use it automatically.
 //
-// Fresh folders live in %LOCALAPPDATA%/<app>/WebView2Sessions/<pid>-<uuid>. They are
+// Temporary folders from createFresh() live in %LOCALAPPDATA%/<app>/WebView2Sessions/<pid>-<uuid>. They are
 // removed when the app quits; anything left behind (crash, files still locked) is removed
 // at the next start once the process that created it is gone.
 
@@ -88,6 +89,23 @@ inline QString createFresh()
     QDir().mkpath(path);
     QObject::connect(qApp, &QCoreApplication::aboutToQuit, qApp,
                      [path] { QDir(path).removeRecursively(); });
+    return path;
+}
+
+// Persistent user-data folder of the main window in `slot` (slot > 0).
+inline QString slotFolder(int slot)
+{
+    return sessionsRoot() + QStringLiteral("/window-") + QString::number(slot);
+}
+
+// Folder for the main window in `slot`; fresh = empty it first (new window, logged out).
+inline QString forSlot(int slot, bool fresh)
+{
+    cleanupStale();
+    const QString path = slotFolder(slot);
+    if (fresh)
+        QDir(path).removeRecursively();
+    QDir().mkpath(path);
     return path;
 }
 

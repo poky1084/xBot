@@ -12,6 +12,7 @@
 #include "ui/ManualBetPanel.h"
 #include "ui/OptionsDialog.h"
 #include "ui/WebViewSession.h"
+#include "ui/WindowSettings.h"
 #include "bot/GoatedTransport.h"
 #include "bot/WolfbetTransport.h"
 #include "bot/ShuffleTransport.h"
@@ -419,12 +420,19 @@ private:
 };
 } // namespace
 
-MainWindow::MainWindow(QWidget *parent, bool freshWebSession)
+MainWindow::MainWindow(int slot, bool freshWebSession, QWidget *parent)
     : QMainWindow(parent)
+    , m_slot(slot)
 {
     // Set before anything can open a WebView2 window (see ui/WebViewSession.h).
-    if (freshWebSession)
-        setProperty(WebViewSession::kProperty, WebViewSession::createFresh());
+    // Slot 0 keeps WebView2's default profile; other windows have their own, kept between
+    // launches, so window 2 is still logged in when it is opened again.
+    if (m_slot > 0)
+        setProperty(WebViewSession::kProperty, WebViewSession::forSlot(m_slot, freshWebSession));
+
+    // Every window is deleted when closed; the app quits when the last one is closed.
+    setAttribute(Qt::WA_DeleteOnClose);
+    openSlots().append(m_slot);
 
     // Custom check box drawing. Installed once for the whole app: re-setting the
     // app style when a second window opens would re-polish every existing window.
@@ -572,7 +580,7 @@ MainWindow::MainWindow(QWidget *parent, bool freshWebSession)
     connect(m_manualPanel, &ManualBetPanel::amountChanged, this, [this](double amount) {
         if (m_discardSettings)
             return; // Options -> clear data: nothing is written back
-        QSettings settings;
+        ScopedSettings settings(settingsGroup());
         settings.setValue(QStringLiteral("Manual/betAmount"), amount);
     });
     connect(m_autoPanel, &AutoBetPanel::startRequested, this, &MainWindow::onStartAuto);
@@ -598,6 +606,7 @@ MainWindow::MainWindow(QWidget *parent, bool freshWebSession)
 
 MainWindow::~MainWindow()
 {
+    openSlots().removeAll(m_slot);
     delete m_provider;
 }
 
@@ -1076,7 +1085,7 @@ void MainWindow::createCentralWidget()
     m_graph = new BalanceGraphWidget;
     chartLayout->addWidget(m_graph);
 
-    m_fairPanel = new FairPanel(m_provider);
+    m_fairPanel = new FairPanel(m_provider, settingsGroup());
 
     m_tabs->addTab(m_manualPanel, QIcon(QStringLiteral(":/icons/list-add.svg")), tr("Manual Bet"));
     m_tabs->addTab(m_autoPanel, QIcon(QStringLiteral(":/icons/torrent-start-forced.svg")), tr("Auto Bet"));
@@ -1099,7 +1108,7 @@ void MainWindow::createCentralWidget()
     connect(m_tabs, &QTabWidget::currentChanged, this, [this](int index) {
         if (m_discardSettings || index < 0)
             return;
-        QSettings settings;
+        ScopedSettings settings(settingsGroup());
         settings.setValue(QStringLiteral("MainWindow/bottomTab"), index);
     });
 
@@ -1216,6 +1225,7 @@ void MainWindow::createLuaDock()
     setCorner(Qt::BottomRightCorner, Qt::RightDockWidgetArea);
 
     m_luaDock = new LuaEditorDock(this);
+    m_luaDock->setSettingsGroup(settingsGroup());
     addDockWidget(Qt::RightDockWidgetArea, m_luaDock);
     resizeDocks({m_luaDock}, {300}, Qt::Horizontal);
     m_luaDock->hide();
@@ -1236,7 +1246,12 @@ void MainWindow::createLuaDock()
 
 void MainWindow::updateWindowTitle()
 {
-    setWindowTitle(tr("xBot - %1").arg(casinoDisplayName(m_live.casino)));
+    // The main window keeps the plain title; "+" windows show their number:
+    // #2 = first "+" window, #3 = the next, … (settings slot + 1).
+    if (m_slot == 0)
+        setWindowTitle(tr("xBot - %1").arg(casinoDisplayName(m_live.casino)));
+    else
+        setWindowTitle(tr("xBot #%1 - %2").arg(m_slot + 1).arg(casinoDisplayName(m_live.casino)));
 }
 
 void MainWindow::setGame(Game game)
@@ -1932,21 +1947,46 @@ void MainWindow::onToggleDarkTheme(bool enabled)
 
 void MainWindow::onOpenFile()
 {
-    // "+" button: open a new, independent instance of the main window.
-    // It is deleted automatically when closed; the app quits when the last
-    // window is closed.
-    // The new window loads the latest saved data on its own (loadSettings()
-    // runs in the MainWindow constructor), so the Options dialog inputs are kept,
-    // but its WebView2 windows get a fresh browser profile: logged out of every site.
-    auto *window = new MainWindow(nullptr, true);
-    window->setAttribute(Qt::WA_DeleteOnClose);
+    // "+" button: open another, independent main window.
+    // It gets the lowest window number that is not open (main window = 0, the first "+"
+    // window = 1, …) and loads that window's own saved data, so after a restart the
+    // second window comes back exactly as it was left. Everything it changes is saved to
+    // its own group again.
+    // A number that was never used before starts as a copy of this window's layout, scripts,
+    // auto-bet and conditions, but with an empty Options dialog (no casino logins / tokens,
+    // default currency, start balance, client seed, bet delay …) and a fresh browser
+    // profile: logged out of every site. From then on it saves and loads its own data.
+    const int slot = freeSlot();
+    const QString group = WindowSettings::groupFor(slot);
+    bool hasData = false;
+    {
+        QSettings settings;
+        settings.beginGroup(QStringLiteral("Windows"));
+        hasData = settings.childGroups().contains(QString::number(slot));
+    }
+    if (!hasData) {
+        saveSettings(); // copy this window's current state, not the last saved one
+        // Options dialog data stays behind (Live = casino, logins, tokens, bet currencies).
+        static const QStringList optionsKeys = {
+            QStringLiteral("Live/"),
+            QStringLiteral("General/currency"),
+            QStringLiteral("General/startBalance"),
+            QStringLiteral("General/clientSeed"),
+            QStringLiteral("General/randomClientSeed"),
+            QStringLiteral("General/betDelayMs"),
+            QStringLiteral("General/retryNoBalance"),
+        };
+        copySettingsGroup(settingsGroup(), group, optionsKeys);
+    }
+    auto *window = new MainWindow(slot, !hasData);
 
-    // Start with the same theme as the window it was opened from; after that the
-    // two windows switch themes independently.
-    window->m_actDarkTheme->setChecked(m_actDarkTheme->isChecked());
-
-    // Cascade the new window so it doesn't sit exactly on top of this one.
-    window->move(pos() + QPoint(30, 30));
+    if (!hasData) {
+        // First use of this window number: same theme as the window it was opened from,
+        // cascaded so it doesn't sit exactly on top of it. A window with saved data keeps
+        // its own theme and position.
+        window->m_actDarkTheme->setChecked(m_actDarkTheme->isChecked());
+        window->move(pos() + QPoint(30, 30));
+    }
     window->show();
     window->raise();
     window->activateWindow();
@@ -1979,7 +2019,7 @@ void MainWindow::onOpenConditionBuilder()
 
 void MainWindow::loadConditions()
 {
-    QSettings settings;
+    ScopedSettings settings(settingsGroup());
     const QByteArray raw = settings.value(QStringLiteral("Conditions/blocks")).toByteArray();
     m_conditions = ConditionIo::blocksFromJson(QJsonDocument::fromJson(raw).array());
     m_activeStrategy = settings.value(QStringLiteral("Conditions/activeStrategy")).toString();
@@ -1988,7 +2028,7 @@ void MainWindow::loadConditions()
 
 void MainWindow::saveConditions()
 {
-    QSettings settings;
+    ScopedSettings settings(settingsGroup());
     settings.setValue(QStringLiteral("Conditions/blocks"),
                       QJsonDocument(ConditionIo::blocksToJson(m_conditions)).toJson(QJsonDocument::Compact));
     settings.setValue(QStringLiteral("Conditions/activeStrategy"), m_activeStrategy);
@@ -2011,9 +2051,7 @@ void MainWindow::onOpenOptions()
             currencies << (i == int(m_live.casino) ? m_live.currency : m_currencyByCasino[i]);
         dialog.setCasinoCurrencies(currencies);
     }
-    dialog.setLiveSettings(m_live);
-    if (!m_live.currency.isEmpty())
-        dialog.setLiveCurrencies({m_live.currency}, m_live.currency);
+    dialog.setLiveSettings(m_live); // shows the typed currency of the active casino
     dialog.setExtensionStatus(m_ext->isListening(), m_ext->isConnected());
 
     connect(m_ext, &IStakeTransport::readyChanged, &dialog, [this, &dialog](bool) {
@@ -2111,7 +2149,7 @@ void MainWindow::onOpenOptions()
 
     // Save right away (not only on exit), so the API key / tokens survive a crash.
     {
-        QSettings settings;
+        ScopedSettings settings(settingsGroup());
         saveOptionsSettings(settings);
         settings.sync();
     }
@@ -2466,80 +2504,94 @@ void MainWindow::applyLiveSettings(const LiveSettings &requested)
     updateModeWidgets();
 }
 
-void MainWindow::onBalancesReady(const QMap<QString, double> &balances)
+void MainWindow::onBalancesReady(const QMap<QString, double> &reported)
 {
+    // Which casino answered: the connection is configured for one casino at a time (the
+    // active one, or the one being tested with "Log in" in the Options dialog).
+    const LiveSettings::Casino from = m_stake->isShuffle()   ? LiveSettings::Casino::Shuffle
+                                      : m_stake->isGoated()  ? LiveSettings::Casino::Goated
+                                      : m_stake->isWolfbet() ? LiveSettings::Casino::Wolfbet
+                                                             : LiveSettings::Casino::Stake;
+    // The dialog only takes answers for the casino it is showing; the main window only for
+    // the active casino (a login test for another casino must not change its balance).
+    const bool forDialog = m_optionsDialog && m_optionsDialog->liveSettings().casino == from;
+    const bool forActive = m_live.casino == from;
+
+    // Stake / Goated / Wolfbet always answer with the full currency list; Shuffle only once
+    // its full list was read (before that its websocket may be pushing balances one by one).
+    const bool listComplete = from != LiveSettings::Casino::Shuffle || m_shuffle->balanceListKnown();
+
+    // The bet currency is whatever the user typed (per casino). It is never replaced by
+    // another one; a typed currency the account does not list holds 0 (0-amount bets work).
+    QMap<QString, double> balances = reported;
+    const QString dialogCur = forDialog
+        ? m_optionsDialog->liveSettings().currency.trimmed().toLower() : QString();
+    const QString activeCur = m_live.currency.trimmed().toLower();
+    if (listComplete) {
+        if (!dialogCur.isEmpty() && !balances.contains(dialogCur))
+            balances.insert(dialogCur, 0.0);
+        if (forActive && !activeCur.isEmpty() && !balances.contains(activeCur))
+            balances.insert(activeCur, 0.0);
+    }
+    const QStringList codes = reported.keys(); // what the account really has
+
+    if (forDialog) {
+        // Hint only (what the account holds); the typed currency is never changed.
+        m_optionsDialog->setLiveCurrencies(codes, dialogCur);
+
+        // "Logged in" only with every login field filled in and the currencies loaded.
+        const QString missing = m_optionsDialog->missingLoginData();
+        if (!missing.isEmpty())
+            m_optionsDialog->setLoginStatus(tr("Not logged in — %1").arg(missing), false);
+        else if (!listComplete)
+            m_optionsDialog->setLoginStatus(tr("Connected — loading the currencies…"), true);
+        else if (dialogCur.isEmpty())
+            m_optionsDialog->setLoginStatus(
+                tr("Logged in — currencies loaded. Type the bet currency (e.g. usdt) and "
+                   "press OK."),
+                true);
+        else
+            m_optionsDialog->setLoginStatus(
+                tr("Logged in — %1 %2 available")
+                    .arg(formatAmount(balances.value(dialogCur), 8), dialogCur.toUpper()),
+                true);
+    }
+
+    if (!forActive)
+        return;
+
     m_balances = balances;
-    // Only Stake's own answers (a login test for another casino must not land in its cache).
-    if (m_live.enabled && m_live.casino == LiveSettings::Casino::Stake
-        && !m_stake->isShuffle() && !m_stake->isGoated() && !m_stake->isWolfbet()) {
+    if (from == LiveSettings::Casino::Stake && m_live.enabled) {
         m_stakeBalances = balances;
         refreshStakeBalanceVar();
     }
     m_lastBalanceError.clear();
-    const QStringList codes = balances.keys();
-	m_isLoggedIn = true; 
-    // Pick the currency: what the dialog (if open) or the saved settings say,
-    // otherwise the first one the account has.
-    // Shuffle pushes one currency at a time, so a chosen currency whose balance has not
-    // arrived yet is waited for instead of being replaced by whichever arrived first.
-    const bool shuffle = m_live.isShuffle();
-    QString cur = m_optionsDialog ? m_optionsDialog->liveSettings().currency : m_live.currency;
-    if (cur.isEmpty() || (!shuffle && !balances.contains(cur))) {
-        cur = codes.value(0);
-        if (m_live.isWolfbet()) {
-            // Wolfbet lists every currency (most at 0, plus the "free" bonus balance): start with
-            // the first one that actually holds funds.
-            for (auto it = balances.constBegin(); it != balances.constEnd(); ++it) {
-                if (it.value() > 0.0 && it.key() != QLatin1String("free")) {
-                    cur = it.key();
-                    break;
-                }
-            }
-        }
+    if (!listComplete) {
+        updateConnectionStatus(); // Shuffle: not logged in until its currencies are loaded
+        return;
     }
-
-    if (m_optionsDialog) {
-        QStringList shown = codes;
-        if (!cur.isEmpty() && !shown.contains(cur))
-            shown.prepend(cur);
-        m_optionsDialog->setLiveCurrencies(shown, cur);
-        if (balances.contains(cur))
-            m_optionsDialog->setLoginStatus(
-                tr("Logged in — %1 %2 available")
-                    .arg(formatAmount(balances.value(cur), 8), cur.toUpper()),
-                true);
-        else
-            m_optionsDialog->setLoginStatus(
-                tr("Connected — waiting for the %1 balance…").arg(cur.toUpper()), true);
-    }
+    m_isLoggedIn = true;
 
     if (!m_live.enabled)
         return;
 
-    if (m_live.currency.isEmpty() || (!shuffle && !balances.contains(m_live.currency))) {
-        m_live.currency = cur;
-        m_stake->setCurrency(cur);
-        refreshShuffleBalanceVar();
-        refreshGoatedBalanceVar();
-        refreshWolfbetBalanceVar();
-        refreshStakeBalanceVar();
-        onLogMessage(tr("Betting currency set to %1.").arg(cur.toUpper()), false);
-    }
-    if (!balances.contains(m_live.currency)) {
-        updateConnectionStatus(); // Shuffle: the balance of the chosen currency is still to come
+    if (activeCur.isEmpty()) {
+        // No bet currency typed yet: nothing to bet with until one is chosen in Options.
+        updateConnectionStatus();
         return;
     }
 
-    const double balance = balances.value(m_live.currency);
+    const double balance = balances.value(activeCur);
     // Shuffle's websocket reports the new balance right after each bet, usually before the
     // bet's own answer is processed. Re-syncing then would count that bet twice, so while a
     // bet is pending or an auto-bet runs the engine's own running balance is kept.
+    const bool shuffle = from == LiveSettings::Casino::Shuffle;
     if (!(shuffle && (m_engine->betInFlight() || m_engine->isRunning())))
         m_engine->syncBalance(balance);
     m_manualPanel->setStartBalance(m_engine->stats().balance);
     updateSessionWidgets();
     updateStatusWidgets();
-	updateConnectionStatus();
+    updateConnectionStatus();
 }
 
 // ------------------------------------------------------- Shuffle balance cache
@@ -2553,7 +2605,9 @@ QString MainWindow::shuffleCurrency() const
 void MainWindow::refreshShuffleBalanceVar()
 {
     const QString cur = shuffleCurrency();
-    m_shuffleBalanceKnown = !cur.isEmpty() && m_shuffleBalances.contains(cur);
+    // Not in Shuffle's full balance list = zero balance.
+    m_shuffleBalanceKnown = !cur.isEmpty()
+        && (m_shuffleBalances.contains(cur) || m_shuffle->balanceListKnown());
     m_shuffleBalance = m_shuffleBalanceKnown ? m_shuffleBalances.value(cur) : 0.0;
 }
 
@@ -2595,8 +2649,12 @@ void MainWindow::updateShuffleBackground(const LiveSettings &s, bool closeIfOff)
 bool MainWindow::loadCachedShuffleBalance()
 {
     const QString cur = m_live.currency.trimmed().toLower();
-    if (cur.isEmpty() || !m_shuffleBalances.contains(cur) || !m_shuffle->hasFreshBalance(cur))
+    if (cur.isEmpty() || !m_shuffle->hasFreshBalance(cur))
         return false;
+    if (!m_shuffleBalances.contains(cur) && !m_shuffle->balanceListKnown())
+        return false;
+    if (!m_shuffleBalances.contains(cur))
+        m_shuffleBalances.insert(cur, 0.0); // not in the full list = zero balance
 
     m_balances = m_shuffleBalances;
     m_isLoggedIn = true;
@@ -2628,7 +2686,9 @@ QString MainWindow::stakeCurrency() const
 void MainWindow::refreshGoatedBalanceVar()
 {
     const QString cur = goatedCurrency();
-    m_goatedBalanceKnown = !cur.isEmpty() && m_goatedBalances.contains(cur);
+    // A read happened but the currency is not in it: zero balance.
+    m_goatedBalanceKnown = !cur.isEmpty()
+        && (m_goatedBalances.contains(cur) || !m_goatedBalances.isEmpty());
     m_goatedBalance = m_goatedBalanceKnown ? m_goatedBalances.value(cur) : 0.0;
 }
 
@@ -2642,7 +2702,9 @@ QString MainWindow::wolfbetCurrency() const
 void MainWindow::refreshWolfbetBalanceVar()
 {
     const QString cur = wolfbetCurrency();
-    m_wolfbetBalanceKnown = !cur.isEmpty() && m_wolfbetBalances.contains(cur);
+    // A read happened but the currency is not in it: zero balance.
+    m_wolfbetBalanceKnown = !cur.isEmpty()
+        && (m_wolfbetBalances.contains(cur) || !m_wolfbetBalances.isEmpty());
     m_wolfbetBalance = m_wolfbetBalanceKnown ? m_wolfbetBalances.value(cur) : 0.0;
 }
 
@@ -2661,7 +2723,9 @@ void MainWindow::onWolfbetBalancesUpdated(const QMap<QString, double> &balances)
 void MainWindow::refreshStakeBalanceVar()
 {
     const QString cur = stakeCurrency();
-    m_stakeBalanceKnown = !cur.isEmpty() && m_stakeBalances.contains(cur);
+    // A read happened but the currency is not in it: zero balance.
+    m_stakeBalanceKnown = !cur.isEmpty()
+        && (m_stakeBalances.contains(cur) || !m_stakeBalances.isEmpty());
     m_stakeBalance = m_stakeBalanceKnown ? m_stakeBalances.value(cur) : 0.0;
 }
 
@@ -2707,11 +2771,14 @@ bool MainWindow::loadCachedCasinoBalance()
                                          : m_live.isWolfbet() ? m_wolfbetBalances
                                                               : m_stakeBalances;
     const QString cur = m_live.currency.trimmed().toLower();
-    if (cur.isEmpty() || !cache.contains(cur))
+    // Nothing read yet = unknown; read, but the currency is not in it = zero balance.
+    if (cur.isEmpty() || cache.isEmpty())
         return false;
 
     m_balances = cache;
-    m_engine->syncBalance(cache.value(cur));
+    if (!m_balances.contains(cur))
+        m_balances.insert(cur, 0.0);
+    m_engine->syncBalance(m_balances.value(cur));
     // Credentials are set and the account was logged in before: stay logged in.
     if (m_stake->transport() && m_stake->transport()->isReady())
         m_isLoggedIn = true;
@@ -3180,7 +3247,7 @@ void MainWindow::applyTheme(bool dark)
 void MainWindow::loadSettings()
 {
     loadConditions();
-    QSettings settings;
+    ScopedSettings settings(settingsGroup());
 
     // No saved window state = first launch: Log and Lua docks start open.
     const bool firstLaunch = !settings.contains(QStringLiteral("MainWindow/state"));
@@ -3333,7 +3400,7 @@ void MainWindow::saveOptionsSettings(QSettings &settings)
 void MainWindow::saveSettings()
 {
     saveConditions();
-    QSettings settings;
+    ScopedSettings settings(settingsGroup());
 	
     settings.setValue(QStringLiteral("MainWindow/geometry"), saveGeometry());
     settings.setValue(QStringLiteral("MainWindow/state"), saveState());
@@ -3390,7 +3457,68 @@ void MainWindow::closeEvent(QCloseEvent *event)
         m_shuffle->closeSocket();
     // ----------------------
 
+    // Every window saves into its own group ("Windows/<slot>"), so the next launch (main
+    // window) and the next "+" (window 2, 3, …) get back exactly this window's data.
     if (!m_discardSettings)
         saveSettings();
     event->accept();
+}
+
+// ---------------------------------------------------------------- per-window data
+
+QString MainWindow::settingsGroup() const
+{
+    return WindowSettings::groupFor(m_slot);
+}
+
+QList<int> &MainWindow::openSlots()
+{
+    static QList<int> open;
+    return open;
+}
+
+int MainWindow::freeSlot()
+{
+    int slot = 0;
+    while (openSlots().contains(slot))
+        ++slot;
+    return slot;
+}
+
+void MainWindow::copySettingsGroup(const QString &from, const QString &to,
+                                   const QStringList &skip)
+{
+    QSettings settings;
+    settings.remove(to);
+    settings.beginGroup(from);
+    QStringList keys;
+    QList<QVariant> values;
+    for (const QString &key : settings.allKeys()) {
+        bool skipped = false;
+        for (const QString &prefix : skip)
+            skipped = skipped || key.startsWith(prefix);
+        if (skipped)
+            continue;
+        keys << key;
+        values << settings.value(key);
+    }
+    settings.endGroup();
+    for (int i = 0; i < keys.size(); ++i)
+        settings.setValue(to + QLatin1Char('/') + keys.at(i), values.at(i));
+}
+
+void MainWindow::migrateLegacySettings()
+{
+    QSettings settings;
+    if (settings.childGroups().contains(QStringLiteral("Windows")))
+        return; // already per-window
+    // Older versions saved one set of data at the root, shared by every window: it becomes
+    // the main window's. The old keys are left in place.
+    const QStringList keys = settings.allKeys();
+    for (const QString &key : keys) {
+        if (!key.startsWith(QLatin1String("Session/")))
+            settings.setValue(WindowSettings::groupFor(0) + QLatin1Char('/') + key,
+                              settings.value(key));
+    }
+    settings.sync();
 }

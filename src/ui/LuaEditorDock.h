@@ -42,6 +42,8 @@ public:
     void appendConsole(const QString &text, bool isError);
     void clearConsole();
 
+    // The owning main window's QSettings group (see ui/WindowSettings.h); set before loadSettings().
+    void setSettingsGroup(const QString &group) { m_settingsGroup = group; }
     void loadSettings();
     void saveSettings() const;
 
@@ -69,6 +71,7 @@ private:
     QTextDocument *m_docs[2] = {nullptr, nullptr};   // [0] Lua, [1] JavaScript
     QString m_filePaths[2];                          // file behind each document
     ScriptLanguage m_lang = ScriptLanguage::Lua;
+    QString m_settingsGroup;
     QComboBox *m_langBox = nullptr;
     QLabel *m_status = nullptr;
     QPlainTextEdit *m_console = nullptr;

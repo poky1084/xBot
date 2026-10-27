@@ -21,7 +21,9 @@ class FairPanel : public QWidget
     Q_OBJECT
 
 public:
-    explicit FairPanel(SimulatedProvider *provider, QWidget *parent = nullptr);
+    // settingsGroup: the owning main window's QSettings group (see ui/WindowSettings.h).
+    explicit FairPanel(SimulatedProvider *provider, const QString &settingsGroup = QString(),
+                       QWidget *parent = nullptr);
 
     void refresh();
 
@@ -45,6 +47,7 @@ private:
     void loadSettings();
 
     SimulatedProvider *m_provider = nullptr;
+    QString m_settingsGroup;
 
     QLineEdit *m_serverHashEdit = nullptr;
     QLineEdit *m_clientSeedEdit = nullptr;

@@ -49,10 +49,15 @@ class MainWindow : public QMainWindow
     Q_OBJECT
 
 public:
-    // freshWebSession = true (windows opened with "+"): WebView2 windows of this main window
-    // use a new, empty browser profile, so every site starts logged out. Options data is kept.
-    explicit MainWindow(QWidget *parent = nullptr, bool freshWebSession = false);
+    // slot: this window's number; its data is saved in QSettings group "Windows/<slot>"
+    // (see ui/WindowSettings.h). 0 = the main window, 1 = the first "+" window, …
+    // freshWebSession = true: its WebView2 windows start from an empty browser profile.
+    explicit MainWindow(int slot = 0, bool freshWebSession = false, QWidget *parent = nullptr);
     ~MainWindow() override;
+
+    // Once per start, before the first window: settings saved by older versions (shared by
+    // all windows) become the main window's (slot 0) data.
+    static void migrateLegacySettings();
 
 protected:
     void closeEvent(QCloseEvent *event) override;
@@ -121,6 +126,12 @@ private:
     void applyTheme(bool dark);
     void loadSettings();
     void saveSettings();
+    QString settingsGroup() const; // "Windows/<slot>"
+    static QList<int> &openSlots(); // slots of the windows open right now
+    static int freeSlot();          // lowest slot that is not open
+    // Copies a window's settings group; keys starting with one of `skip` are left out.
+    static void copySettingsGroup(const QString &from, const QString &to,
+                                  const QStringList &skip = QStringList());
     void saveOptionsSettings(QSettings &settings);
     void loadConditions();
     void saveConditions();
@@ -216,6 +227,7 @@ private:
     LiveSettings m_live;
     QPointer<OptionsDialog> m_optionsDialog;
     bool m_discardSettings = false; // "Clear data from PC" was used: don't save on exit
+    int m_slot = 0;                 // settings slot, see settingsGroup()
     QString m_lastBalanceError;
 
     // Bet list

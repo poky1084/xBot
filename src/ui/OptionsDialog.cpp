@@ -3,6 +3,7 @@
 #include "ui/OptionsDialog.h"
 #include "ui/ShuffleLoginDialog.h"
 #include "ui/WolfbetLoginDialog.h"
+#include "bot/CasinoCurrencies.h"
 
 #include <QCheckBox>
 #include <QComboBox>
@@ -21,6 +22,8 @@
 #include <QSignalBlocker>
 #include <QSpinBox>
 #include <QVBoxLayout>
+
+#include <algorithm>
 
 #ifdef Q_OS_WIN
 #ifndef NOMINMAX
@@ -219,10 +222,23 @@ OptionsDialog::OptionsDialog(QWidget *parent)
     m_extStatus->setWordWrap(true);
     liveForm->addRow(tr("Extension:"), m_extStatus);
 
+    // Dropdown of every currency the casino supports (see bot/CasinoCurrencies.h); it can
+    // still be typed in. Each casino keeps its own value (switching the Casino selector
+    // shows that casino's). The balance is fetched as soon as a currency is picked / typed,
+    // also when the account does not hold it (balance 0).
     m_liveCurrencyCombo = new QComboBox;
     m_liveCurrencyCombo->setEditable(true);
-    m_liveCurrencyCombo->setToolTip(tr("Currency to bet with (filled in after logging in)"));
-    liveForm->addRow(tr("Bet currency:"), m_liveCurrencyCombo);
+    m_liveCurrencyCombo->setInsertPolicy(QComboBox::NoInsert);
+    m_liveCurrencyCombo->setMaxVisibleItems(20);
+    m_liveCurrencyCombo->lineEdit()->setPlaceholderText(tr("pick or type the currency"));
+    m_liveCurrencyCombo->setToolTip(tr("Currency to bet with, per casino. A currency the "
+                                       "account does not hold has a balance of 0."));
+    m_liveCurrencyLabel = new QLabel(tr("Bet currency:"));
+    liveForm->addRow(m_liveCurrencyLabel, m_liveCurrencyCombo);
+    connect(m_liveCurrencyCombo, QOverload<int>::of(&QComboBox::activated), this,
+            &OptionsDialog::onCurrencyEdited);
+    connect(m_liveCurrencyCombo->lineEdit(), &QLineEdit::editingFinished, this,
+            &OptionsDialog::onCurrencyEdited);
 
     auto *loginRow = new QWidget;
     auto *loginLayout = new QHBoxLayout(loginRow);
@@ -240,9 +256,27 @@ OptionsDialog::OptionsDialog(QWidget *parent)
     connect(m_casinoCombo, QOverload<int>::of(&QComboBox::currentIndexChanged), this,
             &OptionsDialog::onCasinoChanged);
     connect(m_loginBtn, &QPushButton::clicked, this, [this] {
+        const QString missing = missingLoginData();
+        if (!missing.isEmpty()) {
+            setLoginStatus(tr("Not logged in — %1").arg(missing), false);
+            return;
+        }
         m_loginBtn->setEnabled(false);
         setLoginStatus(tr("Logging in…"), true);
+        m_fetchedCurrency = liveSettings().currency;
         emit loginRequested();
+    });
+
+    // A login result belongs to the inputs it was made with: editing them clears it.
+    for (QLineEdit *edit : {m_siteEdit, m_apiKeyEdit, m_clearanceEdit, m_correlationEdit,
+                            m_browserIdEdit}) {
+        if (edit)
+            connect(edit, &QLineEdit::textEdited, m_loginStatus, &QLabel::clear);
+    }
+    // Wolfbet's currency list needs the token: fetch it once one is entered.
+    connect(m_apiKeyEdit, &QLineEdit::editingFinished, this, [this] {
+        if (m_wolfbet)
+            updateCurrencyList();
     });
 
     rightCol->addWidget(liveBox);
@@ -523,7 +557,12 @@ void OptionsDialog::setLiveSettings(const LiveSettings &s)
         m_clearanceEdit->setText(s.clearance);
         m_userAgentEdit->setText(s.userAgent);
     }
-    m_liveCurrencyCombo->setEditText(s.currency);
+    {
+        const QSignalBlocker blocker(m_liveCurrencyCombo);
+        m_liveCurrencyCombo->setEditText(s.currency);
+    }
+    m_fetchedCurrency = s.currency; // a stored value is not "newly typed"
+    updateCurrencyList();
     m_extensionPort = s.extensionPort;
     updateAuthFields();
 }
@@ -553,10 +592,8 @@ void OptionsDialog::onCasinoChanged(int index)
     s.casino = static_cast<LiveSettings::Casino>(m_casinoCombo->itemData(index).toInt());
     s.currency = m_casinoCurrency[int(s.casino)];
 
-    // The currency list and the login result belong to the previous casino.
-    m_liveCurrencyCombo->clear();
-    if (!s.currency.isEmpty())
-        m_liveCurrencyCombo->addItem(s.currency);
+    // The login result and the account's currencies belong to the previous casino.
+    m_accountCurrencies.clear();
     m_loginStatus->clear();
     setLiveSettings(s);
 }
@@ -571,11 +608,108 @@ void OptionsDialog::setLoginStatus(const QString &text, bool ok)
 
 void OptionsDialog::setLiveCurrencies(const QStringList &codes, const QString &selected)
 {
-    m_liveCurrencyCombo->clear();
-    m_liveCurrencyCombo->addItems(codes);
-    const int idx = m_liveCurrencyCombo->findText(selected, Qt::MatchFixedString);
-    if (idx >= 0)
-        m_liveCurrencyCombo->setCurrentIndex(idx);
+    // Never changes the chosen currency; the account's currencies are added to the list
+    // (for casinos without a known list they are the list) and named in the tooltip.
+    Q_UNUSED(selected);
+    // Wolfbet's balance answer lists every currency it supports (also those at 0): it is
+    // the same list the dropdown fetches, so keep it.
+    const auto casino = static_cast<LiveSettings::Casino>(m_casinoCombo->currentData().toInt());
+    if (casino == LiveSettings::Casino::Wolfbet && codes.size() > 1) {
+        QStringList all;
+        for (const QString &c : codes)
+            all << c.trimmed().toLower();
+        all.removeAll(QString());
+        std::sort(all.begin(), all.end());
+        CasinoCurrencies::store(casino, all);
+    }
+    m_accountCurrencies.clear();
+    QStringList upper;
+    for (const QString &c : codes) {
+        m_accountCurrencies << c.trimmed().toLower();
+        upper << c.toUpper();
+    }
+    const QString list = upper.isEmpty() ? tr("none") : upper.join(QStringLiteral(", "));
+    m_liveCurrencyCombo->setToolTip(tr("Currency to bet with, per casino. The account holds: "
+                                       "%1. Any other currency has a balance of 0.")
+                                        .arg(list));
+    updateCurrencyList();
+}
+
+void OptionsDialog::updateCurrencyList()
+{
+    const auto casino = static_cast<LiveSettings::Casino>(
+        m_casinoCombo->currentData().toInt());
+
+    QStringList items = CasinoCurrencies::cached(casino);
+    for (const QString &c : std::as_const(m_accountCurrencies)) {
+        if (!c.isEmpty() && !items.contains(c))
+            items << c;
+    }
+    const QString chosen = m_liveCurrencyCombo->currentText();
+    {
+        const QSignalBlocker blocker(m_liveCurrencyCombo);
+        m_liveCurrencyCombo->clear();
+        m_liveCurrencyCombo->addItems(items);
+        const int idx = m_liveCurrencyCombo->findText(chosen.trimmed(), Qt::MatchFixedString);
+        if (idx >= 0)
+            m_liveCurrencyCombo->setCurrentIndex(idx);
+        else
+            m_liveCurrencyCombo->setEditText(chosen);
+    }
+
+    // Fetch the casino's full list once per dialog; the cached one is shown meanwhile.
+    // Wolfbet's list needs the token: it is fetched once one is filled in.
+    if (CasinoCurrencies::hasSource(casino) && !m_currencyListFetched[int(casino)]) {
+        const QString token = m_apiKeyEdit ? m_apiKeyEdit->text().trimmed() : QString();
+        m_currencyListFetched[int(casino)] = CasinoCurrencies::fetch(
+            casino, this,
+            [this, casino](const QStringList &) {
+                if (int(casino) == m_casinoCombo->currentData().toInt())
+                    updateCurrencyList();
+            },
+            token);
+    }
+}
+
+void OptionsDialog::onCurrencyEdited()
+{
+    const QString cur = liveSettings().currency;
+    if (cur == m_fetchedCurrency)
+        return; // unchanged (editingFinished also fires on focus loss)
+    m_fetchedCurrency = cur;
+    if (cur.isEmpty()) {
+        m_loginStatus->clear();
+        return;
+    }
+    const QString missing = missingLoginData();
+    if (!missing.isEmpty()) {
+        setLoginStatus(tr("Not logged in — %1").arg(missing), false);
+        return;
+    }
+    m_loginBtn->setEnabled(false);
+    setLoginStatus(tr("Loading the %1 balance…").arg(cur.toUpper()), true);
+    emit loginRequested(); // same as "Log in": applies the inputs and fetches the balances
+}
+
+QString OptionsDialog::missingLoginData() const
+{
+    const auto empty = [](const QLineEdit *e) { return !e || e->text().trimmed().isEmpty(); };
+    if (m_goated || m_wolfbet)
+        return empty(m_apiKeyEdit) ? tr("the token is empty.") : QString();
+    if (m_shuffle) {
+        if (empty(m_apiKeyEdit))
+            return tr("the token is empty.");
+        if (empty(m_correlationEdit))
+            return tr("CORRELATION_USER_ID is empty.");
+        if (empty(m_browserIdEdit))
+            return tr("BROWSER_ID is empty.");
+        return QString();
+    }
+    if (empty(m_siteEdit))
+        return tr("the site / mirror is empty.");
+    if (empty(m_apiKeyEdit))
+        return tr("the API key is empty.");
+    return QString();
 }
 
 void OptionsDialog::setExtensionStatus(bool listening, bool connected)
@@ -617,7 +751,7 @@ void OptionsDialog::onShuffleLogin()
     m_apiKeyEdit->setText(dlg.token());
     m_correlationEdit->setText(dlg.correlationUserId());
     m_browserIdEdit->setText(dlg.browserId());
-    setLoginStatus(tr("Logged in to Shuffle — press Log in to verify."), true);
+    setLoginStatus(tr("Shuffle token captured — press Log in to verify."), true);
 }
 
 void OptionsDialog::onGoatedLogin()
@@ -627,7 +761,7 @@ void OptionsDialog::onGoatedLogin()
         return;
 
     m_apiKeyEdit->setText(dlg.token());
-    setLoginStatus(tr("Logged in to Goated — press Log in to verify."), true);
+    setLoginStatus(tr("Goated token captured — press Log in to verify."), true);
 }
 
 void OptionsDialog::onWolfbetLogin()
@@ -637,5 +771,6 @@ void OptionsDialog::onWolfbetLogin()
         return;
 
     m_apiKeyEdit->setText(dlg.token());
-    setLoginStatus(tr("Logged in to Wolfbet — press Log in to verify."), true);
+    setLoginStatus(tr("Wolfbet token captured — press Log in to verify."), true);
+    updateCurrencyList(); // the currency list needs the token
 }

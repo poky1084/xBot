@@ -42,6 +42,19 @@ public:
     void setCredentials(const ShuffleCredentials &cred);
     const ShuffleCredentials &credentials() const { return m_cred; }
 
+    // xBot's currency code <-> the code Shuffle's API uses. Shuffle shows TON as "GRAM"
+    // (the name used in xBot), but its requests and balances still say "TON".
+    static QString apiCurrency(const QString &appCurrency) // -> uppercase, for requests
+    {
+        const QString c = appCurrency.trimmed().toLower();
+        return (c == QLatin1String("gram") ? QStringLiteral("ton") : c).toUpper();
+    }
+    static QString appCurrency(const QString &apiCurrency) // -> lowercase, as xBot uses it
+    {
+        const QString c = apiCurrency.trimmed().toLower();
+        return c == QLatin1String("ton") ? QStringLiteral("gram") : c;
+    }
+
     // Lowercase currency code the bot bets with ("" = none chosen yet).
     void setWantedCurrency(const QString &currency) { m_wanted = currency.trimmed().toLower(); }
 
@@ -64,10 +77,15 @@ public:
 
     // True when the socket is logged in and `currency` (lowercase) has been refreshed since
     // it was opened, i.e. the last balance reported for it can be trusted right now.
+    // A currency missing from the full list (read over HTTPS) has a zero balance, so it
+    // counts as fresh too once that list arrived.
     bool hasFreshBalance(const QString &currency) const
     {
-        return m_acked && m_fresh.contains(currency.trimmed().toLower());
+        return m_acked && (m_listKnown || m_fresh.contains(currency.trimmed().toLower()));
     }
+    // True once the account's full balance list has been read on this connection. Shuffle
+    // leaves currencies at zero out of that list: a currency that is not in it holds 0.
+    bool balanceListKnown() const { return m_listKnown; }
 
 signals:
     // Every balance known so far (lowercase currency code -> available amount).
@@ -100,6 +118,7 @@ private:
     bool m_acked = false;
     bool m_connectFailureReported = false;
     bool m_httpInFlight = false;
+    bool m_listKnown = false;           // full balance list read since the socket was opened
     QMap<QString, double> m_balances;
     QSet<QString> m_fresh;              // currencies updated since the socket was opened
     QSet<QString> m_wsFresh;            // ... of which pushed by the WebSocket

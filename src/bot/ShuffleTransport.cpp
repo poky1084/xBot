@@ -123,6 +123,7 @@ void ShuffleTransport::setCredentials(const ShuffleCredentials &cred)
         m_balances.clear();
         m_fresh.clear();
         m_wsFresh.clear();
+        m_listKnown = false;
         m_httpInFlight = false;
         m_authRejected = false;
         m_retryDelayMs = kRetryMinMs;
@@ -286,12 +287,20 @@ void ShuffleTransport::fetchBalancesHttp()
         const QJsonArray arr = balsVal.toArray();
         for (const QJsonValue &v : arr) {
             const QJsonObject o = v.toObject();
-            const QString cur = o.value(QStringLiteral("currency")).toString().toLower();
+            const QString cur = appCurrency(o.value(QStringLiteral("currency")).toString());
             if (cur.isEmpty())
                 continue;
             if (!m_wsFresh.contains(cur)) // a pushed value is newer than this reply
                 m_balances.insert(cur, numberOf(o.value(QStringLiteral("amount"))));
             m_fresh.insert(cur);
+        }
+        // Shuffle only lists currencies that hold funds. The bet currency missing from the
+        // list (or an account with no funds at all) is a zero balance, not "still loading":
+        // report it as 0 so logging in works with an empty wallet.
+        m_listKnown = true;
+        if (!m_wanted.isEmpty() && !m_balances.contains(m_wanted)) {
+            m_balances.insert(m_wanted, 0.0);
+            m_fresh.insert(m_wanted);
         }
         emitBalances();
     });
@@ -329,6 +338,7 @@ void ShuffleTransport::openSocket(bool automaticRetry)
     m_balances.clear(); // values cached before (e.g. before switching to Stake and back) are stale
     m_fresh.clear();
     m_wsFresh.clear();
+    m_listKnown = false;
 
     auto *sock = new QWebSocket(QStringLiteral("https://") + m_cred.site,
                                 QWebSocketProtocol::VersionLatest, this);
@@ -480,7 +490,7 @@ void ShuffleTransport::onSocketText(const QString &message)
         const QJsonObject bal = obj.value(QStringLiteral("payload")).toObject()
                                     .value(QStringLiteral("data")).toObject()
                                     .value(QStringLiteral("balanceUpdated")).toObject();
-        const QString cur = bal.value(QStringLiteral("currency")).toString().toLower();
+        const QString cur = appCurrency(bal.value(QStringLiteral("currency")).toString());
         if (cur.isEmpty())
             return;
         m_balances.insert(cur, numberOf(bal.value(QStringLiteral("amount"))));

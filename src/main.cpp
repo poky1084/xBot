@@ -17,8 +17,11 @@ int main(int argc, char *argv[])
         app.setStyle(QStyleFactory::create(QStringLiteral("Fusion")));
     app.setFont(QFont(QStringLiteral("Segoe UI"), 9));
 
-    MainWindow window;
-    window.show();
+    // Each window saves its own data (see ui/WindowSettings.h). The app starts with the
+    // main window (window 0); "+" opens window 1, 2, … with their own saved data.
+    MainWindow::migrateLegacySettings();
+    auto *window = new MainWindow(0); // deleted on close
+    window->show();
 
     return app.exec();
 }

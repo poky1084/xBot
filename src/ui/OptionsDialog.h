@@ -50,6 +50,10 @@ public:
     LiveSettings liveSettings() const;
     void setLiveSettings(const LiveSettings &settings);
     void setLoginStatus(const QString &text, bool ok);
+    // The first login input the selected casino needs that is still empty ("" = complete).
+    QString missingLoginData() const;
+    // Shows which currencies the account holds (as a hint; the bet currency stays what the
+    // user typed).
     void setLiveCurrencies(const QStringList &codes, const QString &selected);
     void setExtensionStatus(bool listening, bool connected);
     // Bet currency remembered for each casino (indexed by int(LiveSettings::Casino)), so the
@@ -76,6 +80,12 @@ private:
     // (Shuffle: Token, Direct mode only, USER_ID, BROWSER_ID;
     // Goated, Wolfbet: just the Token).
     void applyCasinoUi();
+    // The bet currency was typed / changed: fetch the balance for it (0 if the account
+    // does not hold it), when the login data is complete.
+    void onCurrencyEdited();
+    // Fills the dropdown with the casino's valid currencies (cached list, plus what the
+    // account holds), keeps the chosen currency, and fetches the list once per dialog.
+    void updateCurrencyList();
     void setFormRowVisible(QWidget *field, bool visible);
     void onClearData();
 	void onGrabCookie();
@@ -108,7 +118,11 @@ private:
     QLineEdit *m_clearanceEdit = nullptr;
     QLineEdit *m_userAgentEdit = nullptr;
     QLabel *m_extStatus = nullptr;
-    QComboBox *m_liveCurrencyCombo = nullptr;
+    QComboBox *m_liveCurrencyCombo = nullptr; // per casino: valid currencies, or typed
+    QLabel *m_liveCurrencyLabel = nullptr;    // "Bet currency:"
+    QStringList m_accountCurrencies;          // what the account holds (last login)
+    bool m_currencyListFetched[LiveSettings::kCasinoCount] = {}; // fetched while open
+    QString m_fetchedCurrency;               // currency the last balance fetch was made for
     QPushButton *m_loginBtn = nullptr;
 	QPushButton *m_grabCookieBtn = nullptr;
     QPushButton *m_shuffleLoginBtn = nullptr;

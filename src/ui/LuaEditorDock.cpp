@@ -24,6 +24,7 @@
 #include <QRegularExpression>
 #include <QSet>
 #include <QSettings>
+#include "ui/WindowSettings.h"
 #include <QStandardPaths>
 #include <QSyntaxHighlighter>
 #include <QTextBlock>
@@ -1062,7 +1063,7 @@ void LuaEditorDock::onHelp()
 
 void LuaEditorDock::loadSettings()
 {
-    QSettings s;
+    ScopedSettings s(m_settingsGroup);
     // "Lua/*" keys are the ones earlier versions wrote, so existing scripts survive.
     const QString lua = s.value(QStringLiteral("Lua/script")).toString();
     if (!lua.isEmpty())
@@ -1082,7 +1083,7 @@ void LuaEditorDock::loadSettings()
 
 void LuaEditorDock::saveSettings() const
 {
-    QSettings s;
+    ScopedSettings s(m_settingsGroup);
     s.setValue(QStringLiteral("Lua/script"), m_docs[kLuaIndex]->toPlainText());
     s.setValue(QStringLiteral("Lua/file"), m_filePaths[kLuaIndex]);
     s.setValue(QStringLiteral("JavaScript/script"), m_docs[kJsIndex]->toPlainText());

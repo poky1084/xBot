@@ -9,13 +9,15 @@
 #include <QListWidget>
 #include <QPushButton>
 #include <QSettings>
+#include "ui/WindowSettings.h"
 #include <QSignalBlocker>
 #include <QSpinBox>
 #include <QVBoxLayout>
 
-FairPanel::FairPanel(SimulatedProvider *provider, QWidget *parent)
+FairPanel::FairPanel(SimulatedProvider *provider, const QString &settingsGroup, QWidget *parent)
     : QWidget(parent)
     , m_provider(provider)
+    , m_settingsGroup(settingsGroup)
 {
     auto *root = new QHBoxLayout(this);
     root->setContentsMargins(12, 12, 12, 12);
@@ -268,7 +270,7 @@ void FairPanel::onPickRevealed()
 
 void FairPanel::saveSettings()
 {
-    QSettings settings;
+    ScopedSettings settings(m_settingsGroup);
     settings.beginGroup(QStringLiteral("VerifyRoll"));
     settings.setValue(QStringLiteral("serverSeed"), m_verifyServerEdit->text());
     settings.setValue(QStringLiteral("clientSeed"), m_verifyClientEdit->text());
@@ -279,7 +281,7 @@ void FairPanel::saveSettings()
 
 void FairPanel::loadSettings()
 {
-    QSettings settings;
+    ScopedSettings settings(m_settingsGroup);
     settings.beginGroup(QStringLiteral("VerifyRoll"));
     const QString server = settings.value(QStringLiteral("serverSeed")).toString();
     const QString client = settings.value(QStringLiteral("clientSeed")).toString();

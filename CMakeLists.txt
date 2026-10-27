@@ -43,6 +43,7 @@ set(SOURCES
 	src/bot/GoatedTransport.h
 	src/bot/WolfbetTransport.cpp
 	src/bot/WolfbetTransport.h
+	src/bot/CasinoCurrencies.h
     src/ui/BetHistoryModel.cpp
     src/ui/BetHistoryModel.h
     src/ui/BalanceGraphWidget.cpp
@@ -75,6 +76,7 @@ set(SOURCES
 	src/ui/GoatedLoginDialog.h
 	src/ui/WolfbetLoginDialog.cpp
 	src/ui/WolfbetLoginDialog.h
+	src/ui/WindowSettings.h
     resources/resources.qrc
 	resources/app.rc
 )
