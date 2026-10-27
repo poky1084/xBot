@@ -50,7 +50,7 @@ private:
     void importSingle(const QString &label, const BlockList &blocks);
     void importMultiple(const QList<ConditionIo::ParsedStrategy> &parsed);
     QString pickStrategy(const QStringList &names, const QString &prompt);
-    bool writeFile(const QString &path, const QByteArray &data);
+    bool writeFile(const QString &path, const QByteArray &bytes);
 
     static QString describeOn(const ConditionBlockData &b);
     static QString describeDo(const ConditionBlockData &b);

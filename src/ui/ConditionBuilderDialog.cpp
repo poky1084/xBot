@@ -353,10 +353,10 @@ void ConditionBuilderDialog::newStrategy()
 
 // ═══════════════════════════════════════════════════════════════ Export / import
 
-bool ConditionBuilderDialog::writeFile(const QString &path, const QByteArray &data)
+bool ConditionBuilderDialog::writeFile(const QString &path, const QByteArray &bytes)
 {
     QFile f(path);
-    if (!f.open(QIODevice::WriteOnly | QIODevice::Truncate) || f.write(data) < 0) {
+    if (!f.open(QIODevice::WriteOnly | QIODevice::Truncate) || f.write(bytes) < 0) {
         QMessageBox::warning(this, tr("Export Error"),
                              tr("Export failed:\n%1").arg(f.errorString()));
         return false;

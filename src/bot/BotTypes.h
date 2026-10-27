@@ -70,7 +70,9 @@ struct OnResultRule
     {
         if (!increase)
             return base;
-        return std::floor(current * (1.0 + pct / 100.0) * 1e8) / 1e8;
+        // Kept exact: the placed bet is cut to 8 decimals (BotEngine), but the progression
+        // itself must not be, or small bets never grow (1e-8 * 1.5 floored is 1e-8 again).
+        return current * (1.0 + pct / 100.0);
     }
 };
 

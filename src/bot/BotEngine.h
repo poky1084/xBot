@@ -94,6 +94,7 @@ public:
     {
         m_stats.reset(initialBalance);
         m_runStartProfit = 0.0; // the run's profit is measured from the fresh session
+        m_runStartBets = 0;
     }
 
     // Live seed rotation finished (success or failure). Releases the next bet that
@@ -210,6 +211,7 @@ private:
     BlockList m_condBlocks;
     ConditionRunner m_conditions;
     double m_runStartProfit = 0.0;
+    qint64 m_runStartBets = 0;    // session bet count when the run started ("Number of bets")
     SessionStats m_stats;
     IDiceProvider *m_provider = nullptr;
     QTimer m_timer;

@@ -1055,6 +1055,13 @@ void MainWindow::createCentralWidget()
     connect(m_tabs, &QTabWidget::currentChanged, this, &MainWindow::onTabChanged);
     // Re-clicking the already-selected tab re-fits the panel too.
     connect(m_tabs, &QTabWidget::tabBarClicked, this, &MainWindow::onTabChanged);
+    // Remember the open tab right away too (not only on close).
+    connect(m_tabs, &QTabWidget::currentChanged, this, [this](int index) {
+        if (m_discardSettings || index < 0)
+            return;
+        QSettings settings;
+        settings.setValue(QStringLiteral("MainWindow/bottomTab"), index);
+    });
 
     m_mainSplitter = new QSplitter(Qt::Vertical);
     m_mainSplitter->setObjectName(QStringLiteral("mainSplitter"));
@@ -1355,7 +1362,9 @@ void MainWindow::onStartAuto()
         const BotConfig cfg = currentConfig();
 
         m_engine->setConfig(cfg);
-        m_engine->setConditions(m_conditions);
+        // Condition Builder blocks only when ticked in the Auto Bet tab; otherwise the
+        // On win / On loss rules are used.
+        m_engine->setConditions(m_autoPanel->useConditions() ? m_conditions : BlockList());
         m_engine->setScript(QString()); // the normal Start button never runs a script
         m_luaRunning = false;
         m_engine->start();
@@ -1884,6 +1893,7 @@ void MainWindow::onOpenConditionBuilder()
     m_activeStrategy = dialog.resultStrategyName();
     saveConditions();
     ConditionIo::saveStrategies(m_strategies);
+    m_autoPanel->setConditionCount(m_conditions.size());
 
     QString msg = tr("Conditions saved (%1 blocks)").arg(m_conditions.size());
     if (!m_activeStrategy.isEmpty())
@@ -3077,6 +3087,15 @@ void MainWindow::loadSettings()
         settings.value(QStringLiteral("MainWindow/centralSplitter")).toByteArray());
     m_mainSplitter->restoreState(
         settings.value(QStringLiteral("MainWindow/mainSplitter")).toByteArray());
+    {
+        // Last opened bottom tab. Signals are blocked so the saved splitter height is kept
+        // (onTabChanged would re-fit the panel); the tab is the one that was open with it.
+        const int tab = settings.value(QStringLiteral("MainWindow/bottomTab"), 0).toInt();
+        if (tab >= 0 && tab < m_tabs->count()) {
+            const QSignalBlocker blocker(m_tabs);
+            m_tabs->setCurrentIndex(tab);
+        }
+    }
     m_betTable->horizontalHeader()->restoreState(
         settings.value(QStringLiteral("MainWindow/tableState2")).toByteArray());
 
@@ -3159,6 +3178,8 @@ void MainWindow::loadSettings()
     cfg.delayMs = settings.value(QStringLiteral("delayMs"), cfg.delayMs).toInt();
     settings.endGroup();
     m_autoPanel->setFrom(cfg);
+    m_autoPanel->setConditionCount(m_conditions.size());
+    m_autoPanel->setUseConditions(settings.value(QStringLiteral("AutoBet/useConditions"), false).toBool());
 
     const bool dark = settings.value(QStringLiteral("General/darkTheme"), false).toBool();
     m_actDarkTheme->setChecked(dark);
@@ -3174,6 +3195,7 @@ void MainWindow::saveSettings()
     settings.setValue(QStringLiteral("MainWindow/state"), saveState());
     settings.setValue(QStringLiteral("MainWindow/centralSplitter"), m_centralSplitter->saveState());
     settings.setValue(QStringLiteral("MainWindow/mainSplitter"), m_mainSplitter->saveState());
+    settings.setValue(QStringLiteral("MainWindow/bottomTab"), m_tabs->currentIndex());
     settings.setValue(QStringLiteral("MainWindow/tableState2"),
                       m_betTable->horizontalHeader()->saveState());
     m_luaDock->saveSettings();
@@ -3237,6 +3259,7 @@ void MainWindow::saveSettings()
     settings.setValue(QStringLiteral("stopProfit"), cfg.stopProfit);
     settings.setValue(QStringLiteral("stopLoss"), cfg.stopLoss);
     settings.setValue(QStringLiteral("delayMs"), cfg.delayMs);
+    settings.setValue(QStringLiteral("useConditions"), m_autoPanel->useConditions());
     settings.endGroup();
 }
 

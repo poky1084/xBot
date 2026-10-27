@@ -1,6 +1,8 @@
 #include "ui/AutoBetPanel.h"
 
+#include <QCheckBox>
 #include <QComboBox>
+#include <QSignalBlocker>
 #include <QDoubleSpinBox>
 #include <QGridLayout>
 #include <QHBoxLayout>
@@ -95,6 +97,10 @@ AutoBetPanel::AutoBetPanel(QWidget *parent)
     m_stopProfitSpin->setSpecialValueText(tr("off"));
     grid->addWidget(new QLabel(tr("Stop on profit (0 = off):")), 2, 0);
     grid->addWidget(m_stopProfitSpin, 2, 1);
+    m_stopProfitSpin->setToolTip(
+        tr("Stops the auto-bet once this run has won at least this amount\n"
+           "(counted from when you pressed Start, in the betting currency).\n"
+           "Example: 0.0001 = stop when the run is 0.0001 or more in profit. 0 = off."));
 
     m_stopLossSpin = new QDoubleSpinBox;
     m_stopLossSpin->setRange(0.0, 1e9);
@@ -102,6 +108,17 @@ AutoBetPanel::AutoBetPanel(QWidget *parent)
     m_stopLossSpin->setSpecialValueText(tr("off"));
     grid->addWidget(new QLabel(tr("Stop on loss (0 = off):")), 2, 2);
     grid->addWidget(m_stopLossSpin, 2, 3);
+    m_stopLossSpin->setToolTip(
+        tr("Stops the auto-bet once this run has lost at least this amount\n"
+           "(counted from when you pressed Start, in the betting currency).\n"
+           "Example: 0.0005 = stop when the run is 0.0005 or more in loss. 0 = off."));
+
+    m_useConditions = new QCheckBox;
+    m_useConditions->setToolTip(
+        tr("Ticked: the Condition Builder blocks decide the bet amount / chance and the\n"
+           "On win / On loss rules above are ignored. Unticked: the rules above are used."));
+    grid->addWidget(m_useConditions, 3, 0, 1, 4);
+    setConditionCount(0);
 
     m_delaySpin = new QSpinBox;
     m_delaySpin->setRange(0, 10000);
@@ -131,6 +148,17 @@ AutoBetPanel::AutoBetPanel(QWidget *parent)
 
     root->addLayout(btnRow);
 
+    m_baseBetSpin->setToolTip(tr("The first bet of the run, and the amount \"Reset to base\" goes back to."));
+    m_betCountSpin->setToolTip(tr("Stops after this many bets in this run. 0 = no limit."));
+    const QString ruleTip =
+        tr("Reset to base: the next bet is the base bet.\n"
+           "Increase by: the next bet is the previous bet + this percentage\n"
+           "(100% doubles it, 50% multiplies it by 1.5). Typing a percentage\n"
+           "above 0 selects \"Increase by\" automatically.");
+    for (QWidget *w : {static_cast<QWidget *>(m_onWinMode), static_cast<QWidget *>(m_onWinPct),
+                       static_cast<QWidget *>(m_onLossMode), static_cast<QWidget *>(m_onLossPct)})
+        w->setToolTip(ruleTip);
+
     m_startBtn->setToolTip(tr("Settings are locked in when you press Start."));
 
     // CRUCIAL: Absorbs extra vertical space when dragging the splitter down,
@@ -139,7 +167,8 @@ AutoBetPanel::AutoBetPanel(QWidget *parent)
 
     m_editWidgets = {m_baseBetSpin,   m_betCountSpin,    m_onWinMode,
                      m_onWinPct,      m_onLossMode,      m_onLossPct,
-                     m_stopProfitSpin, m_stopLossSpin,   m_delaySpin};
+                     m_stopProfitSpin, m_stopLossSpin,   m_delaySpin,
+                     m_useConditions};
 
     // Stretch horizontally, but keep vertical size perfectly fixed
     for (QWidget *w : std::as_const(m_editWidgets)) {
@@ -161,6 +190,16 @@ AutoBetPanel::AutoBetPanel(QWidget *parent)
             [this](int) { updateRuleWidgets(); });
     connect(m_onLossMode, &QComboBox::currentIndexChanged, this,
             [this](int) { updateRuleWidgets(); });
+    // A percentage only does something with "Increase by": typing one selects it.
+    connect(m_onWinPct, &QDoubleSpinBox::valueChanged, this, [this](double v) {
+        if (v > 0.0 && m_onWinMode->currentIndex() == 0)
+            m_onWinMode->setCurrentIndex(1);
+    });
+    connect(m_onLossPct, &QDoubleSpinBox::valueChanged, this, [this](double v) {
+        if (v > 0.0 && m_onLossMode->currentIndex() == 0)
+            m_onLossMode->setCurrentIndex(1);
+    });
+    connect(m_useConditions, &QCheckBox::toggled, this, [this](bool) { updateRuleWidgets(); });
 
     updateRuleWidgets();
 }
@@ -180,10 +219,14 @@ void AutoBetPanel::setFrom(const BotConfig &cfg)
 {
     m_baseBetSpin->setValue(cfg.baseBet);
     m_betCountSpin->setValue(cfg.stopAfterBets);
-    m_onWinMode->setCurrentIndex(cfg.onWin.increase ? 1 : 0);
-    m_onWinPct->setValue(cfg.onWin.pct);
-    m_onLossMode->setCurrentIndex(cfg.onLoss.increase ? 1 : 0);
-    m_onLossPct->setValue(cfg.onLoss.pct);
+    {
+        const QSignalBlocker b1(m_onWinPct);
+        const QSignalBlocker b2(m_onLossPct);
+        m_onWinMode->setCurrentIndex(cfg.onWin.increase ? 1 : 0);
+        m_onWinPct->setValue(cfg.onWin.pct);
+        m_onLossMode->setCurrentIndex(cfg.onLoss.increase ? 1 : 0);
+        m_onLossPct->setValue(cfg.onLoss.pct);
+    }
     m_stopProfitSpin->setValue(cfg.stopProfit);
     m_stopLossSpin->setValue(cfg.stopLoss);
     m_delaySpin->setValue(cfg.delayMs);
@@ -200,14 +243,37 @@ void AutoBetPanel::setBetPrecision(int decimals, double minBet)
 
 void AutoBetPanel::setRunning(bool running)
 {
+    m_running = running;
     for (QWidget *w : std::as_const(m_editWidgets))
         w->setEnabled(!running);
     m_startBtn->setEnabled(!running);
     m_stopBtn->setEnabled(running);
+    updateRuleWidgets();
+}
+
+void AutoBetPanel::setConditionCount(int count)
+{
+    m_useConditions->setText(
+        count > 0 ? tr("Use Condition Builder blocks (%1) instead of On win / On loss").arg(count)
+                  : tr("Use Condition Builder blocks (none saved - open Bot -> Condition Builder)"));
+    updateRuleWidgets();
+}
+
+bool AutoBetPanel::useConditions() const
+{
+    return m_useConditions->isChecked();
+}
+
+void AutoBetPanel::setUseConditions(bool on)
+{
+    m_useConditions->setChecked(on);
+    updateRuleWidgets();
 }
 
 void AutoBetPanel::loadRulePreset(const OnResultRule &onWin, const OnResultRule &onLoss)
 {
+    const QSignalBlocker b1(m_onWinPct);
+    const QSignalBlocker b2(m_onLossPct);
     m_onWinMode->setCurrentIndex(onWin.increase ? 1 : 0);
     m_onWinPct->setValue(onWin.pct);
     m_onLossMode->setCurrentIndex(onLoss.increase ? 1 : 0);
@@ -217,6 +283,10 @@ void AutoBetPanel::loadRulePreset(const OnResultRule &onWin, const OnResultRule 
 
 void AutoBetPanel::updateRuleWidgets()
 {
-    m_onWinPct->setEnabled(m_onWinMode->currentIndex() == 1);
-    m_onLossPct->setEnabled(m_onLossMode->currentIndex() == 1);
+    // The percentage stays editable (typing one selects "Increase by"); the rules are
+    // greyed out only while the Condition Builder replaces them or a run is going.
+    const bool rules = !m_running && !(m_useConditions && m_useConditions->isChecked());
+    for (QWidget *w : {static_cast<QWidget *>(m_onWinMode), static_cast<QWidget *>(m_onWinPct),
+                       static_cast<QWidget *>(m_onLossMode), static_cast<QWidget *>(m_onLossPct)})
+        w->setEnabled(rules);
 }

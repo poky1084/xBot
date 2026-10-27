@@ -114,9 +114,9 @@ bool ConditionRunner::apply(const ConditionBlockData &b, double &nextBet, BotCon
                               : BotConstants::winChance(cfg.target, cfg.side == BetSide::Under);
 
     if (t == QLatin1String("increaseByPercentage"))
-        nextBet = floor8(nextBet * (1.0 + v / 100.0));
+        nextBet = nextBet * (1.0 + v / 100.0); // exact: the placed bet is cut to 8 decimals
     else if (t == QLatin1String("decreaseByPercentage"))
-        nextBet = std::max(0.0, floor8(nextBet * (1.0 - v / 100.0)));
+        nextBet = std::max(0.0, nextBet * (1.0 - v / 100.0));
     else if (t == QLatin1String("addToAmount"))
         nextBet = floor8(nextBet + v);
     else if (t == QLatin1String("subtractFromAmount"))

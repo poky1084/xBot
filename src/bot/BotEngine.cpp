@@ -17,6 +17,13 @@ constexpr int kConnectPollMs = 300;
 constexpr int kSeedRotationRetries = 3;
 constexpr int kSeedRotationRetryDelayMs = 500;
 constexpr int kAutoClientSeedLength = 10;
+
+// The amount actually bet: 8 decimals, cut (not rounded up). The tiny epsilon keeps
+// values such as 0.000000029999999 from dropping a satoshi.
+double betAmount(double v)
+{
+    return std::floor(v * 1e8 + 1e-6) / 1e8;
+}
 } // namespace
 
 BotEngine::BotEngine(QObject *parent)
@@ -343,6 +350,7 @@ void BotEngine::start()
     m_runCfg.currency = currentCurrency(); // what a script sees in `currency` at start-up
     m_announcedGame = m_config.game;
     m_runStartProfit = m_stats.profit;
+    m_runStartBets = m_stats.bets;
     m_conditions.setBlocks(scriptMode ? BlockList() : m_condBlocks);
     m_conditions.reset(m_config);
 
@@ -400,7 +408,29 @@ void BotEngine::start()
     m_running = true;
     m_paused = false;
 
-    emit logMessage(tr("Auto-bet started."), false);
+    if (!scriptMode && !m_conditions.active()) {
+        // On win / on loss rules: show exactly what this run will do.
+        auto ruleText = [this](const OnResultRule &r) {
+            return r.increase ? tr("+%1%").arg(r.pct, 0, 'f', 1) : tr("reset to base");
+        };
+        auto limitText = [this](double v) {
+            return v > 0.0 ? QString::number(v, 'f', 8) : tr("off");
+        };
+        emit logMessage(tr("Auto-bet started: base bet %1, on win %2, on loss %3, "
+                           "stop on profit %4, stop on loss %5, bets %6.")
+                            .arg(m_config.baseBet, 0, 'f', 8)
+                            .arg(ruleText(m_config.onWin), ruleText(m_config.onLoss),
+                                 limitText(m_config.stopProfit), limitText(m_config.stopLoss),
+                                 m_config.stopAfterBets > 0 ? QString::number(m_config.stopAfterBets)
+                                                            : tr("unlimited")),
+                        false);
+        if (m_config.baseBet <= 0.0 && (m_config.onWin.increase || m_config.onLoss.increase))
+            emit logMessage(tr("Base bet is 0 - increasing 0 by any percentage stays 0. "
+                               "Set a base bet in the Auto Bet tab."),
+                            true);
+    } else {
+        emit logMessage(tr("Auto-bet started."), false);
+    }
     emit started();
     emit pausedChanged(false);
     scheduleNext();
@@ -412,6 +442,7 @@ double BotEngine::resetStatsFromScript()
 {
     m_stats.reset(m_stats.balance);
     m_runStartProfit = 0.0;
+    m_runStartBets = 0;
     emit statsReset();
     return m_stats.balance;
 }
@@ -872,17 +903,21 @@ bool BotEngine::advanceProgression(bool win, const BotConfig &cfg)
 
 bool BotEngine::checkStopConditions()
 {
+    // Measured from the moment Start was pressed (not the whole session), so an earlier
+    // profit / loss or earlier bets do not stop a new run straight away.
     const BotConfig &cfg = m_config;
-    if (cfg.stopProfit > 0.0 && m_stats.profit >= cfg.stopProfit) {
-        stopWithReason(tr("hit stop-on-profit (+%1)").arg(m_stats.profit, 0, 'f', 8));
+    const double runProfit = m_stats.profit - m_runStartProfit;
+    const qint64 runBets = m_stats.bets - m_runStartBets;
+    if (cfg.stopProfit > 0.0 && runProfit >= cfg.stopProfit - 1e-12) {
+        stopWithReason(tr("hit stop-on-profit (+%1)").arg(runProfit, 0, 'f', 8));
         return true;
     }
-    if (cfg.stopLoss > 0.0 && -m_stats.profit >= cfg.stopLoss) {
-        stopWithReason(tr("hit stop-on-loss (%1)").arg(m_stats.profit, 0, 'f', 8));
+    if (cfg.stopLoss > 0.0 && -runProfit >= cfg.stopLoss - 1e-12) {
+        stopWithReason(tr("hit stop-on-loss (%1)").arg(runProfit, 0, 'f', 8));
         return true;
     }
-    if (cfg.stopAfterBets > 0 && m_stats.bets >= cfg.stopAfterBets) {
-        stopWithReason(tr("finished %1 bets").arg(m_stats.bets));
+    if (cfg.stopAfterBets > 0 && runBets >= cfg.stopAfterBets) {
+        stopWithReason(tr("finished %1 bets").arg(runBets));
         return true;
     }
     return false;
@@ -913,7 +948,7 @@ void BotEngine::placeNextBet()
         }
         // Real money: never silently shrink a bet to "whatever is left". If the
         // progression asks for more than the balance, stop instead.
-        const double bet = m_nextBetSize;
+        const double bet = betAmount(m_nextBetSize);
         if (m_retryNoBalance && bet >= 0.0 && bet > m_stats.balance) {
             // Option "Retry bet when bet higher than balance": keep the run alive and look again in 5 s
             // (the balance is refreshed from the server in the meantime).
@@ -942,7 +977,7 @@ void BotEngine::placeNextBet()
 
     // Bet exactly the amount the strategy asked for (0 is a valid bet). Never
     // shrink it to the remaining balance: if it can't be covered, halt instead.
-    const double bet = m_nextBetSize;
+    const double bet = betAmount(m_nextBetSize);
     if (bet < 0.0 || bet > m_stats.balance) {
         stopWithReason(tr("halted (next bet %1 exceeds balance %2)")
                            .arg(bet, 0, 'f', 8)

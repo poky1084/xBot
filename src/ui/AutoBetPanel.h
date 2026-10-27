@@ -4,6 +4,7 @@
 
 #include <QWidget>
 
+class QCheckBox;
 class QComboBox;
 class QDoubleSpinBox;
 class QLabel;
@@ -24,6 +25,12 @@ public:
     void setFrom(const BotConfig &cfg);
 
     void setRunning(bool running);
+
+    // Condition Builder: its blocks replace the on win / on loss rules only when this box
+    // is ticked. `count` = number of saved blocks (shown in the label).
+    void setConditionCount(int count);
+    bool useConditions() const;
+    void setUseConditions(bool on);
     // Live betting needs crypto-sized amounts (e.g. 8 decimals, min 1e-8).
     void setBetPrecision(int decimals, double minBet);
 
@@ -41,6 +48,8 @@ private:
     QDoubleSpinBox *m_onWinPct = nullptr;
     QComboBox *m_onLossMode = nullptr;
     QDoubleSpinBox *m_onLossPct = nullptr;
+    QCheckBox *m_useConditions = nullptr;
+    bool m_running = false;
     QDoubleSpinBox *m_stopProfitSpin = nullptr;
     QDoubleSpinBox *m_stopLossSpin = nullptr;
     QSpinBox *m_delaySpin = nullptr;

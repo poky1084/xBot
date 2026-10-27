@@ -204,6 +204,9 @@ void CookieGrabberDialog::initializeWebView(const QString &site)
                         }).Get());
                 return S_OK;
             }).Get());
+    if (FAILED(hr)) // e.g. the WebView2 Runtime is not installed: the callback never runs
+        m_status->setText(tr("Failed to start WebView2 (error 0x%1). Is the WebView2 Runtime installed?")
+                              .arg(QString::number(static_cast<quint32>(hr), 16)));
 }
 
 void CookieGrabberDialog::fetchCookies(const QString &site)
