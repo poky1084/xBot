@@ -871,14 +871,26 @@ void LuaEditorDock::writeConsoleLine(const QString &text, bool isError)
     // scrolled up to read something, leave the scroll position alone.
     QScrollBar *bar = m_console->verticalScrollBar();
     const bool atBottom = bar->value() >= bar->maximum() - 2;
+    const int oldValue = bar->value();
 
-    QTextCursor cursor(m_console->document());
+    // Once the console is full (setMaximumBlockCount), adding a line drops the first one from
+    // the top, which would pull everything up by that many lines under a view that is
+    // scrolled up. Remember how many lines will go so the scroll position can follow.
+    QTextDocument *doc = m_console->document();
+    int droppedLines = 0;
+    if (!atBottom && !doc->isEmpty() && doc->maximumBlockCount() > 0
+        && doc->blockCount() >= doc->maximumBlockCount())
+        droppedLines = qMax(1, doc->firstBlock().lineCount());
+
+    QTextCursor cursor(doc);
     cursor.movePosition(QTextCursor::End);
-    if (!m_console->document()->isEmpty())
+    if (!doc->isEmpty())
         cursor.insertBlock();
     cursor.insertText(isError ? tr("ERROR  %1").arg(text) : text, fmt);
     if (atBottom)
         bar->setValue(bar->maximum());
+    else if (droppedLines > 0)
+        bar->setValue(qMax(0, oldValue - droppedLines)); // keep the same text in view
 }
 
 void LuaEditorDock::appendConsole(const QString &text, bool isError)

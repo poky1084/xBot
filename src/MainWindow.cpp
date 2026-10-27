@@ -577,7 +577,7 @@ MainWindow::MainWindow(QWidget *parent)
 
     // Default size for a first launch; loadSettings() replaces it with the
     // geometry from the previous session when one was saved.
-    resize(1040, 560);
+    resize(1040, 600);
 
     loadSettings();
 	applyLiveSettings(m_live);
@@ -658,8 +658,11 @@ void MainWindow::createActions()
     m_actLua->setToolTip(tr("Strategy editor (Lua / JavaScript)"));
     m_actLua->setCheckable(true);
     connect(m_actLua, &QAction::toggled, this, [this](bool visible) {
-        if (m_luaDock)
-            m_luaDock->setVisible(visible);
+        if (!m_luaDock)
+            return;
+        m_luaDock->setVisible(visible);
+        if (visible)
+            m_luaDock->raise(); // tabbed with another dock: bring this tab to the front
     });
 
     m_actDarkTheme = new QAction(tr("Dark theme"), this);
@@ -669,8 +672,11 @@ void MainWindow::createActions()
     m_actShowLog = new QAction(tr("Show log"), this);
     m_actShowLog->setCheckable(true);
     connect(m_actShowLog, &QAction::toggled, this, [this](bool visible) {
-        if (m_logDock)
-            m_logDock->setVisible(visible);
+        if (!m_logDock)
+            return;
+        m_logDock->setVisible(visible);
+        if (visible)
+            m_logDock->raise(); // tabbed with another dock: bring this tab to the front
     });
 
     // Panel toggles (View menu). The panels themselves are created later, so
@@ -679,8 +685,13 @@ void MainWindow::createActions()
     m_actShowSidebar->setCheckable(true);
     m_actShowSidebar->setChecked(true);
     connect(m_actShowSidebar, &QAction::toggled, this, [this](bool visible) {
-        if (m_sidebar)
-            m_sidebar->setVisible(visible);
+        if (!m_sidebarDock)
+            return;
+        m_sidebarDock->setVisible(visible);
+        // When the panel is tabbed with the Lua / JS editor, showing it must bring its tab
+        // to the front instead of leaving the editor on top.
+        if (visible)
+            m_sidebarDock->raise();
     });
 
     m_actShowBetList = new QAction(tr("Show bet list"), this);
@@ -837,6 +848,24 @@ void MainWindow::createSidebar()
     // MainWindow/centralSplitter).
     m_sidebar->setMinimumWidth(150);
     m_sidebar->setMaximumWidth(700);
+
+    // The STATUS / SESSION panel is a dock widget, like the Log: it can be dragged to any
+    // side of the window, floated, or closed (View > Show sidebar brings it back).
+    m_sidebarDock = new QDockWidget(tr("Status / Session"), this);
+    m_sidebarDock->setObjectName(QStringLiteral("sidebarDock"));
+    m_sidebarDock->setWidget(m_sidebar);
+    addDockWidget(Qt::LeftDockWidgetArea, m_sidebarDock);
+    resizeDocks({m_sidebarDock}, {210}, Qt::Horizontal);
+    connect(m_sidebarDock, &QDockWidget::visibilityChanged, this, [this](bool visible) {
+        // Keep the View menu check in sync when the dock is closed via its X.
+        if (m_actShowSidebar && m_actShowSidebar->isChecked() != visible) {
+            const QSignalBlocker blocker(m_actShowSidebar);
+            m_actShowSidebar->setChecked(visible);
+        }
+    });
+    // The session values shrink their font to the panel's width: re-fit when it is resized
+    // (dock splitter dragged, panel floated, moved to another side ...).
+    m_sidebar->installEventFilter(this);
     auto *layout = new QVBoxLayout(sidebarContent);
     layout->setContentsMargins(0, 0, 0, 0);
     layout->setSpacing(0);
@@ -1071,7 +1100,15 @@ void MainWindow::createCentralWidget()
 
     m_mainSplitter = new QSplitter(Qt::Vertical);
     m_mainSplitter->setObjectName(QStringLiteral("mainSplitter"));
-    m_mainSplitter->addWidget(m_betTable);
+    // The bet list sits in a holder, so hiding it (View > Show bet list) leaves an empty
+    // area in the splitter instead of letting the bottom panel grow into its space: the
+    // bottom panel stays at the bottom, at the same size.
+    auto *betHolder = new QWidget;
+    auto *betHolderLayout = new QVBoxLayout(betHolder);
+    betHolderLayout->setContentsMargins(0, 0, 0, 0);
+    betHolderLayout->setSpacing(0);
+    betHolderLayout->addWidget(m_betTable);
+    m_mainSplitter->addWidget(betHolder);
     // The tabs live in a holder so they keep their width (and are clipped) when
     // the Lua dock is widened over them, rather than being resized.
     auto *tabsHolder = new FixedWidthHolder(m_tabs);
@@ -1097,16 +1134,8 @@ void MainWindow::createCentralWidget()
     m_centralSplitter = new QSplitter(Qt::Horizontal);
     m_centralSplitter->setObjectName(QStringLiteral("centralSplitter"));
     m_centralSplitter->setChildrenCollapsible(false);
-    m_centralSplitter->addWidget(m_sidebar);
-    m_centralSplitter->addWidget(right);
-    m_centralSplitter->setStretchFactor(0, 0);
-    m_centralSplitter->setStretchFactor(1, 1);
-    m_centralSplitter->setSizes({210, 1000});
-    // A wider grab area for the sidebar's handle (it still looks like a 1px line).
-    m_centralSplitter->setHandleWidth(5);
-    // The session values shrink their font to the sidebar's width: re-fit while dragging.
-    connect(m_centralSplitter, &QSplitter::splitterMoved, this, [this] { updateSessionWidgets(); });
-    // ... and once the window is shown with its restored sidebar width.
+    m_centralSplitter->addWidget(right); // the sidebar now lives in its own dock
+    // Re-fit the session values once the window is shown with its restored sidebar width.
     QTimer::singleShot(0, this, [this] { updateSessionWidgets(); });
     // Ignored = the central area reports no minimum size, so a docked panel (the
     // Lua editor) can be widened over the bet list / bottom tabs and covers them
@@ -1819,7 +1848,21 @@ void MainWindow::onSearchEdited(const QString &text)
 
 void MainWindow::onSwitchToChart()
 {
-    m_tabs->setCurrentIndex(2);
+    // Statistics button: toggles the Profit Chart. If the chart is already showing in the
+    // bottom panel, hide the panel again; otherwise show the panel (if it was hidden), select
+    // the tab and re-fit the pane (also when that tab was already selected but the pane had
+    // been dragged shut, since currentChanged does not fire then).
+    constexpr int kChartTab = 2; // Manual Bet, Auto Bet, Profit Chart, Provably Fair
+    const bool panelShown = m_actShowTabs && m_actShowTabs->isChecked();
+    const bool paneOpen = m_mainSplitter->sizes().value(1) > 40; // not dragged shut
+    if (panelShown && paneOpen && m_tabs->currentIndex() == kChartTab) {
+        m_actShowTabs->setChecked(false);
+        return;
+    }
+    if (m_actShowTabs && !m_actShowTabs->isChecked())
+        m_actShowTabs->setChecked(true);
+    m_tabs->setCurrentIndex(kChartTab);
+    onTabChanged(kChartTab);
 }
 
 // When switching to Provably Fair / Auto Bet, resize the bottom pane so the
@@ -3001,6 +3044,9 @@ void MainWindow::updateEmptyState()
 
 bool MainWindow::eventFilter(QObject *watched, QEvent *event)
 {
+    // Sidebar resized (it is a dock now): re-fit the session value fonts to its width.
+    if (m_sidebar && watched == m_sidebar && event->type() == QEvent::Resize)
+        QTimer::singleShot(0, this, [this] { updateSessionWidgets(); });
     // Keep every tab page at its natural height. Without a pinned minimum the
     // QTabWidget squeezes the page when the Log dock takes space, and the
     // controls overlap. With it, the page keeps its size and is clipped.
@@ -3095,8 +3141,13 @@ void MainWindow::loadSettings()
 
     restoreGeometry(settings.value(QStringLiteral("MainWindow/geometry")).toByteArray());
     restoreState(settings.value(QStringLiteral("MainWindow/state")).toByteArray());
-    m_centralSplitter->restoreState(
-        settings.value(QStringLiteral("MainWindow/centralSplitter")).toByteArray());
+    if (!settings.contains(QStringLiteral("MainWindow/sidebarDockSaved"))) {
+        // Settings from before the sidebar became a dock: the saved window state does not
+        // know it, so put it back on the left explicitly.
+        addDockWidget(Qt::LeftDockWidgetArea, m_sidebarDock);
+        m_sidebarDock->show();
+        resizeDocks({m_sidebarDock}, {210}, Qt::Horizontal);
+    }
     m_mainSplitter->restoreState(
         settings.value(QStringLiteral("MainWindow/mainSplitter")).toByteArray());
     {
@@ -3205,7 +3256,7 @@ void MainWindow::saveSettings()
 	
     settings.setValue(QStringLiteral("MainWindow/geometry"), saveGeometry());
     settings.setValue(QStringLiteral("MainWindow/state"), saveState());
-    settings.setValue(QStringLiteral("MainWindow/centralSplitter"), m_centralSplitter->saveState());
+    settings.setValue(QStringLiteral("MainWindow/sidebarDockSaved"), true); // saveState() knows the sidebar dock
     settings.setValue(QStringLiteral("MainWindow/mainSplitter"), m_mainSplitter->saveState());
     settings.setValue(QStringLiteral("MainWindow/bottomTab"), m_tabs->currentIndex());
     settings.setValue(QStringLiteral("MainWindow/tableState2"),

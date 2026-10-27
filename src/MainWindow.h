@@ -268,6 +268,9 @@ private:
     LogWidget *m_logWidget = nullptr;
     QDockWidget *m_logDock = nullptr;
 
+    // Status + Session sidebar (dockable like the Log; docked on the left by default)
+    QDockWidget *m_sidebarDock = nullptr;
+
     // Strategy editor for Lua / JavaScript (dockable, hidden by default)
     LuaEditorDock *m_luaDock = nullptr;
     QAction *m_actLua = nullptr;      // "#" toolbar button / View menu entry
