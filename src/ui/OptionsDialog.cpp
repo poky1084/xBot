@@ -17,6 +17,7 @@
 #include <QLabel>
 #include <QLineEdit>
 #include <QPushButton>
+#include <QScrollArea>
 #include <QSignalBlocker>
 #include <QSpinBox>
 #include <QVBoxLayout>
@@ -36,9 +37,25 @@ OptionsDialog::OptionsDialog(QWidget *parent)
     : QDialog(parent)
 {
     setWindowTitle(tr("Options — xBot"));
-    setMinimumWidth(480);
+    setMinimumWidth(300);
+    setSizeGripEnabled(true); // resizable by dragging the edges / corner
 
     auto *root = new QVBoxLayout(this);
+    // Two columns: Live betting + Data on the left, Appearance + Game on the right.
+    // The columns live in a scroll area, so the window can be made narrower than the controls
+    // need (scrollbars appear) instead of being stopped at the layout's minimum width.
+    auto *scroll = new QScrollArea(this);
+    scroll->setWidgetResizable(true);
+    scroll->setFrameShape(QFrame::NoFrame);
+    auto *content = new QWidget;
+    scroll->setWidget(content);
+    auto *columns = new QHBoxLayout(content);
+    columns->setContentsMargins(0, 0, 0, 0);
+    auto *leftCol = new QVBoxLayout;
+    auto *rightCol = new QVBoxLayout;
+    columns->addLayout(rightCol, 1); // Live betting + Data on the left
+    columns->addLayout(leftCol, 1);  // Appearance + Game on the right
+    root->addWidget(scroll, 1);
 
     auto *appearanceBox = new QGroupBox(tr("Appearance"), this);
     auto *appearanceForm = new QFormLayout(appearanceBox);
@@ -56,7 +73,7 @@ OptionsDialog::OptionsDialog(QWidget *parent)
                                QStringLiteral("DOGE"), QStringLiteral("TRX")});
     appearanceForm->addRow(tr("Currency label:"), m_currencyCombo);
 
-    root->addWidget(appearanceBox);
+    leftCol->addWidget(appearanceBox);
 
     auto *gameBox = new QGroupBox(tr("Game"), this);
     auto *gameForm = new QFormLayout(gameBox);
@@ -94,7 +111,7 @@ OptionsDialog::OptionsDialog(QWidget *parent)
     m_betDelaySpin->setToolTip(tr("Pause between bets in milliseconds (0 = as fast as possible). "
                                   "Applies to auto-bet and scripts; with the auto-bet panel's own "
                                   "delay the longer one is used."));
-    gameForm->addRow(tr("Delay between bet:"), m_betDelaySpin);
+    gameForm->addRow(tr("Delays between bet:"), m_betDelaySpin);
 
     auto *note = new QLabel(
         tr(""),
@@ -103,7 +120,8 @@ OptionsDialog::OptionsDialog(QWidget *parent)
     note->setStyleSheet(QStringLiteral("color:#737373;"));
     gameForm->addRow({}, note);
 
-    root->addWidget(gameBox);
+    leftCol->addWidget(gameBox);
+    leftCol->addStretch();
 
     // ------------------------------------------------------------- live betting
     auto *liveBox = new QGroupBox(tr("Live betting"), this);
@@ -211,7 +229,7 @@ OptionsDialog::OptionsDialog(QWidget *parent)
         emit loginRequested();
     });
 
-    root->addWidget(liveBox);
+    rightCol->addWidget(liveBox);
     applyCasinoUi();
     updateAuthFields();
     setExtensionStatus(false, false);
@@ -229,12 +247,15 @@ OptionsDialog::OptionsDialog(QWidget *parent)
     dataLayout->addWidget(clearBtn);
     dataLayout->addWidget(clearNote, 1);
     connect(clearBtn, &QPushButton::clicked, this, &OptionsDialog::onClearData);
-    root->addWidget(dataBox);
+    rightCol->addWidget(dataBox);
 
     auto *buttons = new QDialogButtonBox(QDialogButtonBox::Ok | QDialogButtonBox::Cancel, this);
     connect(buttons, &QDialogButtonBox::accepted, this, &QDialog::accept);
     connect(buttons, &QDialogButtonBox::rejected, this, &QDialog::reject);
     root->addWidget(buttons);
+
+    // Opens wide enough for both columns; the width can then be changed freely.
+    resize(qMax(900, content->sizeHint().width() + 40), content->sizeHint().height() + 90);
 }
 
 bool OptionsDialog::clearStoredData(QString *error)
