@@ -1901,6 +1901,7 @@ void MainWindow::onOpenOptions()
     dialog.setClientSeed(m_clientSeed);
     dialog.setRandomClientSeed(m_randomClientSeed);
     dialog.setBetDelayMs(m_betDelayMs);
+    dialog.setRetryNoBalance(m_retryNoBalance);
     dialog.setLiveSettings(m_live);
     if (!m_live.currency.isEmpty())
         dialog.setLiveCurrencies({m_live.currency}, m_live.currency);
@@ -1978,6 +1979,8 @@ void MainWindow::onOpenOptions()
     m_randomClientSeed = dialog.randomClientSeed();
     m_betDelayMs = dialog.betDelayMs();
     m_engine->setBetDelayMs(m_betDelayMs);
+    m_retryNoBalance = dialog.retryNoBalance();
+    m_engine->setRetryNoBalance(m_retryNoBalance);
     m_actDarkTheme->setChecked(dialog.darkTheme());
 
     if (m_engine->isRunning() || m_engine->betInFlight()) {
@@ -3087,6 +3090,8 @@ void MainWindow::loadSettings()
     m_randomClientSeed = settings.value(QStringLiteral("General/randomClientSeed"), false).toBool();
     m_betDelayMs = qMax(0, settings.value(QStringLiteral("General/betDelayMs"), 0).toInt());
     m_engine->setBetDelayMs(m_betDelayMs);
+    m_retryNoBalance = settings.value(QStringLiteral("General/retryNoBalance"), false).toBool();
+    m_engine->setRetryNoBalance(m_retryNoBalance);
     setGame(settings.value(QStringLiteral("General/game"), QStringLiteral("dice")).toString()
                     == QLatin1String("limbo")
                 ? Game::Limbo
@@ -3163,6 +3168,7 @@ void MainWindow::saveSettings()
     settings.setValue(QStringLiteral("General/clientSeed"), m_clientSeed);
     settings.setValue(QStringLiteral("General/randomClientSeed"), m_randomClientSeed);
     settings.setValue(QStringLiteral("General/betDelayMs"), m_betDelayMs);
+    settings.setValue(QStringLiteral("General/retryNoBalance"), m_retryNoBalance);
     settings.setValue(QStringLiteral("General/game"), gameName(m_game));
     settings.setValue(QStringLiteral("General/darkTheme"), m_actDarkTheme->isChecked());
 

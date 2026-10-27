@@ -66,12 +66,14 @@ OptionsDialog::OptionsDialog(QWidget *parent)
     m_themeCombo->addItem(tr("Dark"));
     appearanceForm->addRow(tr("Theme:"), m_themeCombo);
 
-    m_currencyCombo = new QComboBox;
+    // The "Currency label" row was removed from the window; the (hidden) combo keeps the
+    // simulation label value flowing through currencyTag() / setCurrencyTag() unchanged.
+    m_currencyCombo = new QComboBox(this);
+    m_currencyCombo->hide();
     m_currencyCombo->setEditable(true);
     m_currencyCombo->addItems({QStringLiteral("USDT"), QStringLiteral("BTC"),
                                QStringLiteral("ETH"), QStringLiteral("LTC"),
                                QStringLiteral("DOGE"), QStringLiteral("TRX")});
-    appearanceForm->addRow(tr("Currency label:"), m_currencyCombo);
 
     leftCol->addWidget(appearanceBox);
 
@@ -112,6 +114,13 @@ OptionsDialog::OptionsDialog(QWidget *parent)
                                   "Applies to auto-bet and scripts; with the auto-bet panel's own "
                                   "delay the longer one is used."));
     gameForm->addRow(tr("Delays between bet:"), m_betDelaySpin);
+
+    m_retryNoBalanceCheck = new QCheckBox(tr("Retry bet when no balance"));
+    m_retryNoBalanceCheck->setToolTip(
+        tr("Live betting: when the next bet is higher than the current balance, keep the "
+           "auto-bet running and check again every 5 seconds (e.g. until you deposit) instead of "
+           "stopping."));
+    gameForm->addRow(QString(), m_retryNoBalanceCheck);
 
     auto *note = new QLabel(
         tr(""),
@@ -353,6 +362,16 @@ void OptionsDialog::setRandomClientSeed(bool random)
 {
     m_randomSeedCheck->setChecked(random);
     m_clientSeedEdit->setEnabled(!random);
+}
+
+bool OptionsDialog::retryNoBalance() const
+{
+    return m_retryNoBalanceCheck->isChecked();
+}
+
+void OptionsDialog::setRetryNoBalance(bool on)
+{
+    m_retryNoBalanceCheck->setChecked(on);
 }
 
 int OptionsDialog::betDelayMs() const

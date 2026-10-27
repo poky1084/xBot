@@ -129,6 +129,7 @@ void BotEngine::onLiveFinished(const LiveBetResult &r)
     if (!r.ok) {
         emit logMessage(tr("Bet failed: %1").arg(r.error), true);
         if (manual || !m_running) {
+            flushStopLog();
             finishScriptDrain(false);
             return;
         }
@@ -153,6 +154,7 @@ void BotEngine::onLiveFinished(const LiveBetResult &r)
 
     m_retryStreak = 0;
     recordBet(cfg, r.amount, r.roll, r.win, r.multiplier, r.payout, r.nonce, r.betId);
+    flushStopLog(); // a stop that came while this bet was in flight: now the numbers are final
 
     // A manual roll has no progression/stop logic. If the user pressed Stop
     // while the request was in flight the bet is still recorded (the money has
@@ -626,12 +628,31 @@ void BotEngine::stopWithReason(const QString &reason)
     m_seedRotationPending = false;
     m_seedRotationQueued = false;
     m_seedWaitTimer.stop();
+    if (m_inFlight && !m_inFlightManual) {
+        // The bet in flight is still recorded when it lands: log after that.
+        m_pendingStopReason = reason;
+        m_stopLogPending = true;
+    } else {
+        logStop(reason);
+    }
+    emit stopped(reason);
+}
+
+void BotEngine::logStop(const QString &reason)
+{
     emit logMessage(tr("Auto-bet %1 (%2 bets, P/L %3)")
                         .arg(reason)
                         .arg(m_stats.bets)
                         .arg(m_stats.profit, 0, 'f', 8),
                     false);
-    emit stopped(reason);
+}
+
+void BotEngine::flushStopLog()
+{
+    if (!m_stopLogPending)
+        return;
+    m_stopLogPending = false;
+    logStop(m_pendingStopReason);
 }
 
 void BotEngine::scheduleNext()
@@ -799,6 +820,20 @@ void BotEngine::placeNextBet()
         // Real money: never silently shrink a bet to "whatever is left". If the
         // progression asks for more than the balance, stop instead.
         const double bet = m_nextBetSize;
+        if (m_retryNoBalance && bet >= 0.0 && bet > m_stats.balance) {
+            // Option "Retry when no balance left": keep the run alive and look again in 5 s
+            // (the balance is refreshed from the server in the meantime).
+            if (!m_noBalanceLogged) {
+                m_noBalanceLogged = true;
+                emit logMessage(tr("Next bet %1 exceeds balance %2 - Retry betting...")
+                                    .arg(bet, 0, 'f', 8)
+                                    .arg(m_stats.balance, 0, 'f', 8),
+                                true);
+            }
+            m_timer.start(5000);
+            return;
+        }
+        m_noBalanceLogged = false;
         if (bet < 0.0 || bet > m_stats.balance) {
             stopWithReason(tr("halted (next bet %1 exceeds balance %2)")
                                .arg(bet, 0, 'f', 8)

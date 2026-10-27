@@ -96,6 +96,10 @@ public:
     // auto-bet panel's delay applies.
     void setBetDelayMs(int ms) { m_betDelayMs = ms < 0 ? 0 : ms; }
     int betDelayMs() const { return m_betDelayMs; }
+    // Live: when the next bet is larger than the balance, wait (re-checking every 5 s) instead
+    // of halting - e.g. until a deposit arrives.
+    void setRetryNoBalance(bool on) { m_retryNoBalance = on; }
+    bool retryNoBalance() const { return m_retryNoBalance; }
     bool liveMode() const { return m_liveEnabled && m_live != nullptr; }
     bool betInFlight() const { return m_inFlight; }
     bool hasLiveBalance() const { return m_liveBalanceKnown; }
@@ -144,6 +148,12 @@ private:
                         const QString &betId = QString());
     bool checkStopConditions(); // true if a stop condition fired (engine stopped)
     void scheduleNext();
+    // "Auto-bet <reason> (N bets, P/L x)". When the stop happens while a bet is still in flight
+    // the line is held back until that bet has been recorded, so it shows the final numbers.
+    void logStop(const QString &reason);
+    void flushStopLog();
+    QString m_pendingStopReason;
+    bool m_stopLogPending = false;
     bool advanceProgression(bool win, const BotConfig &cfg); // true if a stop fired
     void stopWithReason(const QString &reason);
     // After Stop with a scripted bet still in flight: hand that bet's result to the
@@ -178,6 +188,8 @@ private:
 
     BotConfig m_config;
     int m_betDelayMs = 0;
+    bool m_retryNoBalance = false;
+    bool m_noBalanceLogged = false;
     BotConfig m_runCfg;           // config of the running auto-bet (conditions may change target/side)
     Game m_announcedGame = Game::Dice; // last game reported through gameChanged()
     BlockList m_condBlocks;

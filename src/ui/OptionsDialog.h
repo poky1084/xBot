@@ -34,6 +34,11 @@ public:
     int betDelayMs() const;
     void setBetDelayMs(int ms);
 
+    // "Retry when no balance left": keep waiting instead of halting when the next bet is
+    // larger than the balance.
+    bool retryNoBalance() const;
+    void setRetryNoBalance(bool on);
+
     // Client seed used by manual and auto bets (Lua / JavaScript strategies ignore it).
     // "Random" = a fresh random 10-character seed instead of the typed one.
     QString clientSeed() const;
@@ -76,6 +81,7 @@ private:
     QLineEdit *m_clientSeedEdit = nullptr;
     QCheckBox *m_randomSeedCheck = nullptr;
     QSpinBox *m_betDelaySpin = nullptr;
+    QCheckBox *m_retryNoBalanceCheck = nullptr;
 
     LiveSettings m_base;            // settings last handed to setLiveSettings()
     bool m_shuffle = false;
