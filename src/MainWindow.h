@@ -334,6 +334,7 @@ private:
     double m_stakeBalance = 0.0;
     bool m_stakeBalanceKnown = false;
     QString m_lastShuffleBgError;
+    int m_betDelayMs = 0; // Options -> Game -> Delay (ms between bets)
     double m_startBalance = BotConstants::kStartBalance;
 
     // Rolling betting-speed measurement (bets per second).

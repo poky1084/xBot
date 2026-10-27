@@ -18,6 +18,7 @@
 #include <QLineEdit>
 #include <QPushButton>
 #include <QSignalBlocker>
+#include <QSpinBox>
 #include <QVBoxLayout>
 
 #ifdef Q_OS_WIN
@@ -84,6 +85,16 @@ OptionsDialog::OptionsDialog(QWidget *parent)
     connect(m_randomSeedCheck, &QCheckBox::toggled, this,
             [this](bool random) { m_clientSeedEdit->setEnabled(!random); });
     gameForm->addRow(QString(), m_randomSeedCheck);
+
+    m_betDelaySpin = new QSpinBox;
+    m_betDelaySpin->setRange(0, 3600000);
+    m_betDelaySpin->setSingleStep(10);
+    m_betDelaySpin->setValue(0);
+    m_betDelaySpin->setSuffix(QStringLiteral(" ms"));
+    m_betDelaySpin->setToolTip(tr("Pause between bets in milliseconds (0 = as fast as possible). "
+                                  "Applies to auto-bet and scripts; with the auto-bet panel's own "
+                                  "delay the longer one is used."));
+    gameForm->addRow(tr("Delay between bet:"), m_betDelaySpin);
 
     auto *note = new QLabel(
         tr(""),
@@ -321,6 +332,16 @@ void OptionsDialog::setRandomClientSeed(bool random)
 {
     m_randomSeedCheck->setChecked(random);
     m_clientSeedEdit->setEnabled(!random);
+}
+
+int OptionsDialog::betDelayMs() const
+{
+    return m_betDelaySpin->value();
+}
+
+void OptionsDialog::setBetDelayMs(int ms)
+{
+    m_betDelaySpin->setValue(ms);
 }
 
 void OptionsDialog::setStartBalance(double value)

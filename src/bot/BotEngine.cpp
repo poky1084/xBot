@@ -638,7 +638,7 @@ void BotEngine::stopWithReason(const QString &reason)
 
 void BotEngine::scheduleNext()
 {
-    m_timer.start(std::max(0, m_config.delayMs));
+    m_timer.start(std::max({0, m_config.delayMs, m_betDelayMs}));
 }
 
 // ------------------------------------------------------------------- core

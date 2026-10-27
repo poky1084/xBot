@@ -92,6 +92,10 @@ public:
     // provider is not used.
     void setLiveClient(StakeClient *client);
     void setLiveEnabled(bool enabled);
+    // Extra pause between bets (Options -> Game -> Delay). The longer of this and the
+    // auto-bet panel's delay applies.
+    void setBetDelayMs(int ms) { m_betDelayMs = ms < 0 ? 0 : ms; }
+    int betDelayMs() const { return m_betDelayMs; }
     bool liveMode() const { return m_liveEnabled && m_live != nullptr; }
     bool betInFlight() const { return m_inFlight; }
     bool hasLiveBalance() const { return m_liveBalanceKnown; }
@@ -173,6 +177,7 @@ private:
     BetRecord m_lastRec;           // last finished bet (fed to the script)
 
     BotConfig m_config;
+    int m_betDelayMs = 0;
     BotConfig m_runCfg;           // config of the running auto-bet (conditions may change target/side)
     Game m_announcedGame = Game::Dice; // last game reported through gameChanged()
     BlockList m_condBlocks;

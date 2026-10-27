@@ -51,7 +51,8 @@ bool containsCI(const QString &haystack, const char *needle)
 bool isRetryable(const QString &type, const QString &msg)
 {
     const bool parallel = (containsCI(type, "parallelCasinoBet") && !containsCI(type, "internalError"))
-                          || containsCI(msg, "only one bet at a time"); // Wolfbet
+                          || containsCI(msg, "only one bet at a time")   // Wolfbet
+                          || containsCI(msg, "concurrent requests");     // Goated
     const bool rateLimit = containsCI(msg, "slow down") || msg.contains(QLatin1String("429"))
                            || containsCI(msg, "too many attempts"); // Wolfbet / Laravel throttle
     const bool seedRotate = containsCI(msg, "new seed pair") || containsCI(msg, "choose a new seed")
@@ -69,7 +70,7 @@ int fastRetryDelayMs(const QString &type, const QString &msg)
     if (rateLimit)
         return 0;
     if ((containsCI(type, "parallelCasinoBet") && !containsCI(type, "internalError"))
-        || containsCI(msg, "only one bet at a time"))
+        || containsCI(msg, "only one bet at a time") || containsCI(msg, "concurrent requests"))
         return 40;
     if (containsCI(msg, "new seed pair") || containsCI(msg, "choose a new seed")
         || containsCI(msg, "seedRotate") || containsCI(type, "seedRotate")

@@ -12,6 +12,7 @@ class QGroupBox;
 class QLabel;
 class QLineEdit;
 class QPushButton;
+class QSpinBox;
 
 class OptionsDialog : public QDialog
 {
@@ -28,6 +29,10 @@ public:
 
     double startBalance() const;
     void setStartBalance(double value);
+
+    // Pause between bets in milliseconds (0 = none).
+    int betDelayMs() const;
+    void setBetDelayMs(int ms);
 
     // Client seed used by manual and auto bets (Lua / JavaScript strategies ignore it).
     // "Random" = a fresh random 10-character seed instead of the typed one.
@@ -70,6 +75,7 @@ private:
     QDoubleSpinBox *m_startBalanceSpin = nullptr;
     QLineEdit *m_clientSeedEdit = nullptr;
     QCheckBox *m_randomSeedCheck = nullptr;
+    QSpinBox *m_betDelaySpin = nullptr;
 
     LiveSettings m_base;            // settings last handed to setLiveSettings()
     bool m_shuffle = false;
