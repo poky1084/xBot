@@ -808,3 +808,12 @@ bool LuaStrategy::readOutputs(double &nextBet, BotConfig &runCfg)
     nextBet = floor8(bet);
     return true;
 }
+
+void LuaStrategy::setGlobalString(const char *name, const QString &value)
+{
+    if (!m_L)
+        return;
+    const QByteArray v = value.toUtf8();
+    lua_pushstring(m_L, v.constData());
+    lua_setglobal(m_L, name);
+}

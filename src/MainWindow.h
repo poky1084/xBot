@@ -334,7 +334,7 @@ private:
     double m_stakeBalance = 0.0;
     bool m_stakeBalanceKnown = false;
     QString m_lastShuffleBgError;
-    bool m_retryNoBalance = false; // Options -> Game -> Retry when no balance left
+    bool m_retryNoBalance = false; // Options -> Game -> Retry bet when bet higher than balance
     int m_betDelayMs = 0; // Options -> Game -> Delay (ms between bets)
     double m_startBalance = BotConstants::kStartBalance;
 

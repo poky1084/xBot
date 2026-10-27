@@ -77,6 +77,7 @@ public:
     Status onBet(const BetInfo &info, double &nextBet, BotConfig &runCfg) override;
 
     bool isLoaded() const override { return m_L != nullptr; }
+    void setGlobalString(const char *name, const QString &value) override;
     void close() override;
 
     // --- used by the Lua C callbacks (not part of the public contract) -----

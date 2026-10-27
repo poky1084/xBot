@@ -62,7 +62,7 @@ OptionsDialog::OptionsDialog(QWidget *parent)
     appearanceForm->setContentsMargins(8, 10, 8, 8);
 
     m_themeCombo = new QComboBox;
-    m_themeCombo->addItem(tr("Light (qBittorrent look)"));
+    m_themeCombo->addItem(tr("Light"));
     m_themeCombo->addItem(tr("Dark"));
     appearanceForm->addRow(tr("Theme:"), m_themeCombo);
 
@@ -115,7 +115,7 @@ OptionsDialog::OptionsDialog(QWidget *parent)
                                   "delay the longer one is used."));
     gameForm->addRow(tr("Delays between bet:"), m_betDelaySpin);
 
-    m_retryNoBalanceCheck = new QCheckBox(tr("Retry bet when no balance"));
+    m_retryNoBalanceCheck = new QCheckBox(tr("Retry bet when bet higher than balance"));
     m_retryNoBalanceCheck->setToolTip(
         tr("Live betting: when the next bet is higher than the current balance, keep the "
            "auto-bet running and check again every 5 seconds (e.g. until you deposit) instead of "

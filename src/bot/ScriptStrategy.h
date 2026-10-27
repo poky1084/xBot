@@ -60,6 +60,9 @@ public:
     virtual Status onBet(const BetInfo &info, double &nextBet, BotConfig &runCfg) = 0;
 
     virtual bool isLoaded() const = 0;
+    // Overwrites a string variable of the running script (used when the casino is switched
+    // from the menu: `casino` / `currency` must follow, or the script would switch back).
+    virtual void setGlobalString(const char *name, const QString &value) = 0;
     virtual void close() = 0;
 
     const QString &lastError() const { return m_error; }

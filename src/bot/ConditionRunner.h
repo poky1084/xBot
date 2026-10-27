@@ -27,6 +27,16 @@ public:
     bool onBetResult(bool win, double profitSinceStart, double balance, double &nextBet,
                      BotConfig &runCfg);
 
+    // The game was switched mid-run: "reset win chance" now goes back to these bet
+    // settings (game, target, side, limbo multiplier target).
+    void setBetBase(const BotConfig &cfg)
+    {
+        m_base.game = cfg.game;
+        m_base.target = cfg.target;
+        m_base.side = cfg.side;
+        m_base.multiplierTarget = cfg.multiplierTarget;
+    }
+
 private:
     bool matches(const ConditionBlockData &b, bool win, double profit, double balance) const;
     bool apply(const ConditionBlockData &b, double &nextBet, BotConfig &cfg) const;

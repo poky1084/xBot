@@ -441,3 +441,10 @@ bool JsStrategy::readOutputs(double &nextBet, BotConfig &runCfg)
     nextBet = floor8(bet);
     return true;
 }
+
+void JsStrategy::setGlobalString(const char *name, const QString &value)
+{
+    if (!m_engine)
+        return;
+    m_engine->globalObject().setProperty(QString::fromLatin1(name), value);
+}

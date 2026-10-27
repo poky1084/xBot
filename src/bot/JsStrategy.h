@@ -89,6 +89,7 @@ public:
     Status onBet(const BetInfo &info, double &nextBet, BotConfig &runCfg) override;
 
     bool isLoaded() const override { return m_engine != nullptr; }
+    void setGlobalString(const char *name, const QString &value) override;
     void close() override;
 
 protected:

@@ -120,6 +120,12 @@ void BotEngine::onLiveFinished(const LiveBetResult &r)
         return; // not a bet this engine asked for
 
     m_inFlight = false;
+    // The Casino menu asked for a switch while this bet was in flight: do it now, before
+    // the script / progression runs and the next bet is placed.
+    if (m_running)
+        applyPendingCasino();
+    else
+        m_pendingCasino.clear();
     // resetseed() asked for a rotation while this bet was in flight: send it now.
     if (m_seedRotationQueued && m_seedRotationPending)
         dispatchSeedRotation();
@@ -566,6 +572,83 @@ bool BotEngine::applyScriptCurrency()
     return false;
 }
 
+void BotEngine::switchCasino(const QString &casino)
+{
+    const QString want = casino.trimmed().toLower();
+    if (want.isEmpty() || !m_running)
+        return;
+    m_pendingCasino = want;
+    if (m_inFlight) {
+        emit logMessage(tr("Casino switch to %1 waits for the bet in flight.").arg(want), false);
+        return;
+    }
+    applyPendingCasino();
+}
+
+void BotEngine::applyPendingCasino()
+{
+    if (m_pendingCasino.isEmpty())
+        return;
+    const QString want = m_pendingCasino;
+    m_pendingCasino.clear();
+
+    const QString have = m_casinoGetter ? m_casinoGetter().trimmed().toLower() : QString();
+    if (want == have || !m_casinoSwitcher)
+        return;
+
+    QString err;
+    if (!m_casinoSwitcher(want, err)) {
+        // From the menu: report it and keep betting on the current casino.
+        emit logMessage(tr("Cannot switch casino to %1: %2").arg(want, err), true);
+        return;
+    }
+
+    m_runCfg.casino = want;
+    // The new casino's connection needs a moment: the next bet waits until it is ready.
+    m_awaitTransport = true;
+    m_awaitTimer.start();
+    // The new casino brings its own bet currency.
+    m_runCfg.currency = currentCurrency();
+    if (m_scriptActive && m_script) {
+        // Otherwise the script's old `casino` / `currency` would switch straight back.
+        m_script->setGlobalString("casino", want);
+        if (!m_runCfg.currency.isEmpty())
+            m_script->setGlobalString("currency", m_runCfg.currency);
+    }
+    emit logMessage(tr("Casino switched to %1.").arg(want), false);
+}
+
+void BotEngine::switchGame(const BotConfig &betCfg)
+{
+    const Game game = betCfg.game;
+    // Script runs decide the game themselves (game = "dice" / "limbo"); never switched from outside.
+    if (m_scriptActive || !m_scriptSource.trimmed().isEmpty())
+        return;
+
+    m_config.game = game; // also what a start that is still pending begins with
+    m_config.target = betCfg.target;
+    m_config.side = betCfg.side;
+    m_config.multiplierTarget = betCfg.multiplierTarget;
+    if (!m_running)
+        return;
+
+    m_runCfg.game = game;
+    m_runCfg.target = betCfg.target;
+    m_runCfg.side = betCfg.side;
+    m_runCfg.multiplierTarget = betCfg.multiplierTarget;
+    m_conditions.setBetBase(m_runCfg);
+    m_announcedGame = game;
+    if (game == Game::Limbo)
+        emit logMessage(tr("Game switched to limbo (target %1x).")
+                            .arg(m_runCfg.multiplierTarget, 0, 'f', 2),
+                        false);
+    else
+        emit logMessage(tr("Game switched to dice (chance %1%, %2).")
+                            .arg(m_runCfg.chance(), 0, 'f', 2)
+                            .arg(m_runCfg.side == BetSide::Over ? tr("over") : tr("under")),
+                        false);
+}
+
 void BotEngine::notifyGameChange()
 {
     if (m_runCfg.game == m_announcedGame)
@@ -625,6 +708,7 @@ void BotEngine::stopWithReason(const QString &reason)
     m_running = false;
     m_paused = false;
     m_timer.stop();
+    m_pendingCasino.clear();
     m_seedRotationPending = false;
     m_seedRotationQueued = false;
     m_seedWaitTimer.stop();
@@ -821,7 +905,7 @@ void BotEngine::placeNextBet()
         // progression asks for more than the balance, stop instead.
         const double bet = m_nextBetSize;
         if (m_retryNoBalance && bet >= 0.0 && bet > m_stats.balance) {
-            // Option "Retry when no balance left": keep the run alive and look again in 5 s
+            // Option "Retry bet when bet higher than balance": keep the run alive and look again in 5 s
             // (the balance is refreshed from the server in the meantime).
             if (!m_noBalanceLogged) {
                 m_noBalanceLogged = true;

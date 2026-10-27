@@ -69,6 +69,18 @@ public:
     const SessionStats &stats() const { return m_stats; }
 
     bool isRunning() const { return m_running; }
+
+    // Casino menu while an auto-bet (rules, Condition Builder or script) runs: switches the
+    // site the following bets go to, the same way a script's `casino = "..."` does (session
+    // kept, the next bet waits until the new connection is ready). A bet in flight finishes
+    // on the old casino first. A script's `casino` / `currency` variables follow the switch.
+    void switchCasino(const QString &casino);
+
+    // Game menu while betting runs: switch the game for the following bets. `betCfg`
+    // carries the new game plus the Manual Bet tab's target / side / limbo target, which
+    // replace the running ones (rules / Condition Builder runs). Ignored for script runs:
+    // a script picks its game itself. A bet already in flight finishes with the old game.
+    void switchGame(const BotConfig &betCfg);
     bool isPaused() const { return m_paused; }
 
     // Runs a single bet immediately (manual "Roll Dice"); no session needed.
@@ -159,6 +171,8 @@ private:
     // After Stop with a scripted bet still in flight: hand that bet's result to the
     // script one last time (so its print()s show the latest roll), then close it.
     void finishScriptDrain(bool feedLastBet);
+    void applyPendingCasino(); // the Casino menu's switch (see switchCasino)
+    QString m_pendingCasino;
     void notifyGameChange();
     QString currentCurrency() const;
     bool applyScriptCasino();   // true if switching failed and the run was halted

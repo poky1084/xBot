@@ -34,7 +34,7 @@ public:
     int betDelayMs() const;
     void setBetDelayMs(int ms);
 
-    // "Retry when no balance left": keep waiting instead of halting when the next bet is
+    // "Retry bet when bet higher than balance": keep waiting instead of halting when the next bet is
     // larger than the balance.
     bool retryNoBalance() const;
     void setRetryNoBalance(bool on);

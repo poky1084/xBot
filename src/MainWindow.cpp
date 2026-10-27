@@ -1194,13 +1194,22 @@ void MainWindow::setGame(Game game)
 
 void MainWindow::onGameSelected(Game game)
 {
-    if (m_engine->isRunning()) {
-        // The running bot (or its script) decides the game; undo the click.
+    if (game == m_game)
+        return;
+    if (m_luaRunning || m_engine->scriptActive()) {
+        // Script (Lua / JS) runs decide the game themselves (game = "dice" / "limbo"); undo the click.
         (m_game == Game::Limbo ? m_actGameLimbo : m_actGameDice)->setChecked(true);
-        onLogMessage(tr("Stop the running auto-bet before changing the game."), true);
+        onLogMessage(tr("The game cannot be changed from the menu while a script is running - "
+                        "set game = \"dice\" / \"limbo\" in the script instead."),
+                     true);
         return;
     }
-    setGame(game);
+    setGame(game); // the Manual Bet tab now shows (and returns) the new game's settings
+    if (m_engine->isRunning() || m_engine->startPending()) {
+        // Switch the running auto-bet too: the next bet is placed in the new game
+        // (a bet already in flight finishes in the old one).
+        m_engine->switchGame(m_manualPanel->config());
+    }
 }
 
 QString MainWindow::casinoDisplayName(LiveSettings::Casino casino)
@@ -1235,9 +1244,17 @@ void MainWindow::onCasinoSelected(LiveSettings::Casino casino)
 {
     if (m_live.casino == casino)
         return;
-    if (m_engine->isRunning() || m_engine->betInFlight()) {
-        updateCasinoMenu(); // undo the click: the running bot keeps its casino
-        onLogMessage(tr("Stop the running auto-bet before changing the casino."), true);
+    if (m_engine->isRunning()) {
+        // Switch the running auto-bet (also script runs) like a script's casino = "...":
+        // the session is kept and the next bet goes to the new casino (after a bet in flight).
+        // The menu shows the new casino once the switch has actually happened.
+        updateCasinoMenu();
+        m_engine->switchCasino(LiveSettings::nameOf(casino));
+        return;
+    }
+    if (m_engine->betInFlight()) {
+        updateCasinoMenu(); // undo the click: a manual bet is still on its way
+        onLogMessage(tr("Wait for the bet in flight before changing the casino."), true);
         return;
     }
 
