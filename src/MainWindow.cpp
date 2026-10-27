@@ -366,6 +366,8 @@ QIcon makeTextIcon(const QString &text, const QColor &color)
 // Holds the bottom tab panel at the width it has when nothing is docked on the
 // right. When the Lua dock is widened the holder shrinks, but the panel keeps
 // its full width and is simply clipped (covered) instead of being squeezed.
+// A horizontal scroll bar along the bottom edge appears whenever part of the
+// panel is covered, so the hidden part can be scrolled into view.
 class FixedWidthHolder : public QWidget
 {
 public:
@@ -374,10 +376,42 @@ public:
     {
         m_child->setParent(this);
         setSizePolicy(QSizePolicy::Preferred, QSizePolicy::Ignored);
+
+        m_hbar = new QScrollBar(Qt::Horizontal, this);
+        m_hbar->setRange(0, 0);
+        m_hbar->hide();
+        QObject::connect(m_hbar, &QScrollBar::valueChanged, this, [this](int) { relayout(); });
+        // Switching tabs can change how wide the content is (the Profit Chart
+        // follows the visible width, so it never needs scrolling).
+        if (auto *tabs = qobject_cast<QTabWidget *>(m_child)) {
+            QObject::connect(tabs, &QTabWidget::currentChanged, this, [this](int) {
+                QTimer::singleShot(0, this, [this] { relayout(); });
+            });
+        }
     }
 
-    QSize sizeHint() const override { return m_child->sizeHint(); }
+    QSize sizeHint() const override
+    {
+        QSize s = m_child->sizeHint();
+        s.rheight() += scrollBarHeight();
+        return s;
+    }
     QSize minimumSizeHint() const override { return QSize(0, 0); }
+
+    // Height taken by the scroll bar right now (0 while it is hidden).
+    int scrollBarHeight() const
+    {
+        return m_hbar->isVisibleTo(const_cast<FixedWidthHolder *>(this))
+                   ? m_hbar->sizeHint().height()
+                   : 0;
+    }
+
+    // Called with +height / -height when the scroll bar appears / disappears, so
+    // the owner can grow / shrink the pane and the content keeps its height.
+    void setScrollBarToggledCallback(std::function<void(int)> cb)
+    {
+        m_scrollBarToggledCb = std::move(cb);
+    }
 
     // Called with the width that is actually visible (this widget's own width)
     // every time the holder is re-laid out. Lets a page inside the clipped child
@@ -404,11 +438,24 @@ protected:
         QWidget::showEvent(event);
         relayout();
     }
+    // Wheel turns that no control inside the panel used scroll it sideways.
+    void wheelEvent(QWheelEvent *event) override
+    {
+        if (m_hbar->isVisibleTo(this))
+            QCoreApplication::sendEvent(m_hbar, event);
+        else
+            QWidget::wheelEvent(event);
+    }
 
 private:
     void relayout()
     {
-        int w = width();
+        if (m_inRelayout)
+            return;
+        m_inRelayout = true;
+
+        const int visibleW = width();
+        int w = visibleW;
         // Width available if no dock took space on the right: from this widget's
         // left edge to the right edge of the main window.
         if (QWidget *top = window(); top && top != this)
@@ -416,12 +463,59 @@ private:
         // Before the child is resized, so a page limited to the visible width is
         // already capped (or released again) when the child's layout runs.
         if (m_visibleWidthCb)
-            m_visibleWidthCb(width());
-        m_child->setGeometry(0, 0, w, height());
+            m_visibleWidthCb(visibleW);
+
+        // How much of the content actually lies past the visible width. A page
+        // capped to the visible width (Profit Chart) has nothing to scroll; any
+        // other page also gets its minimum width, so a narrow window scrolls
+        // instead of squeezing the controls together.
+        int contentW = w;
+        if (auto *tabs = qobject_cast<QTabWidget *>(m_child)) {
+            if (QWidget *page = tabs->currentWidget()) {
+                const int left = page->parentWidget() ? page->mapTo(m_child, QPoint(0, 0)).x() : 0;
+                if (page->maximumWidth() < QWIDGETSIZE_MAX) {
+                    contentW = std::min(w, std::max(visibleW, left + page->maximumWidth() + 1));
+                } else {
+                    w = std::max(w, left + page->minimumSizeHint().width());
+                    contentW = w;
+                }
+            }
+        }
+
+        const int range = std::max(0, contentW - visibleW);
+        const bool wasShown = m_hbar->isVisibleTo(this);
+        const bool show = range > 0;
+        const int barH = m_hbar->sizeHint().height();
+        m_hbar->setRange(0, range);
+        m_hbar->setPageStep(std::max(1, visibleW));
+        m_hbar->setSingleStep(20);
+        m_hbar->setVisible(show);
+
+        const int childH = std::max(0, height() - (show ? barH : 0));
+        m_child->setGeometry(-m_hbar->value(), 0, w, childH);
+        if (show) {
+            m_hbar->setGeometry(0, childH, visibleW, barH);
+            m_hbar->raise();
+        }
+        m_inRelayout = false;
+
+        if (show != wasShown) {
+            updateGeometry();
+            if (m_scrollBarToggledCb) {
+                const int delta = show ? barH : -barH;
+                QTimer::singleShot(0, this, [this, delta] {
+                    if (m_scrollBarToggledCb)
+                        m_scrollBarToggledCb(delta);
+                });
+            }
+        }
     }
 
     QWidget *m_child;
+    QScrollBar *m_hbar = nullptr;
+    bool m_inRelayout = false;
     std::function<void(int)> m_visibleWidthCb;
+    std::function<void(int)> m_scrollBarToggledCb;
 };
 } // namespace
 
@@ -1147,6 +1241,18 @@ void MainWindow::createCentralWidget()
                              ? chartTab->mapTo(m_tabs, QPoint(0, 0)).x()
                              : 0;
         chartTab->setMaximumWidth(std::max(1, visibleW - left - 1));
+    });
+    // The horizontal scroll bar under the panel takes its own row: grow the pane by
+    // that much when it appears (and give it back when it goes), so the tab page
+    // keeps the height it had and nothing at its bottom is covered.
+    tabsHolder->setScrollBarToggledCallback([this](int delta) {
+        QList<int> sizes = m_mainSplitter->sizes();
+        if (sizes.size() < 2 || sizes.value(1) <= 0)
+            return;
+        const int take = std::min(delta, std::max(0, sizes[0] - 60));
+        sizes[0] -= take;
+        sizes[1] += take;
+        m_mainSplitter->setSizes(sizes);
     });
     m_mainSplitter->addWidget(tabsHolder);
     m_mainSplitter->setStretchFactor(0, 1); // 1 = Table takes all extra window space
@@ -1946,7 +2052,10 @@ void MainWindow::onTabChanged(int index)
                                        page->minimumSizeHint().height(),
                                        page->minimumHeight(),
                                        80});
-        const int needed = contentH + tabBarH + 8;   // small buffer for the pane border
+        int needed = contentH + tabBarH + 8;   // small buffer for the pane border
+        // Room for the horizontal scroll bar when part of the panel is covered.
+        if (auto *holder = dynamic_cast<FixedWidthHolder *>(m_tabs->parentWidget()))
+            needed += holder->scrollBarHeight();
 
         const QList<int> sizes = m_mainSplitter->sizes();
         const int total = sizes.value(0) + sizes.value(1);
