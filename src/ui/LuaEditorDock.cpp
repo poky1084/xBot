@@ -867,12 +867,18 @@ void LuaEditorDock::writeConsoleLine(const QString &text, bool isError)
     fmt.setForeground(QColor(isError ? (m_dark ? "#ff6b6b" : "#c9372a")
                                      : (m_dark ? "#d4d4d4" : "#1f1f1f")));
 
+    // Only follow the output while the view is already at the bottom. If the user has
+    // scrolled up to read something, leave the scroll position alone.
+    QScrollBar *bar = m_console->verticalScrollBar();
+    const bool atBottom = bar->value() >= bar->maximum() - 2;
+
     QTextCursor cursor(m_console->document());
     cursor.movePosition(QTextCursor::End);
     if (!m_console->document()->isEmpty())
         cursor.insertBlock();
     cursor.insertText(isError ? tr("ERROR  %1").arg(text) : text, fmt);
-    m_console->verticalScrollBar()->setValue(m_console->verticalScrollBar()->maximum());
+    if (atBottom)
+        bar->setValue(bar->maximum());
 }
 
 void LuaEditorDock::appendConsole(const QString &text, bool isError)
