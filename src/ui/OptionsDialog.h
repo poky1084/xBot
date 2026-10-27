@@ -13,6 +13,7 @@ class QLabel;
 class QLineEdit;
 class QPushButton;
 class QSpinBox;
+class QTimer;
 
 class OptionsDialog : public QDialog
 {
@@ -56,6 +57,10 @@ public:
     // user typed).
     void setLiveCurrencies(const QStringList &codes, const QString &selected);
     void setExtensionStatus(bool listening, bool connected);
+    // When on (default), the dialog logs in by itself (same as "Log in") as soon as every
+    // input the selected casino needs is filled in, so its currencies load without a click.
+    // Shuffle is skipped: its currency list is built in. Turn off while a bet is running.
+    void setAutoFetchEnabled(bool on);
     // Bet currency remembered for each casino (indexed by int(LiveSettings::Casino)), so the
     // Casino selector can show the right one. Call before setLiveSettings(). The getter
     // includes the currency currently shown for the selected casino.
@@ -87,6 +92,13 @@ private:
     // account holds), keeps the chosen currency, and fetches the list once per dialog.
     void updateCurrencyList();
     void setFormRowVisible(QWidget *field, bool visible);
+    // Every input the selected casino needs is filled in and was not fetched with yet:
+    // fetch the balances / currencies (emits loginRequested()). Shuffle is skipped.
+    void maybeAutoFetch();
+    // Restarts the short wait after typing / pasting before maybeAutoFetch() runs.
+    void scheduleAutoFetch();
+    // The login inputs of the selected casino, joined (what an auto fetch was made with).
+    QString autoFetchKey() const;
     void onClearData();
 	void onGrabCookie();
     void onShuffleLogin();
@@ -130,4 +142,8 @@ private:
     QPushButton *m_wolfbetLoginBtn = nullptr;
     QLabel *m_loginStatus = nullptr;
     quint16 m_extensionPort = 4444;
+    bool m_extConnected = false;
+    bool m_autoFetchEnabled = true;
+    QTimer *m_autoFetchTimer = nullptr;
+    QString m_autoFetchedKey[LiveSettings::kCasinoCount]; // inputs last auto-fetched with
 };

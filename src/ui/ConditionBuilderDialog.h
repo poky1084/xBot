@@ -25,6 +25,9 @@ public:
     StrategyMap resultStrategies() const { return m_resultStrategies; }
     QString resultStrategyName() const { return m_resultName; }
 
+    // Window slot whose strategy file the autosave writes (see ConditionIo::strategiesPath()).
+    void setStrategiesSlot(int slot) { m_strategiesSlot = slot; }
+
 private slots:
     void onStrategySelected(int index);
     void saveStrategy();
@@ -57,6 +60,7 @@ private:
 
     BlockList m_blocks;
     StrategyMap m_strategies;
+    int m_strategiesSlot = 0;
 
     QLineEdit *m_name = nullptr;
     QComboBox *m_strategyCombo = nullptr;

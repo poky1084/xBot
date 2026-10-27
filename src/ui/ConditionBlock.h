@@ -47,8 +47,12 @@ QByteArray serializeCollection(const StrategyMap &strategies);
 // Accepts both the [] array format and a single {} strategy object.
 QList<ParsedStrategy> parseStrategyFile(const QByteArray &json, QString *error = nullptr);
 
-// strategies.json next to the executable (same place as the C# app).
-QString strategiesPath();
-bool saveStrategies(const StrategyMap &strategies);
-StrategyMap loadStrategies();
+// Strategy file next to the executable (same place as the C# app), one per window:
+// slot 0 (main window) = strategies.json, slot 1 (window "xBot #2", the first one opened
+// with "+") = strategies_2.json, slot 2 = strategies_3.json, …
+QString strategiesPath(int slot = 0);
+bool saveStrategies(const StrategyMap &strategies, int slot = 0);
+// A window that has no file of its own yet starts from the main window's strategies.json
+// (its first save then creates its own file).
+StrategyMap loadStrategies(int slot = 0);
 } // namespace ConditionIo

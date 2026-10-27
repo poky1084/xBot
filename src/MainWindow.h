@@ -133,6 +133,8 @@ private:
     static void copySettingsGroup(const QString &from, const QString &to,
                                   const QStringList &skip = QStringList());
     void saveOptionsSettings(QSettings &settings);
+    // Manual Bet: dice target + side and limbo target (= Multiplier / Win chance).
+    void saveManualTargets(QSettings &settings);
     void loadConditions();
     void saveConditions();
 	void updateConnectionStatus();
@@ -226,6 +228,7 @@ private:
     QElapsedTimer m_activeFetchClock[LiveSettings::kCasinoCount]; // last active-casino request, per casino
     LiveSettings m_live;
     QPointer<OptionsDialog> m_optionsDialog;
+    bool m_manualTargetsLoaded = false; // Manual Bet targets restored: changes may be saved
     bool m_discardSettings = false; // "Clear data from PC" was used: don't save on exit
     int m_slot = 0;                 // settings slot, see settingsGroup()
     QString m_lastBalanceError;

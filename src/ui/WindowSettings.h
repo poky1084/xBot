@@ -5,7 +5,8 @@
 // Every xBot main window keeps its own copy of all its data (window layout, Options,
 // tokens, auto-bet, conditions, scripts, Provably Fair inputs …) in its own QSettings
 // group (registry key), "Windows/<slot>": 0 = the main window, 1 = the first window
-// opened with "+", 2 = the next one, … The app starts with window 0; "+" opens the
+// opened with "+", 2 = the next one, … (only the dark theme is shared: root key
+// "Theme/dark"). The app starts with window 0; "+" opens the
 // lowest number that is not open and loads that window's saved data.
 
 #include <QSettings>

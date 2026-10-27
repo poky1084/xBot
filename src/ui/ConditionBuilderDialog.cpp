@@ -509,5 +509,5 @@ QString ConditionBuilderDialog::pickStrategy(const QStringList &names, const QSt
 
 void ConditionBuilderDialog::autoSaveStrategies()
 {
-    ConditionIo::saveStrategies(m_strategies); // never interrupt the UI for a background save
+    ConditionIo::saveStrategies(m_strategies, m_strategiesSlot); // never interrupt the UI for a background save
 }

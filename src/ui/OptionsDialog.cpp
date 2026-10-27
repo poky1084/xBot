@@ -21,6 +21,7 @@
 #include <QScrollArea>
 #include <QSignalBlocker>
 #include <QSpinBox>
+#include <QTimer>
 #include <QVBoxLayout>
 
 #include <algorithm>
@@ -251,8 +252,15 @@ OptionsDialog::OptionsDialog(QWidget *parent)
     liveForm->addRow(loginRow);
 
 
+    // Auto fetch: once every login input is filled in, the currencies are loaded without
+    // pressing "Log in". Typing / pasting waits a moment, leaving the field fetches at once.
+    m_autoFetchTimer = new QTimer(this);
+    m_autoFetchTimer->setSingleShot(true);
+    m_autoFetchTimer->setInterval(800);
+    connect(m_autoFetchTimer, &QTimer::timeout, this, &OptionsDialog::maybeAutoFetch);
+
     connect(m_authCombo, QOverload<int>::of(&QComboBox::currentIndexChanged), this,
-            [this] { updateAuthFields(); });
+            [this] { updateAuthFields(); scheduleAutoFetch(); });
     connect(m_casinoCombo, QOverload<int>::of(&QComboBox::currentIndexChanged), this,
             &OptionsDialog::onCasinoChanged);
     connect(m_loginBtn, &QPushButton::clicked, this, [this] {
@@ -261,17 +269,22 @@ OptionsDialog::OptionsDialog(QWidget *parent)
             setLoginStatus(tr("Not logged in — %1").arg(missing), false);
             return;
         }
-        m_loginBtn->setEnabled(false);
         setLoginStatus(tr("Logging in…"), true);
+        m_loginBtn->setEnabled(false);
         m_fetchedCurrency = liveSettings().currency;
+        const LiveSettings cur = liveSettings();
+        m_autoFetchedKey[int(cur.casino)] = autoFetchKey(); // no extra auto fetch for these inputs
         emit loginRequested();
     });
 
     // A login result belongs to the inputs it was made with: editing them clears it.
     for (QLineEdit *edit : {m_siteEdit, m_apiKeyEdit, m_clearanceEdit, m_correlationEdit,
                             m_browserIdEdit}) {
-        if (edit)
-            connect(edit, &QLineEdit::textEdited, m_loginStatus, &QLabel::clear);
+        if (!edit)
+            continue;
+        connect(edit, &QLineEdit::textEdited, m_loginStatus, &QLabel::clear);
+        connect(edit, &QLineEdit::textEdited, this, &OptionsDialog::scheduleAutoFetch);
+        connect(edit, &QLineEdit::editingFinished, this, &OptionsDialog::maybeAutoFetch);
     }
     // Wolfbet's currency list needs the token: fetch it once one is entered.
     connect(m_apiKeyEdit, &QLineEdit::editingFinished, this, [this] {
@@ -565,6 +578,8 @@ void OptionsDialog::setLiveSettings(const LiveSettings &s)
     updateCurrencyList();
     m_extensionPort = s.extensionPort;
     updateAuthFields();
+    // Deferred: the dialog's owner connects to loginRequested() after setLiveSettings().
+    QTimer::singleShot(0, this, &OptionsDialog::maybeAutoFetch);
 }
 
 void OptionsDialog::setCasinoCurrencies(const QStringList &codes)
@@ -619,6 +634,18 @@ void OptionsDialog::setLiveCurrencies(const QStringList &codes, const QString &s
         for (const QString &c : codes)
             all << c.trimmed().toLower();
         all.removeAll(QString());
+        std::sort(all.begin(), all.end());
+        CasinoCurrencies::store(casino, all);
+    }
+    // Stake: its balance answer is the only currency source (the site is reached through
+    // the hidden browser / extension). Merge it into the cached list so it never shrinks.
+    if (casino == LiveSettings::Casino::Stake && !codes.isEmpty()) {
+        QStringList all = CasinoCurrencies::cached(casino);
+        for (const QString &c : codes) {
+            const QString code = c.trimmed().toLower();
+            if (!code.isEmpty() && !all.contains(code))
+                all << code;
+        }
         std::sort(all.begin(), all.end());
         CasinoCurrencies::store(casino, all);
     }
@@ -712,8 +739,67 @@ QString OptionsDialog::missingLoginData() const
     return QString();
 }
 
+void OptionsDialog::setAutoFetchEnabled(bool on)
+{
+    m_autoFetchEnabled = on;
+    if (!on && m_autoFetchTimer)
+        m_autoFetchTimer->stop();
+}
+
+QString OptionsDialog::autoFetchKey() const
+{
+    const LiveSettings s = liveSettings();
+    QStringList parts{s.casinoName()};
+    if (s.isWolfbet())
+        parts << s.wolfbetToken;
+    else if (s.isGoated())
+        parts << s.goatedToken;
+    else if (s.isShuffle())
+        parts << s.shuffleSite << s.shuffleToken << s.correlationUserId << s.browserId;
+    else
+        parts << (s.extensionMode ? QStringLiteral("ext") : QStringLiteral("cookie")) << s.site
+              << s.apiKey << s.clearance << s.userAgent;
+    return parts.join(QChar(0x1f));
+}
+
+void OptionsDialog::scheduleAutoFetch()
+{
+    if (m_autoFetchEnabled && m_autoFetchTimer)
+        m_autoFetchTimer->start();
+}
+
+void OptionsDialog::maybeAutoFetch()
+{
+    if (m_autoFetchTimer)
+        m_autoFetchTimer->stop();
+    if (!m_autoFetchEnabled || m_shuffle) // Shuffle: the currency list is built in
+        return;
+    if (!missingLoginData().isEmpty())
+        return; // not every input is filled in yet
+    if (!m_loginBtn->isEnabled())
+        return; // a login / balance fetch is already running
+    const LiveSettings s = liveSettings();
+    const QString key = autoFetchKey();
+    QString &done = m_autoFetchedKey[int(s.casino)];
+    if (done == key)
+        return; // already fetched with exactly these inputs
+    done = key;
+
+    setLoginStatus(tr("Loading the currencies…"), true);
+    m_loginBtn->setEnabled(false);
+    m_fetchedCurrency = s.currency;
+    emit loginRequested(); // same as "Log in": applies the inputs and fetches the balances
+}
+
 void OptionsDialog::setExtensionStatus(bool listening, bool connected)
 {
+    // Stake extension mode: the extension just connected, so the currencies can now be read.
+    const bool nowConnected = listening && connected && !m_extConnected;
+    m_extConnected = listening && connected;
+    if (nowConnected && !m_shuffle && !m_goated && !m_wolfbet && m_authCombo->currentIndex() == 1) {
+        m_autoFetchedKey[int(LiveSettings::Casino::Stake)].clear();
+        QTimer::singleShot(0, this, &OptionsDialog::maybeAutoFetch);
+    }
     if (!listening)
         m_extStatus->setText(tr("server off (select \"Browser extension\" and log in)"));
     else if (connected)
@@ -752,6 +838,7 @@ void OptionsDialog::onShuffleLogin()
     m_correlationEdit->setText(dlg.correlationUserId());
     m_browserIdEdit->setText(dlg.browserId());
     setLoginStatus(tr("Shuffle token captured — press Log in to verify."), true);
+    // Shuffle's currency list is built in: no auto fetch.
 }
 
 void OptionsDialog::onGoatedLogin()
@@ -761,7 +848,8 @@ void OptionsDialog::onGoatedLogin()
         return;
 
     m_apiKeyEdit->setText(dlg.token());
-    setLoginStatus(tr("Goated token captured — press Log in to verify."), true);
+    setLoginStatus(tr("Goated token captured."), true);
+    maybeAutoFetch(); // loads the account's currencies
 }
 
 void OptionsDialog::onWolfbetLogin()
@@ -771,6 +859,7 @@ void OptionsDialog::onWolfbetLogin()
         return;
 
     m_apiKeyEdit->setText(dlg.token());
-    setLoginStatus(tr("Wolfbet token captured — press Log in to verify."), true);
+    setLoginStatus(tr("Wolfbet token captured."), true);
     updateCurrencyList(); // the currency list needs the token
+    maybeAutoFetch();     // loads the account's currencies
 }

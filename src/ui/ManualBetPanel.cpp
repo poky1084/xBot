@@ -2,6 +2,7 @@
 
 #include "ui/TargetBar.h"
 
+#include <QSignalBlocker>
 #include <QDoubleSpinBox>
 #include <QFormLayout>
 #include <QHBoxLayout>
@@ -162,6 +163,23 @@ void ManualBetPanel::setAmount(double amount)
     if (!(amount >= 0.0)) // also rejects NaN from a damaged settings file
         amount = 0.0;
     m_amountSpin->setValue(amount);
+}
+
+void ManualBetPanel::setTargets(double diceTarget, bool under, double limboTarget)
+{
+    // Also rejects NaN from a damaged settings value (falls back to the defaults).
+    if (!(diceTarget >= BotConstants::kMinChance && diceTarget <= BotConstants::kMaxChance))
+        diceTarget = 50.5;
+    if (!(limboTarget >= BotConstants::kMinLimboTarget && limboTarget <= BotConstants::kMaxLimboTarget))
+        limboTarget = 2.0;
+    m_limboTarget = limboTarget;
+    m_sideBtn->setProperty("under", under);
+    {
+        const QSignalBlocker blocker(m_targetSlider);
+        m_targetSlider->setValue(qRound(diceTarget * 100));
+    }
+    refreshDerived();
+    emit gameChanged();
 }
 
 double ManualBetPanel::target() const

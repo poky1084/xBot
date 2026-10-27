@@ -12,6 +12,9 @@
 //            -> data.crypto (USDC, ETH, USDT, …) then data.fiats (USD, EUR, …)
 //   Wolfbet: GET https://wolfbet.com/api/v2/user/balances (needs the login token)
 //            -> userBalances[].currency: every currency, also those at 0 ("free" included)
+//   Stake:   no public list; the Options dialog collects the currencies from the
+//            UserBalances answer (fetched automatically once Site + API key are filled in)
+//            and merges them into this cache.
 //   Shuffle: fixed list (the site's wallet list); "gram" is sent to Shuffle as "TON",
 //            see ShuffleTransport::apiCurrency().
 //

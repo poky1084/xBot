@@ -61,6 +61,7 @@
 #include <QScreen>
 #include <QScrollArea>
 #include <QSettings>
+#include <QSignalBlocker>
 #include <QPointer>
 #include <QTimer>
 #include <memory>
@@ -81,6 +82,10 @@
 
 namespace
 {
+// Dark theme, shared by every window (root of the app's registry key, outside the
+// per-window "Windows/<slot>" groups).
+constexpr char kThemeKey[] = "Theme/dark";
+
 
 // qBittorrent-style light chrome, matching the reference project's palette.
 const char kLightStylesheet[] = R"(
@@ -582,6 +587,15 @@ MainWindow::MainWindow(int slot, bool freshWebSession, QWidget *parent)
             return; // Options -> clear data: nothing is written back
         ScopedSettings settings(settingsGroup());
         settings.setValue(QStringLiteral("Manual/betAmount"), amount);
+    });
+    // Multiplier / Win chance (stored as the dice target + side and the limbo target) are
+    // saved per window as soon as they change, like the amount. Not before they were loaded:
+    // the panel's defaults would overwrite the saved values.
+    connect(m_manualPanel, &ManualBetPanel::gameChanged, this, [this] {
+        if (m_discardSettings || !m_manualTargetsLoaded)
+            return;
+        ScopedSettings settings(settingsGroup());
+        saveManualTargets(settings);
     });
     connect(m_autoPanel, &AutoBetPanel::startRequested, this, &MainWindow::onStartAuto);
     connect(m_autoPanel, &AutoBetPanel::stopRequested, this, &MainWindow::onStopAuto);
@@ -1943,6 +1957,16 @@ void MainWindow::onTabChanged(int index)
 void MainWindow::onToggleDarkTheme(bool enabled)
 {
     applyTheme(enabled);
+
+    // One theme for every window: saved outside the per-window groups and applied to all
+    // open windows at once (setChecked() only re-enters here when the value changes).
+    QSettings().setValue(QLatin1String(kThemeKey), enabled);
+    for (QWidget *w : QApplication::topLevelWidgets()) {
+        auto *other = qobject_cast<MainWindow *>(w);
+        if (other && other != this && other->m_actDarkTheme
+            && other->m_actDarkTheme->isChecked() != enabled)
+            other->m_actDarkTheme->setChecked(enabled);
+    }
 }
 
 void MainWindow::onOpenFile()
@@ -1952,10 +1976,10 @@ void MainWindow::onOpenFile()
     // window = 1, …) and loads that window's own saved data, so after a restart the
     // second window comes back exactly as it was left. Everything it changes is saved to
     // its own group again.
-    // A number that was never used before starts as a copy of this window's layout, scripts,
-    // auto-bet and conditions, but with an empty Options dialog (no casino logins / tokens,
-    // default currency, start balance, client seed, bet delay …) and a fresh browser
-    // profile: logged out of every site. From then on it saves and loads its own data.
+    // A number that was never used before starts with its own default data (nothing is
+    // copied from this window: layout, scripts, auto-bet, conditions, strategies and Options
+    // are all its own) and a fresh browser profile: logged out of every site. From then on it
+    // saves and loads its own data. Only the theme is shared by all windows.
     const int slot = freeSlot();
     const QString group = WindowSettings::groupFor(slot);
     bool hasData = false;
@@ -1964,27 +1988,19 @@ void MainWindow::onOpenFile()
         settings.beginGroup(QStringLiteral("Windows"));
         hasData = settings.childGroups().contains(QString::number(slot));
     }
+    Q_UNUSED(group);
     if (!hasData) {
-        saveSettings(); // copy this window's current state, not the last saved one
-        // Options dialog data stays behind (Live = casino, logins, tokens, bet currencies).
-        static const QStringList optionsKeys = {
-            QStringLiteral("Live/"),
-            QStringLiteral("General/currency"),
-            QStringLiteral("General/startBalance"),
-            QStringLiteral("General/clientSeed"),
-            QStringLiteral("General/randomClientSeed"),
-            QStringLiteral("General/betDelayMs"),
-            QStringLiteral("General/retryNoBalance"),
-        };
-        copySettingsGroup(settingsGroup(), group, optionsKeys);
+        // First use of this window number: nothing is copied from this window. It starts
+        // with its own default data (registry group "Windows/<slot>", written when it is
+        // closed) and an empty strategy file of its own (strategies_<n>.json).
+        if (!QFile::exists(ConditionIo::strategiesPath(slot)))
+            ConditionIo::saveStrategies(StrategyMap(), slot);
     }
-    auto *window = new MainWindow(slot, !hasData);
+    auto *window = new MainWindow(slot, !hasData); // the theme is shared: see kThemeKey
 
     if (!hasData) {
-        // First use of this window number: same theme as the window it was opened from,
-        // cascaded so it doesn't sit exactly on top of it. A window with saved data keeps
-        // its own theme and position.
-        window->m_actDarkTheme->setChecked(m_actDarkTheme->isChecked());
+        // Cascaded so it doesn't sit exactly on top of this one. A window with saved data
+        // keeps its own position.
         window->move(pos() + QPoint(30, 30));
     }
     window->show();
@@ -1995,12 +2011,13 @@ void MainWindow::onOpenFile()
 void MainWindow::onOpenConditionBuilder()
 {
     ConditionBuilderDialog dialog(m_conditions, m_strategies, m_activeStrategy, this);
+    dialog.setStrategiesSlot(m_slot); // each window has its own strategy file
     dialog.setWindowTitle(tr("Condition Builder — %1").arg(gameName(m_game).toUpper()));
     if (dialog.exec() != QDialog::Accepted) {
-        // The dialog autosaves strategies.json as you edit, even if you cancel;
+        // The dialog autosaves this window's strategy file as you edit, even if you cancel;
         // re-read it so the in-memory copy matches the file.
-        if (QFile::exists(ConditionIo::strategiesPath()))
-            m_strategies = ConditionIo::loadStrategies();
+        if (QFile::exists(ConditionIo::strategiesPath(m_slot)))
+            m_strategies = ConditionIo::loadStrategies(m_slot);
         return;
     }
 
@@ -2008,7 +2025,7 @@ void MainWindow::onOpenConditionBuilder()
     m_strategies = dialog.resultStrategies();
     m_activeStrategy = dialog.resultStrategyName();
     saveConditions();
-    ConditionIo::saveStrategies(m_strategies);
+    ConditionIo::saveStrategies(m_strategies, m_slot);
     m_autoPanel->setConditionCount(m_conditions.size());
 
     QString msg = tr("Conditions saved (%1 blocks)").arg(m_conditions.size());
@@ -2023,7 +2040,7 @@ void MainWindow::loadConditions()
     const QByteArray raw = settings.value(QStringLiteral("Conditions/blocks")).toByteArray();
     m_conditions = ConditionIo::blocksFromJson(QJsonDocument::fromJson(raw).array());
     m_activeStrategy = settings.value(QStringLiteral("Conditions/activeStrategy")).toString();
-    m_strategies = ConditionIo::loadStrategies();
+    m_strategies = ConditionIo::loadStrategies(m_slot);
 }
 
 void MainWindow::saveConditions()
@@ -2051,6 +2068,9 @@ void MainWindow::onOpenOptions()
             currencies << (i == int(m_live.casino) ? m_live.currency : m_currencyByCasino[i]);
         dialog.setCasinoCurrencies(currencies);
     }
+    // Loading the currencies by itself reconfigures the connection (like "Log in"): not while
+    // a bet or auto-bet is running.
+    dialog.setAutoFetchEnabled(!m_engine->isRunning() && !m_engine->betInFlight());
     dialog.setLiveSettings(m_live); // shows the typed currency of the active casino
     dialog.setExtensionStatus(m_ext->isListening(), m_ext->isConnected());
 
@@ -3299,6 +3319,12 @@ void MainWindow::loadSettings()
     m_startBalance = settings.value(QStringLiteral("General/startBalance"), m_startBalance).toDouble();
     m_manualPanel->setStartBalance(m_startBalance);
     m_manualPanel->setAmount(settings.value(QStringLiteral("Manual/betAmount"), 0.0).toDouble());
+    m_manualPanel->setTargets(
+        settings.value(QStringLiteral("Manual/diceTarget"), m_manualPanel->target()).toDouble(),
+        settings.value(QStringLiteral("Manual/diceUnder"),
+                       m_manualPanel->side() == BetSide::Under).toBool(),
+        settings.value(QStringLiteral("Manual/limboTarget"), m_manualPanel->limboTarget()).toDouble());
+    m_manualTargetsLoaded = true;
     m_clientSeed = settings.value(QStringLiteral("General/clientSeed")).toString();
     m_randomClientSeed = settings.value(QStringLiteral("General/randomClientSeed"), false).toBool();
     m_betDelayMs = qMax(0, settings.value(QStringLiteral("General/betDelayMs"), 0).toInt());
@@ -3354,8 +3380,22 @@ void MainWindow::loadSettings()
     m_autoPanel->setConditionCount(m_conditions.size());
     m_autoPanel->setUseConditions(settings.value(QStringLiteral("AutoBet/useConditions"), false).toBool());
 
-    const bool dark = settings.value(QStringLiteral("General/darkTheme"), false).toBool();
-    m_actDarkTheme->setChecked(dark);
+    // Shared theme (all windows). Older versions saved it per window: use the main
+    // window's value until the shared one is written.
+    bool dark = false;
+    {
+        QSettings global;
+        if (global.contains(QLatin1String(kThemeKey)))
+            dark = global.value(QLatin1String(kThemeKey)).toBool();
+        else
+            dark = global.value(WindowSettings::groupFor(0) + QStringLiteral("/General/darkTheme"),
+                                settings.value(QStringLiteral("General/darkTheme"), false))
+                       .toBool();
+    }
+    {
+        const QSignalBlocker blocker(m_actDarkTheme); // loading must not restyle other windows
+        m_actDarkTheme->setChecked(dark);
+    }
     applyTheme(dark); // setChecked only fires toggled when the value changes
 }
 
@@ -3371,7 +3411,9 @@ void MainWindow::saveOptionsSettings(QSettings &settings)
     settings.setValue(QStringLiteral("General/retryNoBalance"), m_retryNoBalance);
     settings.setValue(QStringLiteral("General/game"), gameName(m_game));
     settings.setValue(QStringLiteral("Manual/betAmount"), m_manualPanel->amount());
-    settings.setValue(QStringLiteral("General/darkTheme"), m_actDarkTheme->isChecked());
+    saveManualTargets(settings);
+    settings.remove(QStringLiteral("General/darkTheme")); // the theme is shared, see kThemeKey
+    QSettings().setValue(QLatin1String(kThemeKey), m_actDarkTheme->isChecked());
 
     m_currencyByCasino[int(m_live.casino)] = m_live.currency;
     settings.beginGroup(QStringLiteral("Live"));
@@ -3395,6 +3437,13 @@ void MainWindow::saveOptionsSettings(QSettings &settings)
     settings.setValue(QStringLiteral("correlationUserId"), m_live.correlationUserId);
     settings.setValue(QStringLiteral("browserId"), m_live.browserId);
     settings.endGroup();
+}
+
+void MainWindow::saveManualTargets(QSettings &settings)
+{
+    settings.setValue(QStringLiteral("Manual/diceTarget"), m_manualPanel->target());
+    settings.setValue(QStringLiteral("Manual/diceUnder"), m_manualPanel->side() == BetSide::Under);
+    settings.setValue(QStringLiteral("Manual/limboTarget"), m_manualPanel->limboTarget());
 }
 
 void MainWindow::saveSettings()

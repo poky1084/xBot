@@ -26,6 +26,11 @@ public:
     BetSide side() const;
     BotConfig config() const;   // fills game/target/side/baseBet into a BotConfig
 
+    // Saved per window: the dice target + side and the limbo target. The Multiplier and
+    // Win chance boxes are derived from them (dice: target/side, limbo: target).
+    double limboTarget() const { return m_limboTarget; }
+    void setTargets(double diceTarget, bool under, double limboTarget);
+
     // Dice shows the target bar / side button; Limbo shows only the multiplier target.
     void setGame(Game game);
     Game game() const { return m_game; }

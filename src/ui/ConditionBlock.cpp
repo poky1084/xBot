@@ -119,23 +119,28 @@ QList<ParsedStrategy> parseStrategyFile(const QByteArray &json, QString *error)
     return result;
 }
 
-QString strategiesPath()
+QString strategiesPath(int slot)
 {
-    return QDir(QCoreApplication::applicationDirPath()).filePath(QStringLiteral("strategies.json"));
+    const QString name = slot <= 0 ? QStringLiteral("strategies.json")
+                                   : QStringLiteral("strategies_%1.json").arg(slot + 1);
+    return QDir(QCoreApplication::applicationDirPath()).filePath(name);
 }
 
-bool saveStrategies(const StrategyMap &strategies)
+bool saveStrategies(const StrategyMap &strategies, int slot)
 {
-    QFile f(strategiesPath());
+    QFile f(strategiesPath(slot));
     if (!f.open(QIODevice::WriteOnly | QIODevice::Truncate))
         return false;
     return f.write(serializeCollection(strategies)) >= 0;
 }
 
-StrategyMap loadStrategies()
+StrategyMap loadStrategies(int slot)
 {
     StrategyMap map;
-    QFile f(strategiesPath());
+    QString path = strategiesPath(slot);
+    if (slot > 0 && !QFile::exists(path))
+        path = strategiesPath(0); // no own file yet: start from the main window's
+    QFile f(path);
     if (!f.open(QIODevice::ReadOnly))
         return map;
     const QList<ParsedStrategy> parsed = parseStrategyFile(f.readAll());
