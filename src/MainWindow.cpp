@@ -149,6 +149,7 @@ QTabBar::tab:!selected:hover { background: #dde6f5; }
 QStatusBar { border-top: 1px solid #c8c8c8; }
 QStatusBar QLabel { padding: 0 4px; background: transparent; }
 QSplitter::handle { background: #d8d8d8; width: 1px; height: 1px; }
+QSplitter#centralSplitter::handle:horizontal { background: transparent; width: 4px; border-left: 1px solid #d8d8d8; }
 QDockWidget::title { background: #eeeeee; border-bottom: 1px solid #c8c8c8; padding: 4px; text-align: left; }
 QPlainTextEdit { background: #ffffff; border: 1px solid #c8c8c8; selection-background-color: #4a77c7; selection-color: #ffffff; }
 QListWidget { background: #ffffff; border: 1px solid #c8c8c8; selection-background-color: #4a77c7; selection-color: #ffffff; }
@@ -234,6 +235,7 @@ QTabBar::tab:!selected:hover { background: #3d4349; }
 QStatusBar { border-top: 1px solid #454a50; }
 QStatusBar QLabel { padding: 0 4px; background: transparent; }
 QSplitter::handle { background: #3a3f45; width: 1px; height: 1px; }
+QSplitter#centralSplitter::handle:horizontal { background: transparent; width: 4px; border-left: 1px solid #3a3f45; }
 QDockWidget::title { background: #2b2e33; border-bottom: 1px solid #454a50; padding: 4px; text-align: left; }
 QPlainTextEdit { background: #232629; border: 1px solid #454a50; }
 QListWidget { background: #232629; border: 1px solid #454a50; selection-background-color: #4a77c7; selection-color: #ffffff; }
@@ -829,9 +831,12 @@ void MainWindow::createSidebar()
     scroll->setVerticalScrollBarPolicy(Qt::ScrollBarAlwaysOff);
     scroll->setWidget(sidebarContent);
     scroll->setMinimumHeight(0);
-    scroll->setSizePolicy(QSizePolicy::Fixed, QSizePolicy::Ignored);
+    scroll->setSizePolicy(QSizePolicy::Preferred, QSizePolicy::Ignored);
     m_sidebar = scroll;
-    m_sidebar->setFixedWidth(210);
+    // Resizable: drag the splitter handle on its right edge (the width is saved with
+    // MainWindow/centralSplitter).
+    m_sidebar->setMinimumWidth(150);
+    m_sidebar->setMaximumWidth(700);
     auto *layout = new QVBoxLayout(sidebarContent);
     layout->setContentsMargins(0, 0, 0, 0);
     layout->setSpacing(0);
@@ -1095,7 +1100,13 @@ void MainWindow::createCentralWidget()
     m_centralSplitter->addWidget(right);
     m_centralSplitter->setStretchFactor(0, 0);
     m_centralSplitter->setStretchFactor(1, 1);
-    m_centralSplitter->setSizes({192, 1000});
+    m_centralSplitter->setSizes({210, 1000});
+    // A wider grab area for the sidebar's handle (it still looks like a 1px line).
+    m_centralSplitter->setHandleWidth(5);
+    // The session values shrink their font to the sidebar's width: re-fit while dragging.
+    connect(m_centralSplitter, &QSplitter::splitterMoved, this, [this] { updateSessionWidgets(); });
+    // ... and once the window is shown with its restored sidebar width.
+    QTimer::singleShot(0, this, [this] { updateSessionWidgets(); });
     // Ignored = the central area reports no minimum size, so a docked panel (the
     // Lua editor) can be widened over the bet list / bottom tabs and covers them
     // instead of being stopped by their minimum widths.
@@ -2871,12 +2882,12 @@ void MainWindow::updateSessionWidgets()
         m_lblCurrentStreak->setStyleSheet(neutral);
     }
 
-    // The sidebar has a fixed width: a value may overlap its label, but its font is
-    // shrunk if it would still be wider than the whole row.
+    // A value may overlap its label, but its font is shrunk if it would still be wider than
+    // the whole row (the sidebar can be resized, so its current width is used).
     auto fitValue = [this](QLabel *lbl) {
         QFont f = lbl->font();
         f.setPointSizeF(8.5);
-        const int rowW = m_sidebar->maximumWidth() - 16 /*grid margins*/ - 2 /*slack*/;
+        const int rowW = std::max(m_sidebar->width(), m_sidebar->minimumWidth()) - 16 /*grid margins*/ - 2 /*slack*/;
         while (f.pointSizeF() > 6.0 && QFontMetrics(f).horizontalAdvance(lbl->text()) > rowW)
             f.setPointSizeF(f.pointSizeF() - 0.25);
         lbl->setFont(f);
