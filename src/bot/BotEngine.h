@@ -168,6 +168,11 @@ private:
     void flushStopLog();
     QString m_pendingStopReason;
     bool m_stopLogPending = false;
+    // Same idea for "Paused after N bets (P/L x)": when Pause is pressed while a bet is in
+    // flight, that bet is still recorded afterwards, so the line is held back until then.
+    void logPause();
+    void flushPauseLog();
+    bool m_pauseLogPending = false;
     bool advanceProgression(bool win, const BotConfig &cfg); // true if a stop fired
     void stopWithReason(const QString &reason);
     // After Stop with a scripted bet still in flight: hand that bet's result to the

@@ -141,6 +141,7 @@ void BotEngine::onLiveFinished(const LiveBetResult &r)
 
     if (!r.ok) {
         emit logMessage(tr("Bet failed: %1").arg(r.error), true);
+        flushPauseLog(); // no bet was recorded: the numbers are final
         if (manual || !m_running) {
             flushStopLog();
             finishScriptDrain(false);
@@ -167,6 +168,7 @@ void BotEngine::onLiveFinished(const LiveBetResult &r)
 
     m_retryStreak = 0;
     recordBet(cfg, r.amount, r.roll, r.win, r.multiplier, r.payout, r.nonce, r.betId);
+    flushPauseLog(); // a pause that came while this bet was in flight: now the numbers are final
     flushStopLog(); // a stop that came while this bet was in flight: now the numbers are final
 
     // A manual roll has no progression/stop logic. If the user pressed Stop
@@ -720,11 +722,30 @@ void BotEngine::pause()
         return;
     m_paused = true;
     m_timer.stop();
+    if (m_inFlight && !m_inFlightManual) {
+        // The bet in flight is still recorded when it lands: log after that, so the line
+        // shows the latest bet count and profit.
+        m_pauseLogPending = true;
+    } else {
+        logPause();
+    }
+    emit pausedChanged(true);
+}
+
+void BotEngine::logPause()
+{
     emit logMessage(tr("Paused after %1 bets (P/L %2)")
                         .arg(m_stats.bets)
                         .arg(m_stats.profit, 0, 'f', 8),
                     false);
-    emit pausedChanged(true);
+}
+
+void BotEngine::flushPauseLog()
+{
+    if (!m_pauseLogPending)
+        return;
+    m_pauseLogPending = false;
+    logPause();
 }
 
 void BotEngine::resume()
@@ -732,6 +753,7 @@ void BotEngine::resume()
     if (!m_running || !m_paused)
         return;
     m_paused = false;
+    flushPauseLog(); // resumed before the in-flight bet landed: keep the log order
     emit logMessage(tr("Resumed"), false);
     emit pausedChanged(false);
     if (!m_inFlight) // otherwise the in-flight result schedules the next bet
@@ -760,6 +782,7 @@ void BotEngine::stopWithReason(const QString &reason)
         m_pendingStopReason = reason;
         m_stopLogPending = true;
     } else {
+        flushPauseLog();
         logStop(reason);
     }
     emit stopped(reason);
