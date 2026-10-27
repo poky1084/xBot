@@ -698,7 +698,7 @@ MainWindow::MainWindow(int slot, bool freshWebSession, QWidget *parent)
 
     // Default size for a first launch; loadSettings() replaces it with the
     // geometry from the previous session when one was saved.
-    resize(1040, 600);
+    resize(1100, 600);
 
     loadSettings();
 	applyLiveSettings(m_live);
