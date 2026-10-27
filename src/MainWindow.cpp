@@ -1803,12 +1803,20 @@ void MainWindow::onBetTableContextMenu(const QPoint &pos)
         return;
     }
 
-    // Goated: the bet id can only be copied (no public bet page is known).
+    // Goated: copy the bet id, or open its public bet modal on the site
+    // (md-id = this row's bet id).
     if (goatedRow) {
+        const QUrl openUrl(QStringLiteral("https://%1/?modal=bet&md-id=%2")
+                               .arg(GoatedTransport::webHost(),
+                                    QString::fromLatin1(QUrl::toPercentEncoding(betId))));
         QMenu menu;
         QAction *copyAct = menu.addAction(tr("Copy Bet id:  %1").arg(betId));
-        if (menu.exec(globalPos) == copyAct)
+        QAction *openAct = menu.addAction(tr("Open in browser"));
+        QAction *chosen = menu.exec(globalPos);
+        if (chosen == copyAct)
             QApplication::clipboard()->setText(betId);
+        else if (chosen == openAct)
+            QDesktopServices::openUrl(openUrl);
         return;
     }
 
