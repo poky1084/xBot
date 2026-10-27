@@ -873,9 +873,12 @@ void MainWindow::createSidebar()
     sessionGrid->setContentsMargins(8, 6, 8, 6);
     sessionGrid->setHorizontalSpacing(8);
     sessionGrid->setVerticalSpacing(4);
-    QFont mono(QStringLiteral("Consolas"));
-    mono.setStyleHint(QFont::Monospace);
+    // Segoe UI: plain zero (Consolas draws it with a slash), digits are all the same width.
+    QFont mono(QStringLiteral("Segoe UI"));
+    mono.setFamilies({QStringLiteral("Segoe UI"), QStringLiteral("Arial")});
+    mono.setStyleHint(QFont::SansSerif);
     mono.setPointSizeF(8.5);
+    mono.setBold(true); // session values in bold
     auto makeSessionRow = [&](const QString &name, QLabel **value, int r) {
         auto *nameLabel = new QLabel(name);
         nameLabel->setStyleSheet(QStringLiteral("color:#737373;"));
