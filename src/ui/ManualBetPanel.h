@@ -21,6 +21,7 @@ public:
 
     // Current game settings shared with the auto-bet engine.
     double amount() const;
+    void setAmount(double amount); // restores the saved bet amount on launch
     double target() const;
     BetSide side() const;
     BotConfig config() const;   // fills game/target/side/baseBet into a BotConfig
@@ -41,6 +42,7 @@ public slots:
 signals:
     void rollRequested();
     void gameChanged();                // target/side/amount changed
+    void amountChanged(double amount); // the bet amount was changed (typed, ½ / 2×, loaded)
 
 private slots:
     void onTargetSlider(int value);

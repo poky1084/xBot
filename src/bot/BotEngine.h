@@ -78,8 +78,9 @@ public:
 
     // Game menu while betting runs: switch the game for the following bets. `betCfg`
     // carries the new game plus the Manual Bet tab's target / side / limbo target, which
-    // replace the running ones (rules / Condition Builder runs). Ignored for script runs:
-    // a script picks its game itself. A bet already in flight finishes with the old game.
+    // replace the running ones (rules / Condition Builder runs). Script runs: the script's
+    // `game` variable is set and its next dobet() decides target / chance for the new game.
+    // A bet already in flight finishes with the old game.
     void switchGame(const BotConfig &betCfg);
     bool isPaused() const { return m_paused; }
 

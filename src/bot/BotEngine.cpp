@@ -621,11 +621,21 @@ void BotEngine::applyPendingCasino()
 void BotEngine::switchGame(const BotConfig &betCfg)
 {
     const Game game = betCfg.game;
-    // Script runs decide the game themselves (game = "dice" / "limbo"); never switched from outside.
-    if (m_scriptActive || !m_scriptSource.trimmed().isEmpty())
-        return;
-
     m_config.game = game; // also what a start that is still pending begins with
+
+    if (m_scriptActive && m_script) {
+        // Script run: set the script's `game` variable. Its next dobet() sees it, the values it
+        // sets (target for limbo, chance / bethigh for dice) are read back and the bet after
+        // that is placed in the new game. A bet already scheduled uses the old game.
+        m_script->setGlobalString("game", gameName(game));
+        m_announcedGame = game;
+        emit logMessage(tr("Game switched to %1 - the script's next dobet() uses it.")
+                            .arg(gameName(game)),
+                        false);
+        return;
+    }
+    if (!m_scriptSource.trimmed().isEmpty())
+        return; // script start still pending: it begins with m_config.game
     m_config.target = betCfg.target;
     m_config.side = betCfg.side;
     m_config.multiplierTarget = betCfg.multiplierTarget;

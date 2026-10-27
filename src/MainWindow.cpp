@@ -560,6 +560,14 @@ MainWindow::MainWindow(QWidget *parent)
     });
 
     connect(m_manualPanel, &ManualBetPanel::rollRequested, this, &MainWindow::onRollOnce);
+    // The Manual Bet amount is saved as soon as it changes (and again on close), so it
+    // survives even when the app does not exit normally.
+    connect(m_manualPanel, &ManualBetPanel::amountChanged, this, [this](double amount) {
+        if (m_discardSettings)
+            return; // Options -> clear data: nothing is written back
+        QSettings settings;
+        settings.setValue(QStringLiteral("Manual/betAmount"), amount);
+    });
     connect(m_autoPanel, &AutoBetPanel::startRequested, this, &MainWindow::onStartAuto);
     connect(m_autoPanel, &AutoBetPanel::stopRequested, this, &MainWindow::onStopAuto);
     connect(m_fairPanel, &FairPanel::seedRotated, this,
@@ -1196,14 +1204,6 @@ void MainWindow::onGameSelected(Game game)
 {
     if (game == m_game)
         return;
-    if (m_luaRunning || m_engine->scriptActive()) {
-        // Script (Lua / JS) runs decide the game themselves (game = "dice" / "limbo"); undo the click.
-        (m_game == Game::Limbo ? m_actGameLimbo : m_actGameDice)->setChecked(true);
-        onLogMessage(tr("The game cannot be changed from the menu while a script is running - "
-                        "set game = \"dice\" / \"limbo\" in the script instead."),
-                     true);
-        return;
-    }
     setGame(game); // the Manual Bet tab now shows (and returns) the new game's settings
     if (m_engine->isRunning() || m_engine->startPending()) {
         // Switch the running auto-bet too: the next bet is placed in the new game
@@ -3103,6 +3103,7 @@ void MainWindow::loadSettings()
     m_currencyTag = settings.value(QStringLiteral("General/currency"), m_currencyTag).toString();
     m_startBalance = settings.value(QStringLiteral("General/startBalance"), m_startBalance).toDouble();
     m_manualPanel->setStartBalance(m_startBalance);
+    m_manualPanel->setAmount(settings.value(QStringLiteral("Manual/betAmount"), 0.0).toDouble());
     m_clientSeed = settings.value(QStringLiteral("General/clientSeed")).toString();
     m_randomClientSeed = settings.value(QStringLiteral("General/randomClientSeed"), false).toBool();
     m_betDelayMs = qMax(0, settings.value(QStringLiteral("General/betDelayMs"), 0).toInt());
@@ -3187,6 +3188,7 @@ void MainWindow::saveSettings()
     settings.setValue(QStringLiteral("General/betDelayMs"), m_betDelayMs);
     settings.setValue(QStringLiteral("General/retryNoBalance"), m_retryNoBalance);
     settings.setValue(QStringLiteral("General/game"), gameName(m_game));
+    settings.setValue(QStringLiteral("Manual/betAmount"), m_manualPanel->amount());
     settings.setValue(QStringLiteral("General/darkTheme"), m_actDarkTheme->isChecked());
 
     m_currencyByCasino[int(m_live.casino)] = m_live.currency;

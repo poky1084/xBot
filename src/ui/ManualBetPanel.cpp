@@ -139,9 +139,10 @@ ManualBetPanel::ManualBetPanel(QWidget *parent)
     root->addLayout(right, 1);
 
     // ---- Connections ---------------------------------------------------
-    connect(m_amountSpin, &QDoubleSpinBox::valueChanged, this, [this](double) {
+    connect(m_amountSpin, &QDoubleSpinBox::valueChanged, this, [this](double value) {
         refreshDerived();
         emit gameChanged();
+        emit amountChanged(value);
     });
     connect(m_multiplierSpin, &QDoubleSpinBox::editingFinished, this,
             &ManualBetPanel::onMultiplierEdited);
@@ -154,6 +155,13 @@ ManualBetPanel::ManualBetPanel(QWidget *parent)
 double ManualBetPanel::amount() const
 {
     return m_amountSpin->value();
+}
+
+void ManualBetPanel::setAmount(double amount)
+{
+    if (!(amount >= 0.0)) // also rejects NaN from a damaged settings file
+        amount = 0.0;
+    m_amountSpin->setValue(amount);
 }
 
 double ManualBetPanel::target() const
