@@ -52,7 +52,8 @@ bool isRetryable(const QString &type, const QString &msg)
 {
     const bool parallel = (containsCI(type, "parallelCasinoBet") && !containsCI(type, "internalError"))
                           || containsCI(msg, "only one bet at a time"); // Wolfbet
-    const bool rateLimit = containsCI(msg, "slow down") || msg.contains(QLatin1String("429"));
+    const bool rateLimit = containsCI(msg, "slow down") || msg.contains(QLatin1String("429"))
+                           || containsCI(msg, "too many attempts"); // Wolfbet / Laravel throttle
     const bool seedRotate = containsCI(msg, "new seed pair") || containsCI(msg, "choose a new seed")
                             || containsCI(msg, "seedRotate") || containsCI(type, "seedRotate")
                             || (containsCI(msg, "seed") && containsCI(msg, "rotat"));
@@ -63,7 +64,8 @@ bool isRetryable(const QString &type, const QString &msg)
 // engine's growing backoff there) and for everything else.
 int fastRetryDelayMs(const QString &type, const QString &msg)
 {
-    const bool rateLimit = containsCI(msg, "slow down") || msg.contains(QLatin1String("429"));
+    const bool rateLimit = containsCI(msg, "slow down") || msg.contains(QLatin1String("429"))
+                           || containsCI(msg, "too many attempts");
     if (rateLimit)
         return 0;
     if ((containsCI(type, "parallelCasinoBet") && !containsCI(type, "internalError"))
@@ -1092,7 +1094,7 @@ void StakeClient::rotateWolfbetSeed()
             emit seedRotateFailed(msg);
             return;
         }
-        emit seedRotated(tr("(unchanged - not settable on Wolfbet)"), 0, hash, QString());
+        emit seedRotated(QString(), -1, hash, QString()); // client seed stays as it is
     });
 }
 

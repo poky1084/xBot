@@ -471,7 +471,9 @@ MainWindow::MainWindow(QWidget *parent)
                    const QString &nextHash) {
         m_rotatingSeed = false;
         m_actRotate->setEnabled(true);
-        if (hash.isEmpty()) // defensive: no hash in the reply
+        if (clientSeed.isEmpty() && !hash.isEmpty()) // Wolfbet: only the server seed is renewed
+            onLogMessage(tr("Seed pair rotated — server seed hash: %1").arg(hash), false);
+        else if (hash.isEmpty()) // defensive: no hash in the reply
             onLogMessage(tr("Seed has been reset — client seed: %1").arg(clientSeed), false);
         else
             onLogMessage(tr("Seed pair rotated — client seed: %1, nonce: %2, server seed hash: %3%4")
@@ -1668,7 +1670,7 @@ void MainWindow::onBetTableContextMenu(const QPoint &pos)
     if (wolfbetRow) {
         const QString betType = m_model->recordAt(index.row()).game == Game::Limbo
                                     ? QStringLiteral("limbo") : QStringLiteral("dice");
-        const QUrl openUrl(QStringLiteral("https://%1/?betType=%2&id=%3&modal=bet")
+        const QUrl openUrl(QStringLiteral("https://%1/user/transactions?betType=%2&id=%3&modal=bet")
                                .arg(WolfbetTransport::host(), betType,
                                     QString::fromLatin1(QUrl::toPercentEncoding(betId))));
         QMenu menu;
@@ -2603,6 +2605,7 @@ void MainWindow::onBalancesFailed(const QString &error)
     // Rate limit (HTTP 429): a later refresh succeeds, nothing is wrong with the login.
     if (error.contains(QLatin1String("too many requests"), Qt::CaseInsensitive)
         || error.contains(QLatin1String("429"), Qt::CaseInsensitive)
+        || error.contains(QLatin1String("too many attempts"), Qt::CaseInsensitive)
         || error.contains(QLatin1String("rate limit"), Qt::CaseInsensitive))
         return;
     // The hidden browser is still loading: the page-loaded handler / retry timer tries again.
