@@ -411,7 +411,9 @@ void BotEngine::start()
     if (!scriptMode && !m_conditions.active()) {
         // On win / on loss rules: show exactly what this run will do.
         auto ruleText = [this](const OnResultRule &r) {
-            return r.increase ? tr("+%1%").arg(r.pct, 0, 'f', 1) : tr("reset to base");
+            return r.increase ? tr("%1%2%").arg(r.pct >= 0.0 ? QStringLiteral("+") : QString())
+                                    .arg(r.pct, 0, 'f', 1)
+                              : tr("reset to base");
         };
         auto limitText = [this](double v) {
             return v > 0.0 ? QString::number(v, 'f', 8) : tr("off");

@@ -3,6 +3,7 @@
 #include <QDateTime>
 #include <QString>
 
+#include <algorithm>
 #include <cmath>
 
 // Stake-style dice rules: roll is uniform in [0, 100], 1% house edge.
@@ -72,7 +73,7 @@ struct OnResultRule
             return base;
         // Kept exact: the placed bet is cut to 8 decimals (BotEngine), but the progression
         // itself must not be, or small bets never grow (1e-8 * 1.5 floored is 1e-8 again).
-        return current * (1.0 + pct / 100.0);
+        return std::max(0.0, current * (1.0 + pct / 100.0)); // pct may be negative
     }
 };
 

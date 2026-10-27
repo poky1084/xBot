@@ -24,7 +24,8 @@ QComboBox *makeModeCombo()
 QDoubleSpinBox *makePctSpin()
 {
     auto *spin = new QDoubleSpinBox;
-    spin->setRange(0.0, 10000.0);
+    // Negative = the next bet shrinks (-50% halves it); -100% would make it 0.
+    spin->setRange(-100.0, 10000.0);
     spin->setDecimals(1);
     spin->setSingleStep(10.0);
     spin->setSuffix(QStringLiteral(" %"));
@@ -153,8 +154,8 @@ AutoBetPanel::AutoBetPanel(QWidget *parent)
     const QString ruleTip =
         tr("Reset to base: the next bet is the base bet.\n"
            "Increase by: the next bet is the previous bet + this percentage\n"
-           "(100% doubles it, 50% multiplies it by 1.5). Typing a percentage\n"
-           "above 0 selects \"Increase by\" automatically.");
+           "(100% doubles it, 50% multiplies it by 1.5, -50% halves it).\n"
+           "Typing a percentage other than 0 selects \"Increase by\" automatically.");
     for (QWidget *w : {static_cast<QWidget *>(m_onWinMode), static_cast<QWidget *>(m_onWinPct),
                        static_cast<QWidget *>(m_onLossMode), static_cast<QWidget *>(m_onLossPct)})
         w->setToolTip(ruleTip);
@@ -190,13 +191,13 @@ AutoBetPanel::AutoBetPanel(QWidget *parent)
             [this](int) { updateRuleWidgets(); });
     connect(m_onLossMode, &QComboBox::currentIndexChanged, this,
             [this](int) { updateRuleWidgets(); });
-    // A percentage only does something with "Increase by": typing one selects it.
+    // A percentage only does something with "Increase by": typing one (also negative) selects it.
     connect(m_onWinPct, &QDoubleSpinBox::valueChanged, this, [this](double v) {
-        if (v > 0.0 && m_onWinMode->currentIndex() == 0)
+        if (v != 0.0 && m_onWinMode->currentIndex() == 0)
             m_onWinMode->setCurrentIndex(1);
     });
     connect(m_onLossPct, &QDoubleSpinBox::valueChanged, this, [this](double v) {
-        if (v > 0.0 && m_onLossMode->currentIndex() == 0)
+        if (v != 0.0 && m_onLossMode->currentIndex() == 0)
             m_onLossMode->setCurrentIndex(1);
     });
     connect(m_useConditions, &QCheckBox::toggled, this, [this](bool) { updateRuleWidgets(); });
