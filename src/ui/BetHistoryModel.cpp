@@ -43,7 +43,7 @@ QVariant BetHistoryModel::data(const QModelIndex &index, int role) const
             return (!rec.betId.isEmpty() && !m_resolved.contains(rec.betId))
                        ? QVariant(QColor(0x25, 0x63, 0xeb)) // blue link until resolved
                        : QVariant();
-        if (index.column() == ColProfit)
+        if (index.column() == ColProfit || index.column() == ColMultiplier)
             return win ? QColor(0x2e, 0x9e, 0x46) : QColor(0xc9, 0x37, 0x2a);
         if (index.column() == ColRoll)
             return win ? QColor(0x2e, 0x9e, 0x46) : QColor(0xd4, 0x7a, 0x2c);
