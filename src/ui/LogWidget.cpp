@@ -12,8 +12,8 @@
 
 namespace
 {
-constexpr int kMaxRows = 5000;
-constexpr int kTrimBatch = 500;
+constexpr int kMaxRows = 500;
+constexpr int kTrimBatch = 50;
 } // namespace
 
 LogWidget::LogWidget(QWidget *parent)
