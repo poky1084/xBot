@@ -62,7 +62,6 @@ struct LiveSettings
     QString wolfbetToken;          // "value" inside the "token" cookie (sent as "Authorization: Bearer <token>")
 
     QString currency;              // lowercase API currency code ("btc", "usdt", ...) of the active casino
-    bool remember = false;         // persist apiKey/clearance/userAgent/token/ids on this machine
     quint16 extensionPort = 4444;  // local WebSocket port the extension connects to
 
     bool isShuffle() const { return casino == Casino::Shuffle; }

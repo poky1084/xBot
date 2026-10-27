@@ -28,9 +28,12 @@ public:
     void setConfig(const BotConfig &cfg) { m_config = cfg; }
     const BotConfig &config() const { return m_config; }
 
-    // Condition Builder rules for the next auto-bet run. An empty list falls
-    // back to the on-win / on-loss rules from the config.
+    // Condition Builder rules for the next auto-bet run (used only in condition mode,
+    // see setConditionMode()).
     void setConditions(const BlockList &blocks) { m_condBlocks = blocks; }
+    // true = Condition Builder mode: the blocks drive the run (even when there are none)
+    // and the Auto Bet tab's rules are not used.
+    void setConditionMode(bool on) { m_condMode = on; }
 
     // Script strategy (Lua or JavaScript) for the next run. A non-empty script
     // replaces both the Condition Builder and the on-win / on-loss rules; an empty
@@ -106,8 +109,7 @@ public:
     // provider is not used.
     void setLiveClient(StakeClient *client);
     void setLiveEnabled(bool enabled);
-    // Extra pause between bets (Options -> Game -> Delay). The longer of this and the
-    // auto-bet panel's delay applies.
+    // Pause between bets (Options -> Game -> Delays between bet).
     void setBetDelayMs(int ms) { m_betDelayMs = ms < 0 ? 0 : ms; }
     int betDelayMs() const { return m_betDelayMs; }
     // Live: when the next bet is larger than the balance, wait (re-checking every 5 s) instead
@@ -214,6 +216,7 @@ private:
     BotConfig m_runCfg;           // config of the running auto-bet (conditions may change target/side)
     Game m_announcedGame = Game::Dice; // last game reported through gameChanged()
     BlockList m_condBlocks;
+    bool m_condMode = false;
     ConditionRunner m_conditions;
     double m_runStartProfit = 0.0;
     qint64 m_runStartBets = 0;    // session bet count when the run started ("Number of bets")

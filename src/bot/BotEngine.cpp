@@ -332,7 +332,7 @@ void BotEngine::start()
     }
 
     // Script mode (Lua / JavaScript) is self-contained: nothing from the Manual / Auto Bet tabs is used
-    // (amount, chance, side, on-win/on-loss rules, stop limits, delay, condition
+    // (amount, chance, side, on-win/on-loss rules, stop limits, condition
     // blocks). Only the start balance (an Options setting) is kept.
     const bool scriptMode = !m_scriptSource.trimmed().isEmpty();
     if (scriptMode) {
@@ -354,6 +354,7 @@ void BotEngine::start()
     m_runStartProfit = m_stats.profit;
     m_runStartBets = m_stats.bets;
     m_conditions.setBlocks(scriptMode ? BlockList() : m_condBlocks);
+    m_conditions.setEnabled(!scriptMode && m_condMode);
     m_conditions.reset(m_config);
 
     m_scriptActive = false;
@@ -404,8 +405,10 @@ void BotEngine::start()
                             false);
         //notifyGameChange();
     } else if (m_conditions.active())
-        emit logMessage(tr("Condition builder active: %1 block(s) replace the on-win/on-loss rules.")
-                            .arg(m_conditions.blockCount()),
+        emit logMessage(tr("Condition builder active: %1 block(s), first bet %2. "
+                           "Only the Auto Bet base bet is used.")
+                            .arg(m_conditions.blockCount())
+                            .arg(m_config.baseBet, 0, 'f', 8),
                         false);
     m_running = true;
     m_paused = false;
@@ -807,7 +810,7 @@ void BotEngine::flushStopLog()
 
 void BotEngine::scheduleNext()
 {
-    m_timer.start(std::max({0, m_config.delayMs, m_betDelayMs}));
+    m_timer.start(std::max(0, m_betDelayMs));
 }
 
 // ------------------------------------------------------------------- core

@@ -52,6 +52,11 @@ public:
     void setLoginStatus(const QString &text, bool ok);
     void setLiveCurrencies(const QStringList &codes, const QString &selected);
     void setExtensionStatus(bool listening, bool connected);
+    // Bet currency remembered for each casino (indexed by int(LiveSettings::Casino)), so the
+    // Casino selector can show the right one. Call before setLiveSettings(). The getter
+    // includes the currency currently shown for the selected casino.
+    void setCasinoCurrencies(const QStringList &codes);
+    QStringList casinoCurrencies() const;
 
     // Deletes every value xBot stored on this PC (the whole registry key on
     // Windows, the settings file elsewhere). Returns false and fills `error` on failure.
@@ -65,8 +70,10 @@ signals:
 
 private:
     void updateAuthFields();
-    // Adapts the "Live betting" box to the casino chosen in the Casino menu
-    // (Shuffle: Token, Direct mode only, CORRELATION_USER_ID, BROWSER_ID;
+    // The Casino selector changed: keep what was typed for the old casino and show the new one's.
+    void onCasinoChanged(int index);
+    // Adapts the "Live betting" box to the casino chosen in the Casino selector / menu
+    // (Shuffle: Token, Direct mode only, USER_ID, BROWSER_ID;
     // Goated, Wolfbet: just the Token).
     void applyCasinoUi();
     void setFormRowVisible(QWidget *field, bool visible);
@@ -93,6 +100,8 @@ private:
     QLineEdit *m_browserIdEdit = nullptr;
 
     QCheckBox *m_liveEnable = nullptr;
+    QComboBox *m_casinoCombo = nullptr;
+    QString m_casinoCurrency[LiveSettings::kCasinoCount];
     QComboBox *m_authCombo = nullptr;
     QLineEdit *m_siteEdit = nullptr;
     QLineEdit *m_apiKeyEdit = nullptr;
@@ -106,6 +115,5 @@ private:
     QPushButton *m_goatedLoginBtn = nullptr;
     QPushButton *m_wolfbetLoginBtn = nullptr;
     QLabel *m_loginStatus = nullptr;
-    QCheckBox *m_rememberCheck = nullptr;
     quint16 m_extensionPort = 4444;
 };

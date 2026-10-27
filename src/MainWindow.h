@@ -21,6 +21,7 @@ class QActionGroup;
 class QDockWidget;
 class QLabel;
 class QLineEdit;
+class QSettings;
 class QSplitter;
 class QTableView;
 class QTabWidget;
@@ -118,6 +119,7 @@ private:
     void applyTheme(bool dark);
     void loadSettings();
     void saveSettings();
+    void saveOptionsSettings(QSettings &settings);
     void loadConditions();
     void saveConditions();
 	void updateConnectionStatus();

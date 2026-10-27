@@ -20,7 +20,7 @@ class AutoBetPanel : public QWidget
 public:
     explicit AutoBetPanel(QWidget *parent = nullptr);
 
-    // Reads the auto-bet portion of the config (rules, stops, delay, count).
+    // Reads the auto-bet portion of the config (rules, stops, count).
     void applyTo(BotConfig &cfg) const;
     void setFrom(const BotConfig &cfg);
 
@@ -52,7 +52,6 @@ private:
     bool m_running = false;
     QDoubleSpinBox *m_stopProfitSpin = nullptr;
     QDoubleSpinBox *m_stopLossSpin = nullptr;
-    QSpinBox *m_delaySpin = nullptr;
     QPushButton *m_startBtn = nullptr;
     QPushButton *m_stopBtn = nullptr;
     QList<QWidget *> m_editWidgets;

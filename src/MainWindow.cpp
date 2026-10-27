@@ -1400,12 +1400,26 @@ void MainWindow::onStartAuto()
     // The configured client seed (Options -> Game) is set first; strategies started
     // with the script editor's Run button never go through here.
     applyClientSeed([this] {
-        const BotConfig cfg = currentConfig();
+        // "Use Condition Builder" ticked: always condition mode, even with no blocks. Of the
+        // Auto Bet tab only the base bet is used (first bet and "reset amount"); bet count,
+        // on win / on loss and stop on profit / loss are not. Chance and side come from the
+        // Manual tab.
+        const bool condMode = m_autoPanel->useConditions();
+        BotConfig cfg;
+        if (condMode) {
+            cfg = m_manualPanel->config();
+            cfg.game = m_game;
+            cfg.startBalance = m_startBalance;
+            BotConfig autoCfg;
+            m_autoPanel->applyTo(autoCfg);
+            cfg.baseBet = autoCfg.baseBet;
+        } else {
+            cfg = currentConfig();
+        }
 
         m_engine->setConfig(cfg);
-        // Condition Builder blocks only when ticked in the Auto Bet tab; otherwise the
-        // On win / On loss rules are used.
-        m_engine->setConditions(m_autoPanel->useConditions() ? m_conditions : BlockList());
+        m_engine->setConditionMode(condMode);
+        m_engine->setConditions(condMode ? m_conditions : BlockList());
         m_engine->setScript(QString()); // the normal Start button never runs a script
         m_luaRunning = false;
         m_engine->start();
@@ -1431,6 +1445,7 @@ void MainWindow::onRunScript(const QString &script, ScriptLanguage language)
     luaCfg.game = m_game; // the script can override it with game = "dice" / "limbo"
     m_engine->setConfig(luaCfg);
     m_engine->setConditions(BlockList());
+    m_engine->setConditionMode(false);
     m_engine->setScript(script, language);
     //m_luaDock->appendConsole(tr("— run started —"), false);
     m_luaRunning = true;
@@ -1984,6 +1999,12 @@ void MainWindow::onOpenOptions()
     dialog.setRandomClientSeed(m_randomClientSeed);
     dialog.setBetDelayMs(m_betDelayMs);
     dialog.setRetryNoBalance(m_retryNoBalance);
+    {
+        QStringList currencies;
+        for (int i = 0; i < LiveSettings::kCasinoCount; ++i)
+            currencies << (i == int(m_live.casino) ? m_live.currency : m_currencyByCasino[i]);
+        dialog.setCasinoCurrencies(currencies);
+    }
     dialog.setLiveSettings(m_live);
     if (!m_live.currency.isEmpty())
         dialog.setLiveCurrencies({m_live.currency}, m_live.currency);
@@ -2070,7 +2091,23 @@ void MainWindow::onOpenOptions()
         onLogMessage(tr("Live betting settings are not changed while a bet or auto-bet is running."),
                      true);
     } else {
-        applyLiveSettings(dialog.liveSettings());
+        // Casino selector in Options: each casino keeps its own bet currency.
+        const QStringList currencies = dialog.casinoCurrencies();
+        for (int i = 0; i < LiveSettings::kCasinoCount && i < currencies.size(); ++i)
+            m_currencyByCasino[i] = currencies.at(i);
+        const LiveSettings next = dialog.liveSettings();
+        const bool casinoChanged = next.casino != m_live.casino;
+        applyLiveSettings(next);
+        updateCasinoMenu();
+        if (casinoChanged)
+            onLogMessage(tr("Casino: %1").arg(casinoDisplayName(m_live.casino)), false);
+    }
+
+    // Save right away (not only on exit), so the API key / tokens survive a crash.
+    {
+        QSettings settings;
+        saveOptionsSettings(settings);
+        settings.sync();
     }
 
     updateSessionWidgets();
@@ -3212,19 +3249,17 @@ void MainWindow::loadSettings()
     m_currencyByCasino[2] = settings.value(QStringLiteral("goatedCurrency")).toString();
     m_currencyByCasino[3] = settings.value(QStringLiteral("wolfbetCurrency")).toString();
     m_live.currency = m_currencyByCasino[int(m_live.casino)];
-    m_live.remember = settings.value(QStringLiteral("remember"), false).toBool();
 	m_live.enabled = settings.value(QStringLiteral("enabled"), false).toBool();
 	
-    if (m_live.remember) {
-        m_live.apiKey = settings.value(QStringLiteral("apiKey")).toString();
-        m_live.clearance = settings.value(QStringLiteral("clearance")).toString();
-        m_live.userAgent = settings.value(QStringLiteral("userAgent")).toString();
-        m_live.shuffleToken = settings.value(QStringLiteral("shuffleToken")).toString();
-        m_live.goatedToken = settings.value(QStringLiteral("goatedToken")).toString();
-        m_live.wolfbetToken = settings.value(QStringLiteral("wolfbetToken")).toString();
-        m_live.correlationUserId = settings.value(QStringLiteral("correlationUserId")).toString();
-        m_live.browserId = settings.value(QStringLiteral("browserId")).toString();
-    }
+    // API key, cookie, tokens and IDs are always saved on this computer.
+    m_live.apiKey = settings.value(QStringLiteral("apiKey")).toString();
+    m_live.clearance = settings.value(QStringLiteral("clearance")).toString();
+    m_live.userAgent = settings.value(QStringLiteral("userAgent")).toString();
+    m_live.shuffleToken = settings.value(QStringLiteral("shuffleToken")).toString();
+    m_live.goatedToken = settings.value(QStringLiteral("goatedToken")).toString();
+    m_live.wolfbetToken = settings.value(QStringLiteral("wolfbetToken")).toString();
+    m_live.correlationUserId = settings.value(QStringLiteral("correlationUserId")).toString();
+    m_live.browserId = settings.value(QStringLiteral("browserId")).toString();
     settings.endGroup();
     updateCasinoMenu();
 
@@ -3238,7 +3273,6 @@ void MainWindow::loadSettings()
     cfg.onLoss.pct = settings.value(QStringLiteral("onLossPct"), cfg.onLoss.pct).toDouble();
     cfg.stopProfit = settings.value(QStringLiteral("stopProfit"), cfg.stopProfit).toDouble();
     cfg.stopLoss = settings.value(QStringLiteral("stopLoss"), cfg.stopLoss).toDouble();
-    cfg.delayMs = settings.value(QStringLiteral("delayMs"), cfg.delayMs).toInt();
     settings.endGroup();
     m_autoPanel->setFrom(cfg);
     m_autoPanel->setConditionCount(m_conditions.size());
@@ -3249,23 +3283,10 @@ void MainWindow::loadSettings()
     applyTheme(dark); // setChecked only fires toggled when the value changes
 }
 
-void MainWindow::saveSettings()
+// Everything the Options dialog edits: general options and live betting (casino, sites,
+// currencies, API key, cookie, tokens and IDs). Written on exit and when Options is OK'd.
+void MainWindow::saveOptionsSettings(QSettings &settings)
 {
-    saveConditions();
-    QSettings settings;
-	
-    settings.setValue(QStringLiteral("MainWindow/geometry"), saveGeometry());
-    settings.setValue(QStringLiteral("MainWindow/state"), saveState());
-    settings.setValue(QStringLiteral("MainWindow/sidebarDockSaved"), true); // saveState() knows the sidebar dock
-    settings.setValue(QStringLiteral("MainWindow/mainSplitter"), m_mainSplitter->saveState());
-    settings.setValue(QStringLiteral("MainWindow/bottomTab"), m_tabs->currentIndex());
-    settings.setValue(QStringLiteral("MainWindow/tableState2"),
-                      m_betTable->horizontalHeader()->saveState());
-    m_luaDock->saveSettings();
-    settings.setValue(QStringLiteral("View/sidebar"), m_actShowSidebar->isChecked());
-    settings.setValue(QStringLiteral("View/betList"), m_actShowBetList->isChecked());
-    settings.setValue(QStringLiteral("View/bottomPanel"), m_actShowTabs->isChecked());
-
     settings.setValue(QStringLiteral("General/currency"), m_currencyTag);
     settings.setValue(QStringLiteral("General/startBalance"), m_startBalance);
     settings.setValue(QStringLiteral("General/clientSeed"), m_clientSeed);
@@ -3286,29 +3307,38 @@ void MainWindow::saveSettings()
     settings.setValue(QStringLiteral("shuffleCurrency"), m_currencyByCasino[1]);
     settings.setValue(QStringLiteral("goatedCurrency"), m_currencyByCasino[2]);
     settings.setValue(QStringLiteral("wolfbetCurrency"), m_currencyByCasino[3]);
-    settings.setValue(QStringLiteral("remember"), m_live.remember);
+    settings.remove(QStringLiteral("remember")); // old "Remember…" checkbox, no longer used
 	settings.setValue(QStringLiteral("enabled"), m_live.enabled);
 	
-    if (m_live.remember) {
-        settings.setValue(QStringLiteral("apiKey"), m_live.apiKey);
-        settings.setValue(QStringLiteral("clearance"), m_live.clearance);
-        settings.setValue(QStringLiteral("userAgent"), m_live.userAgent);
-        settings.setValue(QStringLiteral("shuffleToken"), m_live.shuffleToken);
-        settings.setValue(QStringLiteral("goatedToken"), m_live.goatedToken);
-        settings.setValue(QStringLiteral("wolfbetToken"), m_live.wolfbetToken);
-        settings.setValue(QStringLiteral("correlationUserId"), m_live.correlationUserId);
-        settings.setValue(QStringLiteral("browserId"), m_live.browserId);
-    } else { // unticking "remember" wipes what was stored before
-        settings.remove(QStringLiteral("apiKey"));
-        settings.remove(QStringLiteral("clearance"));
-        settings.remove(QStringLiteral("userAgent"));
-        settings.remove(QStringLiteral("shuffleToken"));
-        settings.remove(QStringLiteral("goatedToken"));
-        settings.remove(QStringLiteral("wolfbetToken"));
-        settings.remove(QStringLiteral("correlationUserId"));
-        settings.remove(QStringLiteral("browserId"));
-    }
+    settings.setValue(QStringLiteral("apiKey"), m_live.apiKey);
+    settings.setValue(QStringLiteral("clearance"), m_live.clearance);
+    settings.setValue(QStringLiteral("userAgent"), m_live.userAgent);
+    settings.setValue(QStringLiteral("shuffleToken"), m_live.shuffleToken);
+    settings.setValue(QStringLiteral("goatedToken"), m_live.goatedToken);
+    settings.setValue(QStringLiteral("wolfbetToken"), m_live.wolfbetToken);
+    settings.setValue(QStringLiteral("correlationUserId"), m_live.correlationUserId);
+    settings.setValue(QStringLiteral("browserId"), m_live.browserId);
     settings.endGroup();
+}
+
+void MainWindow::saveSettings()
+{
+    saveConditions();
+    QSettings settings;
+	
+    settings.setValue(QStringLiteral("MainWindow/geometry"), saveGeometry());
+    settings.setValue(QStringLiteral("MainWindow/state"), saveState());
+    settings.setValue(QStringLiteral("MainWindow/sidebarDockSaved"), true); // saveState() knows the sidebar dock
+    settings.setValue(QStringLiteral("MainWindow/mainSplitter"), m_mainSplitter->saveState());
+    settings.setValue(QStringLiteral("MainWindow/bottomTab"), m_tabs->currentIndex());
+    settings.setValue(QStringLiteral("MainWindow/tableState2"),
+                      m_betTable->horizontalHeader()->saveState());
+    m_luaDock->saveSettings();
+    settings.setValue(QStringLiteral("View/sidebar"), m_actShowSidebar->isChecked());
+    settings.setValue(QStringLiteral("View/betList"), m_actShowBetList->isChecked());
+    settings.setValue(QStringLiteral("View/bottomPanel"), m_actShowTabs->isChecked());
+
+    saveOptionsSettings(settings);
 
     BotConfig cfg;
     m_autoPanel->applyTo(cfg);
@@ -3321,7 +3351,7 @@ void MainWindow::saveSettings()
     settings.setValue(QStringLiteral("onLossPct"), cfg.onLoss.pct);
     settings.setValue(QStringLiteral("stopProfit"), cfg.stopProfit);
     settings.setValue(QStringLiteral("stopLoss"), cfg.stopLoss);
-    settings.setValue(QStringLiteral("delayMs"), cfg.delayMs);
+    settings.remove(QStringLiteral("delayMs")); // old auto-bet panel delay, no longer used
     settings.setValue(QStringLiteral("useConditions"), m_autoPanel->useConditions());
     settings.endGroup();
 }

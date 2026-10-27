@@ -111,8 +111,7 @@ OptionsDialog::OptionsDialog(QWidget *parent)
     m_betDelaySpin->setValue(0);
     m_betDelaySpin->setSuffix(QStringLiteral(" ms"));
     m_betDelaySpin->setToolTip(tr("Pause between bets in milliseconds (0 = as fast as possible). "
-                                  "Applies to auto-bet and scripts; with the auto-bet panel's own "
-                                  "delay the longer one is used."));
+                                  "Applies to auto-bet and scripts."));
     gameForm->addRow(tr("Delays between bet:"), m_betDelaySpin);
 
     m_retryNoBalanceCheck = new QCheckBox(tr("Retry bet when bet higher than balance"));
@@ -142,6 +141,14 @@ OptionsDialog::OptionsDialog(QWidget *parent)
     m_liveEnable = new QCheckBox(tr("Enable live betting"));
     liveForm->addRow(m_liveEnable);
 
+    m_casinoCombo = new QComboBox;
+    m_casinoCombo->addItem(tr("Stake"), int(LiveSettings::Casino::Stake));
+    m_casinoCombo->addItem(tr("Shuffle"), int(LiveSettings::Casino::Shuffle));
+    m_casinoCombo->addItem(tr("Goated"), int(LiveSettings::Casino::Goated));
+    m_casinoCombo->addItem(tr("Wolfbet"), int(LiveSettings::Casino::Wolfbet));
+    m_casinoCombo->setToolTip(tr("Casino to bet on (same as the Casino menu)"));
+    liveForm->addRow(tr("Casino:"), m_casinoCombo);
+
     m_authCombo = new QComboBox;
     m_authCombo->addItem(tr("Cookie (cf_clearance)"));
     m_authCombo->addItem(tr("Browser extension"));
@@ -159,12 +166,12 @@ OptionsDialog::OptionsDialog(QWidget *parent)
     // Shuffle only (hidden for Stake)
     m_correlationEdit = new QLineEdit;
 	m_correlationEdit->setEchoMode(QLineEdit::Password);
-    m_correlationEdit->setPlaceholderText(tr("user id used in the x-correlation-id header"));
-    liveForm->addRow(tr("CORRELATION_USER_ID:"), m_correlationEdit);
+    m_correlationEdit->setPlaceholderText(tr("CORRELATION_USER_ID from localstorage"));
+    liveForm->addRow(tr("USER_ID:"), m_correlationEdit);
 
     m_browserIdEdit = new QLineEdit;
 	m_browserIdEdit->setEchoMode(QLineEdit::Password);
-    m_browserIdEdit->setPlaceholderText(tr("browser id used in the x-correlation-id header"));
+    m_browserIdEdit->setPlaceholderText(tr("BROWSER_ID from localstorage"));
     liveForm->addRow(tr("BROWSER_ID:"), m_browserIdEdit);
 
     // Shuffle only: opens the site, waits for the login, then fills Token / IDs.
@@ -227,11 +234,11 @@ OptionsDialog::OptionsDialog(QWidget *parent)
     loginLayout->addWidget(m_loginStatus, 1);
     liveForm->addRow(loginRow);
 
-    m_rememberCheck = new QCheckBox(tr("Remember API key and cookie on this computer"));
-    liveForm->addRow(m_rememberCheck);
 
     connect(m_authCombo, QOverload<int>::of(&QComboBox::currentIndexChanged), this,
             [this] { updateAuthFields(); });
+    connect(m_casinoCombo, QOverload<int>::of(&QComboBox::currentIndexChanged), this,
+            &OptionsDialog::onCasinoChanged);
     connect(m_loginBtn, &QPushButton::clicked, this, [this] {
         m_loginBtn->setEnabled(false);
         setLoginStatus(tr("Logging in…"), true);
@@ -433,9 +440,6 @@ void OptionsDialog::applyCasinoUi()
                                                                 : tr("x-access-token (API key)"));
     m_siteEdit->setPlaceholderText(shuffle ? QStringLiteral("shuffle.com")
                                            : QStringLiteral("stake.com"));
-    m_rememberCheck->setText(tokenOnly ? tr("Remember token on this computer")
-                                    : shuffle ? tr("Remember token and IDs on this computer")
-                                              : tr("Remember API key and cookie on this computer"));
 
     setFormRowVisible(m_siteEdit, !tokenOnly);     // Goated / Wolfbet: the token is the only input
     setFormRowVisible(m_correlationEdit, shuffle);
@@ -482,7 +486,6 @@ LiveSettings OptionsDialog::liveSettings() const
         s.userAgent = m_userAgentEdit->text().trimmed();
     }
     s.currency = m_liveCurrencyCombo->currentText().trimmed().toLower();
-    s.remember = m_rememberCheck->isChecked();
     s.extensionPort = m_extensionPort;
     return s;
 }
@@ -493,6 +496,11 @@ void OptionsDialog::setLiveSettings(const LiveSettings &s)
     m_shuffle = s.isShuffle();
     m_goated = s.isGoated();
     m_wolfbet = s.isWolfbet();
+    {
+        const QSignalBlocker blocker(m_casinoCombo);
+        m_casinoCombo->setCurrentIndex(qMax(0, m_casinoCombo->findData(int(s.casino))));
+    }
+    m_casinoCurrency[int(s.casino)] = s.currency;
     applyCasinoUi();
 
     m_liveEnable->setChecked(s.enabled);
@@ -516,9 +524,41 @@ void OptionsDialog::setLiveSettings(const LiveSettings &s)
         m_userAgentEdit->setText(s.userAgent);
     }
     m_liveCurrencyCombo->setEditText(s.currency);
-    m_rememberCheck->setChecked(s.remember);
     m_extensionPort = s.extensionPort;
     updateAuthFields();
+}
+
+void OptionsDialog::setCasinoCurrencies(const QStringList &codes)
+{
+    for (int i = 0; i < LiveSettings::kCasinoCount; ++i)
+        m_casinoCurrency[i] = i < codes.size() ? codes.at(i) : QString();
+}
+
+QStringList OptionsDialog::casinoCurrencies() const
+{
+    QStringList out;
+    for (int i = 0; i < LiveSettings::kCasinoCount; ++i)
+        out << m_casinoCurrency[i];
+    const LiveSettings cur = liveSettings();
+    out[int(cur.casino)] = cur.currency;
+    return out;
+}
+
+void OptionsDialog::onCasinoChanged(int index)
+{
+    // Keep what was typed for the casino being left (applied with OK, dropped with Cancel).
+    LiveSettings s = liveSettings();
+    m_casinoCurrency[int(s.casino)] = s.currency;
+
+    s.casino = static_cast<LiveSettings::Casino>(m_casinoCombo->itemData(index).toInt());
+    s.currency = m_casinoCurrency[int(s.casino)];
+
+    // The currency list and the login result belong to the previous casino.
+    m_liveCurrencyCombo->clear();
+    if (!s.currency.isEmpty())
+        m_liveCurrencyCombo->addItem(s.currency);
+    m_loginStatus->clear();
+    setLiveSettings(s);
 }
 
 void OptionsDialog::setLoginStatus(const QString &text, bool ok)

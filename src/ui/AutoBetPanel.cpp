@@ -116,17 +116,12 @@ AutoBetPanel::AutoBetPanel(QWidget *parent)
 
     m_useConditions = new QCheckBox;
     m_useConditions->setToolTip(
-        tr("Ticked: the Condition Builder blocks decide the bet amount / chance and the\n"
-           "On win / On loss rules above are ignored. Unticked: the rules above are used."));
+        tr("Ticked: the Condition Builder always runs the auto-bet (even with no blocks).\n"
+           "Only the base bet above is used (first bet and \"reset amount\"); the other\n"
+           "settings are ignored, chance and side come from the Manual tab.\n"
+           "Unticked: the settings above are used."));
     grid->addWidget(m_useConditions, 3, 0, 1, 4);
     setConditionCount(0);
-
-    m_delaySpin = new QSpinBox;
-    m_delaySpin->setRange(0, 10000);
-    m_delaySpin->setSingleStep(10);
-    m_delaySpin->setValue(0);
-    m_delaySpin->setSuffix(QStringLiteral(" ms"));
-    m_delaySpin->setMaximumWidth(110);
 
     root->addWidget(formHost);
 
@@ -142,9 +137,6 @@ AutoBetPanel::AutoBetPanel(QWidget *parent)
     btnRow->setContentsMargins(0, 0, 0, 0);
     btnRow->addWidget(m_startBtn);
     btnRow->addWidget(m_stopBtn);
-    btnRow->addSpacing(12);
-    btnRow->addWidget(new QLabel(tr("Delay:")));
-    btnRow->addWidget(m_delaySpin);
     btnRow->addStretch();
 
     root->addLayout(btnRow);
@@ -168,7 +160,7 @@ AutoBetPanel::AutoBetPanel(QWidget *parent)
 
     m_editWidgets = {m_baseBetSpin,   m_betCountSpin,    m_onWinMode,
                      m_onWinPct,      m_onLossMode,      m_onLossPct,
-                     m_stopProfitSpin, m_stopLossSpin,   m_delaySpin,
+                     m_stopProfitSpin, m_stopLossSpin,
                      m_useConditions};
 
     // Stretch horizontally, but keep vertical size perfectly fixed
@@ -213,7 +205,6 @@ void AutoBetPanel::applyTo(BotConfig &cfg) const
     cfg.onLoss = {m_onLossMode->currentIndex() == 1, m_onLossPct->value()};
     cfg.stopProfit = m_stopProfitSpin->value();
     cfg.stopLoss = m_stopLossSpin->value();
-    cfg.delayMs = m_delaySpin->value();
 }
 
 void AutoBetPanel::setFrom(const BotConfig &cfg)
@@ -230,7 +221,6 @@ void AutoBetPanel::setFrom(const BotConfig &cfg)
     }
     m_stopProfitSpin->setValue(cfg.stopProfit);
     m_stopLossSpin->setValue(cfg.stopLoss);
-    m_delaySpin->setValue(cfg.delayMs);
     updateRuleWidgets();
 }
 
@@ -245,8 +235,6 @@ void AutoBetPanel::setBetPrecision(int decimals, double minBet)
 void AutoBetPanel::setRunning(bool running)
 {
     m_running = running;
-    for (QWidget *w : std::as_const(m_editWidgets))
-        w->setEnabled(!running);
     m_startBtn->setEnabled(!running);
     m_stopBtn->setEnabled(running);
     updateRuleWidgets();
@@ -255,8 +243,8 @@ void AutoBetPanel::setRunning(bool running)
 void AutoBetPanel::setConditionCount(int count)
 {
     m_useConditions->setText(
-        count > 0 ? tr("Use Condition Builder blocks (%1) instead of On win / On loss").arg(count)
-                  : tr("Use Condition Builder blocks (none saved - open Bot -> Condition Builder)"));
+        count > 0 ? tr("Use Condition Builder").arg(count)
+                  : tr("Use Condition Builder").arg(count));
     updateRuleWidgets();
 }
 
@@ -284,10 +272,9 @@ void AutoBetPanel::loadRulePreset(const OnResultRule &onWin, const OnResultRule 
 
 void AutoBetPanel::updateRuleWidgets()
 {
-    // The percentage stays editable (typing one selects "Increase by"); the rules are
-    // greyed out only while the Condition Builder replaces them or a run is going.
-    const bool rules = !m_running && !(m_useConditions && m_useConditions->isChecked());
-    for (QWidget *w : {static_cast<QWidget *>(m_onWinMode), static_cast<QWidget *>(m_onWinPct),
-                       static_cast<QWidget *>(m_onLossMode), static_cast<QWidget *>(m_onLossPct)})
-        w->setEnabled(rules);
+    // The settings are always editable, also during a run and with "Use Condition Builder"
+    // ticked (they are read when Start is pressed; in condition mode only the base bet
+    // takes effect). Only the mode checkbox is locked while a run is going.
+    for (QWidget *w : std::as_const(m_editWidgets))
+        w->setEnabled(w == m_useConditions ? !m_running : true);
 }

@@ -85,7 +85,6 @@ struct BotConfig
     double multiplierTarget = 2.0; // limbo: target multiplier, 1.01 .. 1,000,000
     double baseBet = 0.00000000;
     double startBalance = BotConstants::kStartBalance;
-    int delayMs = 0;         // delay between auto-bets
     int stopAfterBets = 0;     // 0 = unlimited
     QString casino;            // scripts: "stake" / "shuffle"; empty = unchanged
     QString currency;          // scripts: lowercase currency code to bet in ("btc", "usdt", ...); empty = unchanged

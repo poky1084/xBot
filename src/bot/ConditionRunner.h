@@ -7,13 +7,16 @@
 //
 // After every bet the engine calls onBetResult(). Each block is evaluated in
 // list order against the run so far; a block whose "When" matches performs its
-// "Then" action on the next bet amount / win chance / over-under side. When the
-// list is empty the engine falls back to the simple on-win / on-loss rules.
+// "Then" action on the next bet amount / win chance / over-under side.
+// Condition mode is switched on explicitly (the "Use Condition Builder" box): once on,
+// the on-win / on-loss rules are never used, even with an empty block list (then the
+// bet amount and chance simply stay as they are).
 class ConditionRunner
 {
 public:
     void setBlocks(const BlockList &blocks) { m_blocks = blocks; }
-    bool active() const { return !m_blocks.isEmpty(); }
+    void setEnabled(bool on) { m_enabled = on; }
+    bool active() const { return m_enabled; }
     int blockCount() const { return m_blocks.size(); }
 
     // Start of an auto-bet run: clears streaks/counters, remembers the base config.
@@ -42,6 +45,7 @@ private:
     bool apply(const ConditionBlockData &b, double &nextBet, BotConfig &cfg) const;
 
     BlockList m_blocks;
+    bool m_enabled = false;
     BotConfig m_base;
     qint64 m_bets = 0;
     qint64 m_wins = 0;
