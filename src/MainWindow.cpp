@@ -11,6 +11,7 @@
 #include "ui/LuaEditorDock.h"
 #include "ui/ManualBetPanel.h"
 #include "ui/OptionsDialog.h"
+#include "ui/WebViewSession.h"
 #include "bot/GoatedTransport.h"
 #include "bot/WolfbetTransport.h"
 #include "bot/ShuffleTransport.h"
@@ -418,9 +419,13 @@ private:
 };
 } // namespace
 
-MainWindow::MainWindow(QWidget *parent)
+MainWindow::MainWindow(QWidget *parent, bool freshWebSession)
     : QMainWindow(parent)
 {
+    // Set before anything can open a WebView2 window (see ui/WebViewSession.h).
+    if (freshWebSession)
+        setProperty(WebViewSession::kProperty, WebViewSession::createFresh());
+
     // Custom check box drawing. Installed once for the whole app: re-setting the
     // app style when a second window opens would re-polish every existing window.
     if (!dynamic_cast<CheckStyle *>(qApp->style()))
@@ -1931,8 +1936,9 @@ void MainWindow::onOpenFile()
     // It is deleted automatically when closed; the app quits when the last
     // window is closed.
     // The new window loads the latest saved data on its own (loadSettings()
-    // runs in the MainWindow constructor).
-    auto *window = new MainWindow();
+    // runs in the MainWindow constructor), so the Options dialog inputs are kept,
+    // but its WebView2 windows get a fresh browser profile: logged out of every site.
+    auto *window = new MainWindow(nullptr, true);
     window->setAttribute(Qt::WA_DeleteOnClose);
 
     // Start with the same theme as the window it was opened from; after that the
@@ -2143,6 +2149,9 @@ void MainWindow::ensureHiddenBrowser(const LiveSettings &s)
 
     if (!m_hiddenBrowser) {
         m_hiddenBrowser = new CookieGrabberDialog(s.site, s.userAgent, nullptr);
+        // No parent: hand over this window's WebView2 session folder explicitly.
+        m_hiddenBrowser->setProperty(WebViewSession::kProperty,
+                                     property(WebViewSession::kProperty));
         m_hiddenBrowser->setAttribute(Qt::WA_DontShowOnScreen);
         m_hiddenBrowser->show();
         m_browserSite = s.site;

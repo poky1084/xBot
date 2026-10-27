@@ -1,5 +1,6 @@
 #include "ui/CookieGrabberDialog.h" 
 
+#include "ui/WebViewSession.h"
 #include <QHBoxLayout>
 #include <QLabel>
 #include <QPushButton>
@@ -97,8 +98,10 @@ void CookieGrabberDialog::initializeWebView(const QString &site)
                 "--disable-backgrounding-occluded-windows "
                 "--disable-features=CalculateNativeWinOcclusion");
     }
+    // Own user-data folder for windows opened with "+" (they start logged out).
+    const std::wstring userDataFolder = WebViewSession::folderW(this);
     HRESULT hr = CreateCoreWebView2EnvironmentWithOptions(
-        nullptr, nullptr, nullptr,
+        nullptr, userDataFolder.empty() ? nullptr : userDataFolder.c_str(), nullptr,
         Callback<ICoreWebView2CreateCoreWebView2EnvironmentCompletedHandler>(
             [this, hwnd, site](HRESULT result, ICoreWebView2Environment* env) -> HRESULT {
                 if (FAILED(result)) {

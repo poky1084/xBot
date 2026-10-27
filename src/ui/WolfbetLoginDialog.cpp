@@ -1,5 +1,6 @@
 #include "ui/WolfbetLoginDialog.h"
 
+#include "ui/WebViewSession.h"
 #include <QHBoxLayout>
 #include <QJsonArray>
 #include <QJsonDocument>
@@ -122,8 +123,10 @@ void WolfbetLoginDialog::initializeWebView()
                 "--disable-features=CalculateNativeWinOcclusion");
     }
 
+    // Own user-data folder for windows opened with "+" (they start logged out).
+    const std::wstring userDataFolder = WebViewSession::folderW(this);
     CreateCoreWebView2EnvironmentWithOptions(
-        nullptr, nullptr, nullptr,
+        nullptr, userDataFolder.empty() ? nullptr : userDataFolder.c_str(), nullptr,
         Callback<ICoreWebView2CreateCoreWebView2EnvironmentCompletedHandler>(
             [self, hwnd](HRESULT result, ICoreWebView2Environment *env) -> HRESULT {
                 if (!self)

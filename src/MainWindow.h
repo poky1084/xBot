@@ -49,7 +49,9 @@ class MainWindow : public QMainWindow
     Q_OBJECT
 
 public:
-    explicit MainWindow(QWidget *parent = nullptr);
+    // freshWebSession = true (windows opened with "+"): WebView2 windows of this main window
+    // use a new, empty browser profile, so every site starts logged out. Options data is kept.
+    explicit MainWindow(QWidget *parent = nullptr, bool freshWebSession = false);
     ~MainWindow() override;
 
 protected:
