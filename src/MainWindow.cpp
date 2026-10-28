@@ -1395,8 +1395,10 @@ void MainWindow::onGameSelected(Game game)
     setGame(game); // the Manual Bet tab now shows (and returns) the new game's settings
     if (m_engine->isRunning() || m_engine->startPending()) {
         // Switch the running auto-bet too: the next bet is placed in the new game
-        // (a bet already in flight finishes in the old one).
-        m_engine->switchGame(m_manualPanel->config());
+        // (a bet already in flight finishes in the old one), still at the Auto Bet tab's multiplier / win chance (scripts ignore these values).
+        BotConfig betCfg = m_manualPanel->config();
+        m_autoPanel->applyOddsTo(betCfg);
+        m_engine->switchGame(betCfg);
     }
 }
 
@@ -1477,9 +1479,8 @@ void MainWindow::onRollOnce()
     if (m_engine->isRunning())
         return;
     const auto roll = [this] {
-        BotConfig cfg = currentConfig();
-        cfg.baseBet = m_manualPanel->amount();
-        m_engine->rollOnce(cfg);
+        // Manual bets use only the Manual Bet tab (amount, multiplier / win chance, side).
+        m_engine->rollOnce(manualConfig());
     };
     // The client seed is set once before the first manual bet (not before every roll).
     if (m_clientSeedPending)
@@ -1541,9 +1542,9 @@ void MainWindow::onStartAuto()
     // with the script editor's Run button never go through here.
     applyClientSeed([this] {
         // "Use Condition Builder" ticked: always condition mode, even with no blocks. Of the
-        // Auto Bet tab only the base bet is used (first bet and "reset amount"); bet count,
-        // on win / on loss and stop on profit / loss are not. Chance and side come from the
-        // Manual tab.
+        // Auto Bet tab the base bet (first bet and "reset amount") and the multiplier / win
+        // chance are used; bet count, on win / on loss and stop on profit / loss are not.
+        // Only the dice side comes from the Manual tab (the Auto Bet tab has no side).
         const bool condMode = m_autoPanel->useConditions();
         BotConfig cfg;
         if (condMode) {
@@ -1553,6 +1554,7 @@ void MainWindow::onStartAuto()
             BotConfig autoCfg;
             m_autoPanel->applyTo(autoCfg);
             cfg.baseBet = autoCfg.baseBet;
+            m_autoPanel->applyOddsTo(cfg);
         } else {
             cfg = currentConfig();
         }
@@ -3117,6 +3119,14 @@ BotConfig MainWindow::currentConfig() const
     return cfg;
 }
 
+BotConfig MainWindow::manualConfig() const
+{
+    BotConfig cfg = m_manualPanel->config(); // amount, dice target + side, limbo target
+    cfg.game = m_game;
+    cfg.startBalance = m_startBalance;
+    return cfg;
+}
+
 void MainWindow::updateSessionWidgets()
 {
     const SessionStats &s = m_engine->stats();
@@ -3494,6 +3504,13 @@ void MainWindow::loadSettings()
     cfg.stopLoss = settings.value(QStringLiteral("stopLoss"), cfg.stopLoss).toDouble();
     settings.endGroup();
     m_autoPanel->setFrom(cfg);
+    {
+        // Saved together; when missing (older settings) the panel keeps its 2x / 49.5% default.
+        const QVariant mult = settings.value(QStringLiteral("AutoBet/multiplier"));
+        const QVariant chance = settings.value(QStringLiteral("AutoBet/winChance"));
+        if (mult.isValid() && chance.isValid())
+            m_autoPanel->setOdds(mult.toDouble(), chance.toDouble());
+    }
     m_autoPanel->setConditionCount(m_conditions.size());
     m_autoPanel->setUseConditions(settings.value(QStringLiteral("AutoBet/useConditions"), false).toBool());
 
@@ -3593,6 +3610,8 @@ void MainWindow::saveSettings()
     settings.setValue(QStringLiteral("onLossPct"), cfg.onLoss.pct);
     settings.setValue(QStringLiteral("stopProfit"), cfg.stopProfit);
     settings.setValue(QStringLiteral("stopLoss"), cfg.stopLoss);
+    settings.setValue(QStringLiteral("multiplier"), m_autoPanel->multiplier());
+    settings.setValue(QStringLiteral("winChance"), m_autoPanel->winChance());
     settings.remove(QStringLiteral("delayMs")); // old auto-bet panel delay, no longer used
     settings.setValue(QStringLiteral("useConditions"), m_autoPanel->useConditions());
     settings.endGroup();

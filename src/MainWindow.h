@@ -114,7 +114,8 @@ private:
     void createStatusBar();
     void createLogDock();
     void createLuaDock();
-    BotConfig currentConfig() const;
+    BotConfig currentConfig() const; // auto-bet: Auto Bet tab settings (side from the Manual tab)
+    BotConfig manualConfig() const;  // manual roll: Manual Bet tab only
     void updateSessionWidgets();
     void updateRunTime();
     void startRunClock();

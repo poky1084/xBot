@@ -23,6 +23,14 @@ public:
     // Reads the auto-bet portion of the config (rules, stops, count).
     void applyTo(BotConfig &cfg) const;
     void setFrom(const BotConfig &cfg);
+    // Only the Multiplier / Win chance: sets the dice target (keeping cfg.side) and the limbo
+    // target. Used for every auto-bet run, also in Condition Builder mode.
+    void applyOddsTo(BotConfig &cfg) const;
+
+    // Auto-bet odds (left column). Saved / restored by MainWindow.
+    double multiplier() const;
+    double winChance() const;
+    void setOdds(double multiplier, double chance);
 
     void setRunning(bool running);
 
@@ -43,6 +51,8 @@ private:
     void updateRuleWidgets();
 
     QDoubleSpinBox *m_baseBetSpin = nullptr;
+    QDoubleSpinBox *m_multiplierSpin = nullptr;
+    QDoubleSpinBox *m_chanceSpin = nullptr;
     QSpinBox *m_betCountSpin = nullptr;
     QComboBox *m_onWinMode = nullptr;
     QDoubleSpinBox *m_onWinPct = nullptr;

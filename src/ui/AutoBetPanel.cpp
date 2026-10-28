@@ -11,6 +11,9 @@
 #include <QSpinBox>
 #include <QVBoxLayout>
 
+#include <algorithm>
+#include <cmath>
+
 namespace
 {
 QComboBox *makeModeCombo()
@@ -69,15 +72,35 @@ AutoBetPanel::AutoBetPanel(QWidget *parent)
     grid->addWidget(new QLabel(tr("Number of bets (0 = ∞):")), 0, 2);
     grid->addWidget(m_betCountSpin, 0, 3);
 
-    m_onWinMode = makeModeCombo();
-    m_onWinPct = makePctSpin();
-    auto *onWinRow = new QHBoxLayout;
-    onWinRow->setSpacing(4);
-    onWinRow->setContentsMargins(0, 0, 0, 0);
-    onWinRow->addWidget(m_onWinMode, 1);
-    onWinRow->addWidget(m_onWinPct, 1);
-    grid->addWidget(new QLabel(tr("On win:")), 1, 0);
-    grid->addLayout(onWinRow, 1, 1);
+    // Left column, under the base bet: the odds the auto-bet plays at. The two boxes are
+    // linked (win chance = 99 / multiplier, 1% house edge).
+    m_multiplierSpin = new QDoubleSpinBox;
+    m_multiplierSpin->setRange(0.99, BotConstants::kMaxLimboTarget);
+    m_multiplierSpin->setDecimals(4);
+    m_multiplierSpin->setSingleStep(0.01);
+    m_multiplierSpin->setKeyboardTracking(false);
+    m_multiplierSpin->setSuffix(QStringLiteral(" x"));
+    m_multiplierSpin->setValue(2.0);
+    grid->addWidget(new QLabel(tr("Multiplier:")), 1, 0);
+    grid->addWidget(m_multiplierSpin, 1, 1);
+
+    m_chanceSpin = new QDoubleSpinBox;
+    m_chanceSpin->setRange(BotConstants::kMinChance, BotConstants::kMaxChance);
+    m_chanceSpin->setDecimals(2);
+    m_chanceSpin->setSingleStep(0.1);
+    m_chanceSpin->setKeyboardTracking(false);
+    m_chanceSpin->setSuffix(QStringLiteral(" %"));
+    m_chanceSpin->setValue(49.5);
+    grid->addWidget(new QLabel(tr("Win chance:")), 2, 0);
+    grid->addWidget(m_chanceSpin, 2, 1);
+
+    const QString oddsTip =
+        tr("The odds the auto-bet plays at. Changing one updates the other\n"
+           "(win chance = 99 / multiplier). Dice keeps the Under / Over side of the\n"
+           "Manual tab; Limbo uses the multiplier as its target.\n"
+           "Only used by the auto-bet; manual bets use the Manual tab.");
+    m_multiplierSpin->setToolTip(oddsTip);
+    m_chanceSpin->setToolTip(oddsTip);
 
     // Fixed preset by default: reset to base on loss as well.
     m_onLossMode = makeModeCombo();
@@ -92,12 +115,22 @@ AutoBetPanel::AutoBetPanel(QWidget *parent)
     grid->addWidget(new QLabel(tr("On loss:")), 1, 2);
     grid->addLayout(onLossRow, 1, 3);
 
+    m_onWinMode = makeModeCombo();
+    m_onWinPct = makePctSpin();
+    auto *onWinRow = new QHBoxLayout;
+    onWinRow->setSpacing(4);
+    onWinRow->setContentsMargins(0, 0, 0, 0);
+    onWinRow->addWidget(m_onWinMode, 1);
+    onWinRow->addWidget(m_onWinPct, 1);
+    grid->addWidget(new QLabel(tr("On win:")), 2, 2);
+    grid->addLayout(onWinRow, 2, 3);
+
     m_stopProfitSpin = new QDoubleSpinBox;
     m_stopProfitSpin->setRange(0.0, 1e9);
     m_stopProfitSpin->setDecimals(8);
     m_stopProfitSpin->setSpecialValueText(tr("off"));
-    grid->addWidget(new QLabel(tr("Stop on profit (0 = off):")), 2, 0);
-    grid->addWidget(m_stopProfitSpin, 2, 1);
+    grid->addWidget(new QLabel(tr("Stop on profit (0 = off):")), 3, 2);
+    grid->addWidget(m_stopProfitSpin, 3, 3);
     m_stopProfitSpin->setToolTip(
         tr("Stops the auto-bet once this run has won at least this amount\n"
            "(counted from when you pressed Start, in the betting currency).\n"
@@ -107,8 +140,8 @@ AutoBetPanel::AutoBetPanel(QWidget *parent)
     m_stopLossSpin->setRange(0.0, 1e9);
     m_stopLossSpin->setDecimals(8);
     m_stopLossSpin->setSpecialValueText(tr("off"));
-    grid->addWidget(new QLabel(tr("Stop on loss (0 = off):")), 2, 2);
-    grid->addWidget(m_stopLossSpin, 2, 3);
+    grid->addWidget(new QLabel(tr("Stop on loss (0 = off):")), 4, 2);
+    grid->addWidget(m_stopLossSpin, 4, 3);
     m_stopLossSpin->setToolTip(
         tr("Stops the auto-bet once this run has lost at least this amount\n"
            "(counted from when you pressed Start, in the betting currency).\n"
@@ -117,10 +150,11 @@ AutoBetPanel::AutoBetPanel(QWidget *parent)
     m_useConditions = new QCheckBox;
     m_useConditions->setToolTip(
         tr("Ticked: the Condition Builder always runs the auto-bet (even with no blocks).\n"
-           "Only the base bet above is used (first bet and \"reset amount\"); the other\n"
-           "settings are ignored, chance and side come from the Manual tab.\n"
+           "Base bet (first bet and \"reset amount\"), multiplier and win chance are used;\n"
+           "the other settings are ignored. Dice side comes from the Manual tab.\n"
            "Unticked: the settings above are used."));
-    grid->addWidget(m_useConditions, 3, 0, 1, 4);
+    // Left column, under the win chance (the right column runs two rows longer).
+    grid->addWidget(m_useConditions, 3, 0, 1, 2);
     setConditionCount(0);
 
     root->addWidget(formHost);
@@ -139,7 +173,8 @@ AutoBetPanel::AutoBetPanel(QWidget *parent)
     btnRow->addWidget(m_stopBtn);
     btnRow->addStretch();
 
-    root->addLayout(btnRow);
+    // Buttons sit under the checkbox in the left column.
+    grid->addLayout(btnRow, 4, 0, 1, 2);
 
     m_baseBetSpin->setToolTip(tr("The first bet of the run, and the amount \"Reset to base\" goes back to."));
     m_betCountSpin->setToolTip(tr("Stops after this many bets in this run. 0 = no limit."));
@@ -158,7 +193,8 @@ AutoBetPanel::AutoBetPanel(QWidget *parent)
     // keeping all widgets pinned neatly to the top.
     root->addStretch();
 
-    m_editWidgets = {m_baseBetSpin,   m_betCountSpin,    m_onWinMode,
+    m_editWidgets = {m_baseBetSpin,   m_multiplierSpin,  m_chanceSpin,
+                     m_betCountSpin,  m_onWinMode,
                      m_onWinPct,      m_onLossMode,      m_onLossPct,
                      m_stopProfitSpin, m_stopLossSpin,
                      m_useConditions};
@@ -192,6 +228,20 @@ AutoBetPanel::AutoBetPanel(QWidget *parent)
         if (v != 0.0 && m_onLossMode->currentIndex() == 0)
             m_onLossMode->setCurrentIndex(1);
     });
+    // Multiplier <-> win chance stay in step.
+    connect(m_multiplierSpin, &QDoubleSpinBox::valueChanged, this, [this](double mult) {
+        if (mult <= 0.0)
+            return;
+        const QSignalBlocker b(m_chanceSpin);
+        m_chanceSpin->setValue(std::clamp(99.0 / mult, BotConstants::kMinChance,
+                                          BotConstants::kMaxChance));
+    });
+    connect(m_chanceSpin, &QDoubleSpinBox::valueChanged, this, [this](double chance) {
+        if (chance <= 0.0)
+            return;
+        const QSignalBlocker b(m_multiplierSpin);
+        m_multiplierSpin->setValue(std::floor(99.0 / chance * 10000.0) / 10000.0);
+    });
     connect(m_useConditions, &QCheckBox::toggled, this, [this](bool) { updateRuleWidgets(); });
 
     updateRuleWidgets();
@@ -205,6 +255,36 @@ void AutoBetPanel::applyTo(BotConfig &cfg) const
     cfg.onLoss = {m_onLossMode->currentIndex() == 1, m_onLossPct->value()};
     cfg.stopProfit = m_stopProfitSpin->value();
     cfg.stopLoss = m_stopLossSpin->value();
+    applyOddsTo(cfg);
+}
+
+void AutoBetPanel::applyOddsTo(BotConfig &cfg) const
+{
+    // Odds: dice keeps the side already in cfg (from the Manual tab) and gets its target
+    // from the win chance; limbo uses the multiplier as its target.
+    const double chance = std::round(m_chanceSpin->value() * 100.0) / 100.0;
+    const double diceTarget = cfg.side == BetSide::Under ? chance : 100.0 - chance;
+    cfg.target = std::clamp(diceTarget, BotConstants::kMinChance, BotConstants::kMaxChance);
+    cfg.multiplierTarget = std::clamp(m_multiplierSpin->value(), BotConstants::kMinLimboTarget,
+                                      BotConstants::kMaxLimboTarget);
+}
+
+double AutoBetPanel::multiplier() const
+{
+    return m_multiplierSpin->value();
+}
+
+double AutoBetPanel::winChance() const
+{
+    return m_chanceSpin->value();
+}
+
+void AutoBetPanel::setOdds(double multiplier, double chance)
+{
+    const QSignalBlocker b1(m_multiplierSpin);
+    const QSignalBlocker b2(m_chanceSpin);
+    m_multiplierSpin->setValue(multiplier);
+    m_chanceSpin->setValue(chance);
 }
 
 void AutoBetPanel::setFrom(const BotConfig &cfg)
