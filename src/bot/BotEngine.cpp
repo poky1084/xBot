@@ -167,7 +167,8 @@ void BotEngine::onLiveFinished(const LiveBetResult &r)
     }
 
     m_retryStreak = 0;
-    recordBet(cfg, r.amount, r.roll, r.win, r.multiplier, r.payout, r.nonce, r.betId);
+    const BetRecord rec = recordBet(cfg, r.amount, r.roll, r.win, r.multiplier, r.payout,
+                                    r.nonce, r.betId);
     flushPauseLog(); // a pause that came while this bet was in flight: now the numbers are final
     flushStopLog(); // a stop that came while this bet was in flight: now the numbers are final
 
@@ -179,7 +180,7 @@ void BotEngine::onLiveFinished(const LiveBetResult &r)
         return;
     }
 
-    if (advanceProgression(r.win, cfg))
+    if (advanceProgression(rec.win, cfg)) // the engine's verdict (>= 1x), not the raw reply
         return;
     if (checkStopConditions())
         return;
@@ -826,6 +827,13 @@ BetRecord BotEngine::recordBet(const BotConfig &cfg, double betSize, double roll
         rec.casino = m_casinoGetter().trimmed().toLower(); // casino selected when the bet was made
 
     const double profit = payout - betSize;
+
+    // Single source of truth for win / loss: only a payout multiplier >= 1x is a win,
+    // whatever the casino's own "win" flag or a non-zero payout says.
+    const double payoutMult = BotConstants::settledMultiplier(betSize, payout, mult, win);
+    win = BotConstants::isWinMultiplier(payoutMult);
+    if (betSize > 0.0 && payout > 0.0)
+        mult = payoutMult; // show the multiplier actually paid (also for a < 1x partial payout)
 
     m_stats.balance += profit;
     m_stats.profit += profit;

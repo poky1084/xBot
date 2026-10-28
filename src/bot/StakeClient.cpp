@@ -1,5 +1,7 @@
 #include "bot/StakeClient.h"
 
+#include "bot/BotTypes.h"
+
 #include "bot/GoatedTransport.h"
 #include "bot/ShuffleTransport.h"
 #include "bot/WolfbetTransport.h"
@@ -850,7 +852,8 @@ void StakeClient::placeShuffleDice(const DiceBetRequest &request)
                                .compare(QLatin1String("ABOVE"), Qt::CaseInsensitive) == 0;
 
         // The server's payout is the truth; for a 0 bet fall back to comparing the roll.
-        r.win = r.amount > 0.0 ? r.payout > 0.0
+        // Win only when the payout multiplier is >= 1x (a partial payout is a loss).
+        r.win = r.amount > 0.0 ? BotConstants::isWinMultiplier(r.payout / r.amount)
                                : (above ? r.roll > userValue : r.roll < userValue);
 
         if (r.win) {
@@ -1035,10 +1038,14 @@ void StakeClient::placeGoatedDice(const DiceBetRequest &request)
                                QStringLiteral("isWin"), QStringLiteral("is_winner"),
                                QStringLiteral("result_type"), QStringLiteral("outcome")}, &win)) {
             if (amount > 0.0 && havePayout)
-                win = payout > 0.0;
+                win = BotConstants::isWinMultiplier(payout / amount);
             else
                 win = over ? roll > target : roll < target;
         }
+
+        // A server "win" flag on a partial payout still is a loss: only >= 1x counts.
+        if (win && amount > 0.0 && havePayout)
+            win = BotConstants::isWinMultiplier(payout / amount);
 
         LiveBetResult r;
         r.ok = true;
@@ -1191,10 +1198,12 @@ void StakeClient::placeWolfbetDice(const DiceBetRequest &request)
 
         const QString state = bet.value(QStringLiteral("state")).toString().trimmed().toLower();
         const double profit = numberOf(bet.value(QStringLiteral("profit")));
-        if (!state.isEmpty())
+        // Win only when the payout multiplier is >= 1x: with a stake, net profit >= 0;
+        // the server's "state" is only used for a 0 bet (where profit is always 0).
+        if (r.amount > 0.0 && bet.contains(QStringLiteral("profit")))
+            r.win = BotConstants::isWinMultiplier((r.amount + profit) / r.amount);
+        else if (!state.isEmpty())
             r.win = (state == QLatin1String("win"));
-        else if (r.amount > 0.0)
-            r.win = profit > 0.0;
         else
             r.win = over ? r.roll > betValue : r.roll < betValue;
 
@@ -1202,8 +1211,12 @@ void StakeClient::placeWolfbetDice(const DiceBetRequest &request)
             const double betMult = numberOf(bet.value(QStringLiteral("multiplier")));
             r.multiplier = betMult > 0.0 ? betMult : mult;
             // "profit" is the net win; the payout (stake included) is what the other casinos report.
-            r.payout = (r.amount > 0.0 && profit > 0.0) ? r.amount + profit : r.amount * r.multiplier;
+            r.payout = r.amount * r.multiplier;
         }
+        // The server's net profit is the truth for the payout (stake included), also for a
+        // 1x push or a partial payout that the >= 1x rule above classed as a loss.
+        if (r.amount > 0.0 && bet.contains(QStringLiteral("profit")))
+            r.payout = std::max(0.0, r.amount + profit);
 
         r.betId = bet.value(QStringLiteral("hash")).toString();
         r.nonce = bet.contains(QStringLiteral("nonce")) ? qint64(numberOf(bet.value(QStringLiteral("nonce")))) : -1;
@@ -1282,18 +1295,24 @@ void StakeClient::placeWolfbetLimbo(const LimboBetRequest &request)
 
         const QString state = bet.value(QStringLiteral("state")).toString().trimmed().toLower();
         const double profit = numberOf(bet.value(QStringLiteral("profit")));
-        if (!state.isEmpty())
+        // Win only when the payout multiplier is >= 1x: with a stake, net profit >= 0;
+        // the server's "state" is only used for a 0 bet (where profit is always 0).
+        if (r.amount > 0.0 && bet.contains(QStringLiteral("profit")))
+            r.win = BotConstants::isWinMultiplier((r.amount + profit) / r.amount);
+        else if (!state.isEmpty())
             r.win = (state == QLatin1String("win"));
-        else if (r.amount > 0.0)
-            r.win = profit > 0.0;
         else
             r.win = r.roll >= target;
 
         if (r.win) {
             const double betMult = numberOf(bet.value(QStringLiteral("multiplier")));
             r.multiplier = betMult > 0.0 ? betMult : target;
-            r.payout = (r.amount > 0.0 && profit > 0.0) ? r.amount + profit : r.amount * r.multiplier;
+            r.payout = r.amount * r.multiplier;
         }
+        // The server's net profit is the truth for the payout (stake included), also for a
+        // 1x push or a partial payout that the >= 1x rule above classed as a loss.
+        if (r.amount > 0.0 && bet.contains(QStringLiteral("profit")))
+            r.payout = std::max(0.0, r.amount + profit);
 
         r.betId = bet.value(QStringLiteral("hash")).toString();
         r.nonce = bet.contains(QStringLiteral("nonce")) ? qint64(numberOf(bet.value(QStringLiteral("nonce")))) : -1;
@@ -1362,7 +1381,8 @@ void StakeClient::placeGoatedLimbo(const LimboBetRequest &request)
         r.roll = result;
         r.payout = havePayout ? payout : 0.0;
         // The server's payout is the truth; for a 0 bet fall back to comparing the result.
-        r.win = (amount > 0.0 && havePayout) ? payout > 0.0 : result >= target;
+        r.win = (amount > 0.0 && havePayout) ? BotConstants::isWinMultiplier(payout / amount)
+                                             : result >= target;
         if (r.win) {
             double mult = 0.0;
             r.multiplier = (amount > 0.0 && payout > 0.0) ? payout / amount
@@ -1568,7 +1588,8 @@ void StakeClient::placeShuffleLimbo(const LimboBetRequest &request)
         const double userValue = numberOf(limbo.value(QStringLiteral("userValue")));
 
         // The server's payout is the truth; for a 0 bet fall back to comparing the result.
-        r.win = r.amount > 0.0 ? r.payout > 0.0 : r.roll >= userValue;
+        r.win = r.amount > 0.0 ? BotConstants::isWinMultiplier(r.payout / r.amount)
+                               : r.roll >= userValue;
         if (r.win) {
             r.multiplier = (r.amount > 0.0 && r.payout > 0.0)
                                ? r.payout / r.amount

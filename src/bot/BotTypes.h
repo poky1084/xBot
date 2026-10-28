@@ -43,6 +43,23 @@ inline double payoutMultiplier(double target, bool isUnder)
     const double raw = (100.0 * (1.0 - kHouseEdge)) / chance;
     return std::floor(raw * 10000.0) / 10000.0;
 }
+
+// A bet only counts as a WIN when its payout multiplier is >= 1x (payout >= stake).
+// A partial payout (e.g. 0.5x) is a loss even though the casino paid something back.
+// The tiny epsilon absorbs 8-decimal rounding of payout / amount (0.99999999 -> 1x).
+inline bool isWinMultiplier(double payoutMult)
+{
+    return payoutMult >= 1.0 - 1e-9;
+}
+
+// Payout multiplier of a settled bet: payout / amount when there was a stake, otherwise
+// (0 bet, payout is always 0) the multiplier the result reported, or 0 for a loss.
+inline double settledMultiplier(double amount, double payout, double reportedMult, bool reportedWin)
+{
+    if (amount > 0.0)
+        return payout / amount;
+    return reportedWin ? reportedMult : 0.0;
+}
 } // namespace BotConstants
 
 // Cuts a roll / result to 2 decimals without rounding (49.999 -> 49.99). The small
