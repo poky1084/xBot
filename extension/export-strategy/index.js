@@ -344,17 +344,17 @@ actionsWrapper.querySelector('#strategyExportAllBtn').addEventListener('click', 
 fileInput.addEventListener('change', handleImport);
 
 // ── 9. Mount only on /casino/games/dice ─────────────────────────────────────
-const DICE_PATH = /^\/casino\/games\/dice\/?$/;
+const DICE_PATH = /^\/casino\/games\/stake-dice\/?$/;
 
 function isDicePage() {
   return DICE_PATH.test(location.pathname);
 }
 
 function sync() {
-  if (!isDicePage()) {
-    if (actionsWrapper.isConnected) actionsWrapper.remove();
-    return;
-  }
+  //if (!isDicePage()) {
+    //if (actionsWrapper.isConnected) actionsWrapper.remove();
+    //return;
+  //}
   const sidebar = document.querySelector('.game-sidebar');
   if (sidebar && actionsWrapper.parentElement !== sidebar) {
     sidebar.appendChild(actionsWrapper);
