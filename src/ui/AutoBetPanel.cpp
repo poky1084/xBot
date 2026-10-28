@@ -91,7 +91,7 @@ AutoBetPanel::AutoBetPanel(QWidget *parent)
     m_chanceSpin->setKeyboardTracking(false);
     m_chanceSpin->setSuffix(QStringLiteral(" %"));
     m_chanceSpin->setValue(49.5);
-    grid->addWidget(new QLabel(tr("Win chance:")), 2, 0);
+    grid->addWidget(new QLabel(tr("Win chance %:")), 2, 0);
     grid->addWidget(m_chanceSpin, 2, 1);
 
     const QString oddsTip =
