@@ -14,6 +14,8 @@
 #include "ui/WebViewSession.h"
 #include "ui/WindowSettings.h"
 #include "bot/GoatedTransport.h"
+#include "bot/DuelTransport.h"
+#include "ui/DuelBrowser.h"
 #include "bot/WolfbetTransport.h"
 #include "bot/ShuffleTransport.h"
 #include "bot/StakeClient.h"
@@ -551,6 +553,7 @@ MainWindow::MainWindow(int slot, bool freshWebSession, QWidget *parent)
     m_shuffle = new ShuffleTransport(this);
     m_goated = new GoatedTransport(this);
     m_wolfbet = new WolfbetTransport(this);
+    m_duel = new DuelTransport(this);
     m_stake = new StakeClient(this);
     m_stake->setTransport(m_cookie);
     m_engine->setLiveClient(m_stake);
@@ -569,6 +572,9 @@ MainWindow::MainWindow(int slot, bool freshWebSession, QWidget *parent)
             &MainWindow::onGoatedBalancesUpdated);
     connect(m_wolfbet, &WolfbetTransport::balancesUpdated, this,
             &MainWindow::onWolfbetBalancesUpdated);
+    connect(m_duel, &DuelTransport::balancesUpdated, this, &MainWindow::onDuelBalancesUpdated);
+    connect(m_duel, &DuelTransport::notice, this,
+            [this](const QString &message) { onLogMessage(message, true); });
     connect(m_stake, &StakeClient::backgroundBalancesReady, this,
             &MainWindow::onStakeBackgroundBalances);
     connect(m_stake, &StakeClient::balancesReady, this, &MainWindow::onBalancesReady);
@@ -847,7 +853,9 @@ void MainWindow::createMenus()
     m_actCasinoShuffle = casinoMenu->addAction(tr("S&huffle"));
     m_actCasinoGoated = casinoMenu->addAction(tr("&Goated"));
     m_actCasinoWolfbet = casinoMenu->addAction(tr("&Wolfbet"));
-    for (QAction *a : {m_actCasinoStake, m_actCasinoShuffle, m_actCasinoGoated, m_actCasinoWolfbet}) {
+    m_actCasinoDuel = casinoMenu->addAction(tr("&Duel"));
+    for (QAction *a : {m_actCasinoStake, m_actCasinoShuffle, m_actCasinoGoated, m_actCasinoWolfbet,
+                       m_actCasinoDuel}) {
         a->setCheckable(true);
         m_casinoGroup->addAction(a);
     }
@@ -860,6 +868,8 @@ void MainWindow::createMenus()
             [this] { onCasinoSelected(LiveSettings::Casino::Goated); });
     connect(m_actCasinoWolfbet, &QAction::triggered, this,
             [this] { onCasinoSelected(LiveSettings::Casino::Wolfbet); });
+    connect(m_actCasinoDuel, &QAction::triggered, this,
+            [this] { onCasinoSelected(LiveSettings::Casino::Duel); });
 
     QMenu *gameMenu = menuBar()->addMenu(tr("&Game"));
     m_gameGroup = new QActionGroup(this);
@@ -1408,6 +1418,7 @@ QString MainWindow::casinoDisplayName(LiveSettings::Casino casino)
     case LiveSettings::Casino::Shuffle: return tr("Shuffle");
     case LiveSettings::Casino::Goated:  return tr("Goated");
     case LiveSettings::Casino::Wolfbet: return tr("Wolfbet");
+    case LiveSettings::Casino::Duel:    return tr("Duel");
     default:                            return tr("Stake");
     }
 }
@@ -1418,13 +1429,15 @@ QAction *MainWindow::casinoAction(LiveSettings::Casino casino) const
     case LiveSettings::Casino::Shuffle: return m_actCasinoShuffle;
     case LiveSettings::Casino::Goated:  return m_actCasinoGoated;
     case LiveSettings::Casino::Wolfbet: return m_actCasinoWolfbet;
+    case LiveSettings::Casino::Duel:    return m_actCasinoDuel;
     default:                            return m_actCasinoStake;
     }
 }
 
 void MainWindow::updateCasinoMenu()
 {
-    if (!m_actCasinoStake || !m_actCasinoShuffle || !m_actCasinoGoated || !m_actCasinoWolfbet)
+    if (!m_actCasinoStake || !m_actCasinoShuffle || !m_actCasinoGoated || !m_actCasinoWolfbet
+        || !m_actCasinoDuel)
         return;
     const QSignalBlocker blocker(m_casinoGroup);
     casinoAction(m_live.casino)->setChecked(true);
@@ -1866,8 +1879,9 @@ void MainWindow::onBetTableClicked(const QModelIndex &index)
     const QString clickedCasino = m_model->recordAt(index.row()).casino;
     if (clickedCasino.compare(QLatin1String("shuffle"), Qt::CaseInsensitive) == 0
         || clickedCasino.compare(QLatin1String("goated"), Qt::CaseInsensitive) == 0
-        || clickedCasino.compare(QLatin1String("wolfbet"), Qt::CaseInsensitive) == 0)
-        return;                      // Shuffle / Goated / Wolfbet ids are used as they are
+        || clickedCasino.compare(QLatin1String("wolfbet"), Qt::CaseInsensitive) == 0
+        || clickedCasino.compare(QLatin1String("duel"), Qt::CaseInsensitive) == 0)
+        return;                      // Shuffle / Goated / Wolfbet / Duel ids are used as they are
     resolveBetIid(betId);
 }
 
@@ -1892,6 +1906,17 @@ void MainWindow::onBetTableContextMenu(const QPoint &pos)
 
     const bool wolfbetRow = rowCasino.isEmpty() ? m_live.isWolfbet()
                                                 : rowCasino == QLatin1String("wolfbet");
+
+    const bool duelRow = rowCasino.isEmpty() ? m_live.isDuel()
+                                             : rowCasino == QLatin1String("duel");
+    // Duel: copy the round id (no public bet page is known).
+    if (duelRow) {
+        QMenu menu;
+        QAction *copyAct = menu.addAction(tr("Copy Bet id:  %1").arg(betId));
+        if (menu.exec(globalPos) == copyAct)
+            QApplication::clipboard()->setText(betId);
+        return;
+    }
 
     // Wolfbet: copy the bet id, or open its page on the site.
     if (wolfbetRow) {
@@ -2209,7 +2234,17 @@ void MainWindow::onOpenOptions()
         // nothing to wait for. Waiting on it made the login hang on "Loading browser…"
         // whenever that unrelated Stake page was slow or failed to load.
         const LiveSettings cur = dialog.liveSettings();
-        const bool needsBrowser = !cur.isShuffle() && !cur.isGoated() && !cur.isWolfbet() && !cur.extensionMode;
+        // Duel: its requests run in the hidden Duel browser; the pageLoaded handler in
+        // ensureDuelBrowser() fetches the balances once it is there.
+        if (cur.isDuel() && m_duelBrowser && !m_duelBrowser->isPageLoaded()) {
+            dialog.setLoginStatus(tr("Loading the Duel browser…"), true);
+            return;
+        }
+        if (cur.isDuel() && !m_duelBrowser) {
+            dialog.setLoginStatus(tr("Duel needs the WebView2 Runtime (Microsoft Edge WebView2)."), false);
+            return;
+        }
+        const bool needsBrowser = !cur.isDirect() && !cur.extensionMode;
         // Stake cookie mode: the browser was just (re)created and is still loading: wait for
         // it, but not forever.
         if (needsBrowser && m_hiddenBrowser && !m_hiddenBrowser->isPageLoaded()) {
@@ -2336,7 +2371,7 @@ void MainWindow::ensureHiddenBrowser(const LiveSettings &s)
 
         // Fetch the balance as soon as the page is actually loaded.
         connect(m_hiddenBrowser, &CookieGrabberDialog::pageLoaded, this, [this] {
-            if (m_live.enabled && !m_live.isShuffle() && !m_live.isGoated() && !m_live.isWolfbet() && m_stake)
+            if (m_live.enabled && !m_live.isDirect() && m_stake)
                 m_stake->fetchBalances();
             else
                 requestStakeBackgroundBalance(); // Shuffle / Goated / Wolfbet active: fill Stake's cache
@@ -2357,6 +2392,41 @@ void MainWindow::applyWolfbetCredentials(const LiveSettings &s)
     WolfbetCredentials wc;
     wc.token = s.wolfbetToken;
     m_wolfbet->setCredentials(wc);
+}
+
+void MainWindow::applyDuelCredentials(const LiveSettings &s)
+{
+    DuelCredentials dc;
+    dc.token = s.duelToken;
+    dc.uuid = s.duelUuid;
+    dc.clearance = s.duelClearance;
+    dc.userAgent = s.duelUserAgent;
+    m_duel->setCredentials(dc);
+    if (!m_duel->credentials().token.isEmpty() && !m_duel->credentials().uuid.isEmpty())
+        ensureDuelBrowser();
+}
+
+// Duel's Cloudflare drops plain HTTPS from the app, so its requests run in a hidden WebView2
+// page on duel.com (same session folder as "Open Duel.com & Log in": it is logged in too).
+void MainWindow::ensureDuelBrowser()
+{
+    if (m_duelBrowser || !DuelBrowser::isAvailable())
+        return;
+    m_duelBrowser = new DuelBrowser(nullptr);
+    // No parent: hand over this window's WebView2 session folder explicitly.
+    m_duelBrowser->setProperty(WebViewSession::kProperty, property(WebViewSession::kProperty));
+    m_duelBrowser->setAttribute(Qt::WA_DontShowOnScreen);
+    m_duelBrowser->show();
+    m_duel->setBrowser(m_duelBrowser);
+    // Read the balance as soon as the page is there (active casino or background cache).
+    connect(m_duelBrowser, &DuelBrowser::pageLoaded, this, [this] {
+        if (!m_live.enabled && !m_optionsDialog)
+            return;
+        if (m_stake->isDuel())
+            m_stake->fetchBalances();
+        else if (m_duel->isReady())
+            m_duel->requestBalances();
+    });
 }
 
 // Stake's session (extension server or hidden WebView2 browser) is kept up while Goated is the
@@ -2428,6 +2498,8 @@ void MainWindow::refreshBackgroundBalances()
         m_goated->requestBalances();
     if (!m_live.isWolfbet() && m_wolfbet->isReady())
         m_wolfbet->requestBalances();
+    if (!m_live.isDuel() && m_duel->isReady())
+        m_duel->requestBalances();
     requestStakeBackgroundBalance();
 }
 
@@ -2441,11 +2513,32 @@ void MainWindow::onStakeBackgroundBalances(const QMap<QString, double> &balances
 
 bool MainWindow::configureConnection(const LiveSettings &s, QString *errorOut)
 {
+    if (s.isDuel()) {
+        // Direct mode: plain HTTPS straight from the app (cookie + UUID; the security token is
+        // fetched by the transport). The Stake browser / extension are left as they are.
+        applyDuelCredentials(s);
+        applyGoatedCredentials(s);  // so Goated's balance can be read in the background
+        applyWolfbetCredentials(s); // so Wolfbet's balance can be read in the background
+
+        ShuffleCredentials sc;
+        sc.site = s.shuffleSite;
+        sc.token = s.shuffleToken;
+        sc.correlationUserId = s.correlationUserId;
+        sc.browserId = s.browserId;
+        m_shuffle->setCredentials(sc);
+        updateShuffleBackground(s, false);
+        keepStakeSessionAlive(s);
+
+        m_stake->setTransport(m_duel);
+        m_stake->setCurrency(s.currency);
+        return true;
+    }
     if (s.isWolfbet()) {
         // Direct mode: plain HTTPS straight from the app, only the token is needed. The
         // Stake browser / extension are left as they are for a quick switch back.
         applyWolfbetCredentials(s);
         applyGoatedCredentials(s); // so Goated's balance can be read in the background
+        applyDuelCredentials(s);   // so Duel's balance can be read in the background
 
         // Shuffle's balance socket keeps running in the background like it does for Stake.
         ShuffleCredentials sc;
@@ -2468,6 +2561,7 @@ bool MainWindow::configureConnection(const LiveSettings &s, QString *errorOut)
         gc.token = s.goatedToken;
         m_goated->setCredentials(gc);
         applyWolfbetCredentials(s); // so Wolfbet's balance can be read in the background
+        applyDuelCredentials(s);    // so Duel's balance can be read in the background
 
         // Shuffle's balance socket keeps running in the background like it does for Stake.
         ShuffleCredentials sc;
@@ -2513,6 +2607,7 @@ bool MainWindow::configureConnection(const LiveSettings &s, QString *errorOut)
         }
         applyGoatedCredentials(s); // so Goated's balance can be read in the background
         applyWolfbetCredentials(s); // so Wolfbet's balance can be read in the background
+        applyDuelCredentials(s);    // so Duel's balance can be read in the background
         m_stake->setTransport(m_shuffle);
         m_stake->setCurrency(s.currency);
         updateShuffleBackground(s, false);
@@ -2531,6 +2626,7 @@ bool MainWindow::configureConnection(const LiveSettings &s, QString *errorOut)
     }
     applyGoatedCredentials(s); // so Goated's balance can be read in the background
     applyWolfbetCredentials(s); // so Wolfbet's balance can be read in the background
+    applyDuelCredentials(s);    // so Duel's balance can be read in the background
 
     StakeCredentials cred;
     cred.site = s.site;
@@ -2577,6 +2673,8 @@ void MainWindow::applyLiveSettings(const LiveSettings &requested)
         m_goatedBalances.clear();
     if (!next.enabled || m_live.wolfbetToken != next.wolfbetToken)
         m_wolfbetBalances.clear();
+    if (!next.enabled || m_live.duelToken != next.duelToken || m_live.duelUuid != next.duelUuid)
+        m_duelBalances.clear();
     if (!next.enabled || m_live.apiKey != next.apiKey || m_live.site != next.site)
         m_stakeBalances.clear();
 
@@ -2600,6 +2698,7 @@ void MainWindow::applyLiveSettings(const LiveSettings &requested)
     refreshShuffleBalanceVar();
     refreshGoatedBalanceVar();
     refreshWolfbetBalanceVar();
+    refreshDuelBalanceVar();
     refreshStakeBalanceVar();
     // Switching to Shuffle: its balance has been tracked in the background, so load it into
     // the session stats right now instead of waiting for a new login round trip.
@@ -2631,7 +2730,7 @@ void MainWindow::applyLiveSettings(const LiveSettings &requested)
         m_balanceTimer->start();
         onLogMessage(tr("Live betting enabled (%1, %2). Fetching balance…")
                          .arg(m_live.activeSite(),
-                              (m_live.isShuffle() || m_live.isGoated() || m_live.isWolfbet()) ? tr("direct")
+                              m_live.isDirect() ? tr("direct")
                                                  : (m_live.extensionMode ? tr("extension") : tr("cookie"))),
                      false);
     } else {
@@ -2650,13 +2749,14 @@ void MainWindow::onBalancesReady(const QMap<QString, double> &reported)
     const LiveSettings::Casino from = m_stake->isShuffle()   ? LiveSettings::Casino::Shuffle
                                       : m_stake->isGoated()  ? LiveSettings::Casino::Goated
                                       : m_stake->isWolfbet() ? LiveSettings::Casino::Wolfbet
+                                      : m_stake->isDuel()    ? LiveSettings::Casino::Duel
                                                              : LiveSettings::Casino::Stake;
     // The dialog only takes answers for the casino it is showing; the main window only for
     // the active casino (a login test for another casino must not change its balance).
     const bool forDialog = m_optionsDialog && m_optionsDialog->liveSettings().casino == from;
     const bool forActive = m_live.casino == from;
 
-    // Stake / Goated / Wolfbet always answer with the full currency list; Shuffle only once
+    // Stake / Goated / Wolfbet / Duel always answer with the full currency list; Shuffle only once
     // its full list was read (before that its websocket may be pushing balances one by one).
     const bool listComplete = from != LiveSettings::Casino::Shuffle || m_shuffle->balanceListKnown();
 
@@ -2847,6 +2947,33 @@ void MainWindow::refreshWolfbetBalanceVar()
     m_wolfbetBalance = m_wolfbetBalanceKnown ? m_wolfbetBalances.value(cur) : 0.0;
 }
 
+QString MainWindow::duelCurrency() const
+{
+    return (m_live.isDuel() ? m_live.currency : m_currencyByCasino[int(LiveSettings::Casino::Duel)])
+        .trimmed().toLower();
+}
+
+// Recompute m_duelBalance (the Duel bet currency's balance) from the cache.
+void MainWindow::refreshDuelBalanceVar()
+{
+    const QString cur = duelCurrency();
+    // A read happened but the currency is not in it: zero balance.
+    m_duelBalanceKnown = !cur.isEmpty()
+        && (m_duelBalances.contains(cur) || !m_duelBalances.isEmpty());
+    m_duelBalance = m_duelBalanceKnown ? m_duelBalances.value(cur) : 0.0;
+}
+
+// Every Duel balance read (the active casino's fetches and the background reads while
+// another casino is active) lands here.
+void MainWindow::onDuelBalancesUpdated(const QMap<QString, double> &balances)
+{
+    // Ignore a read made with other credentials (e.g. a login test in the Options dialog).
+    if (!m_live.enabled || m_duel->credentials().uuid != DuelTransport::cleanUuid(m_live.duelUuid))
+        return;
+    m_duelBalances = balances;
+    refreshDuelBalanceVar();
+}
+
 // Every Wolfbet balance read (the active casino's fetches and the background reads while
 // another casino is active) lands here.
 void MainWindow::onWolfbetBalancesUpdated(const QMap<QString, double> &balances)
@@ -2894,6 +3021,8 @@ void MainWindow::snapshotLeavingCasinoBalance()
         m_goatedBalances.insert(cur, balance);
     else if (m_live.isWolfbet())
         m_wolfbetBalances.insert(cur, balance);
+    else if (m_live.isDuel())
+        m_duelBalances.insert(cur, balance);
     else
         m_stakeBalances.insert(cur, balance);
 }
@@ -2908,6 +3037,7 @@ bool MainWindow::loadCachedCasinoBalance()
         return false;
     const QMap<QString, double> &cache = m_live.isGoated()    ? m_goatedBalances
                                          : m_live.isWolfbet() ? m_wolfbetBalances
+                                         : m_live.isDuel()    ? m_duelBalances
                                                               : m_stakeBalances;
     const QString cur = m_live.currency.trimmed().toLower();
     // Nothing read yet = unknown; read, but the currency is not in it = zero balance.
@@ -3045,6 +3175,7 @@ bool MainWindow::switchCurrencyFromScript(const QString &currency, double &balan
     refreshShuffleBalanceVar();
     refreshGoatedBalanceVar();
     refreshWolfbetBalanceVar();
+    refreshDuelBalanceVar();
     refreshStakeBalanceVar();
     balance = m_balances.value(cur);
     m_stake->fetchBalances(); // refresh the figure for the new currency
@@ -3069,11 +3200,11 @@ void MainWindow::updateModeWidgets()
         const bool ready = m_stake->transport() && m_stake->transport()->isReady(&why);
         m_statusMode->setText(tr("%1 · %2%3")
                                   .arg(m_live.activeSite(),
-                                       (m_live.isShuffle() || m_live.isGoated() || m_live.isWolfbet())
+                                       m_live.isDirect()
                                            ? tr("direct")
                                            : (m_live.extensionMode ? tr("extension")
                                                                    : tr("cookie")),
-                                       (ready || m_live.isShuffle() || m_live.isGoated() || m_live.isWolfbet()
+                                       (ready || m_live.isDirect()
                                         || !m_live.extensionMode) ? QString() : tr(" (not connected)")));
         m_statusMode->setStyleSheet(QStringLiteral("color:#c9372a;font-weight:bold;"));
     } else {
@@ -3477,6 +3608,7 @@ void MainWindow::loadSettings()
     m_currencyByCasino[1] = settings.value(QStringLiteral("shuffleCurrency")).toString();
     m_currencyByCasino[2] = settings.value(QStringLiteral("goatedCurrency")).toString();
     m_currencyByCasino[3] = settings.value(QStringLiteral("wolfbetCurrency")).toString();
+    m_currencyByCasino[4] = settings.value(QStringLiteral("duelCurrency")).toString();
     m_live.currency = m_currencyByCasino[int(m_live.casino)];
 	m_live.enabled = settings.value(QStringLiteral("enabled"), false).toBool();
 	
@@ -3487,6 +3619,10 @@ void MainWindow::loadSettings()
     m_live.shuffleToken = settings.value(QStringLiteral("shuffleToken")).toString();
     m_live.goatedToken = settings.value(QStringLiteral("goatedToken")).toString();
     m_live.wolfbetToken = settings.value(QStringLiteral("wolfbetToken")).toString();
+    m_live.duelToken = settings.value(QStringLiteral("duelToken")).toString();
+    m_live.duelUuid = settings.value(QStringLiteral("duelUuid")).toString();
+    m_live.duelClearance = settings.value(QStringLiteral("duelClearance")).toString();
+    m_live.duelUserAgent = settings.value(QStringLiteral("duelUserAgent")).toString();
     m_live.correlationUserId = settings.value(QStringLiteral("correlationUserId")).toString();
     m_live.browserId = settings.value(QStringLiteral("browserId")).toString();
     settings.endGroup();
@@ -3559,6 +3695,7 @@ void MainWindow::saveOptionsSettings(QSettings &settings)
     settings.setValue(QStringLiteral("shuffleCurrency"), m_currencyByCasino[1]);
     settings.setValue(QStringLiteral("goatedCurrency"), m_currencyByCasino[2]);
     settings.setValue(QStringLiteral("wolfbetCurrency"), m_currencyByCasino[3]);
+    settings.setValue(QStringLiteral("duelCurrency"), m_currencyByCasino[4]);
     settings.remove(QStringLiteral("remember")); // old "Remember…" checkbox, no longer used
 	settings.setValue(QStringLiteral("enabled"), m_live.enabled);
 	
@@ -3568,6 +3705,10 @@ void MainWindow::saveOptionsSettings(QSettings &settings)
     settings.setValue(QStringLiteral("shuffleToken"), m_live.shuffleToken);
     settings.setValue(QStringLiteral("goatedToken"), m_live.goatedToken);
     settings.setValue(QStringLiteral("wolfbetToken"), m_live.wolfbetToken);
+    settings.setValue(QStringLiteral("duelToken"), m_live.duelToken);
+    settings.setValue(QStringLiteral("duelUuid"), m_live.duelUuid);
+    settings.setValue(QStringLiteral("duelClearance"), m_live.duelClearance);
+    settings.setValue(QStringLiteral("duelUserAgent"), m_live.duelUserAgent);
     settings.setValue(QStringLiteral("correlationUserId"), m_live.correlationUserId);
     settings.setValue(QStringLiteral("browserId"), m_live.browserId);
     settings.endGroup();
@@ -3637,6 +3778,12 @@ void MainWindow::closeEvent(QCloseEvent *event)
     if (m_webTransport) {
         delete m_webTransport;
         m_webTransport = nullptr;
+    }
+    if (m_duelBrowser) {
+        m_duel->setBrowser(nullptr);
+        m_duelBrowser->close();
+        delete m_duelBrowser;
+        m_duelBrowser = nullptr;
     }
     if (m_shuffle)
         m_shuffle->closeSocket();

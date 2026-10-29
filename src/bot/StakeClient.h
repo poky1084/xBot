@@ -62,12 +62,14 @@ public:
     // The transport decides the casino: a ShuffleTransport switches this client to
     // Shuffle's GraphQL API (dice and limbo; balances come from its websocket), a
     // GoatedTransport to Goated's REST API (dice and limbo; balances over HTTPS), a
-    // WolfbetTransport to Wolfbet's REST API (dice only; balances over HTTPS).
+    // WolfbetTransport to Wolfbet's REST API (dice only; balances over HTTPS), a DuelTransport
+    // to Duel's REST API (dice and limbo; balances over HTTPS).
     void setTransport(IStakeTransport *transport);
     IStakeTransport *transport() const { return m_transport; }
     bool isShuffle() const;
     bool isGoated() const;
     bool isWolfbet() const;
+    bool isDuel() const;
 
     // API currency code, lowercase ("btc", "usdt", ...).
     void setCurrency(const QString &currency);
@@ -128,6 +130,14 @@ private:
     void placeWolfbetDice(const DiceBetRequest &request);
     void placeWolfbetLimbo(const LimboBetRequest &request);
     void rotateWolfbetSeed();
+    void placeDuelDice(const DiceBetRequest &request);
+    void rotateDuelSeed(const QString &clientSeed);
+    void placeDuelLimbo(const LimboBetRequest &request);
+    // Shared by Duel dice and limbo: adds the security token to `fields`, posts to `path` and
+    // reads {"data":{"round":{...}}}. limbo: the result is the multiplier, a win is result >= target;
+    // dice: the result is the roll in hundredths, compared with target over / under.
+    void sendDuelBet(const QString &path, const QJsonObject &fields, double requestedAmount,
+                     bool limbo, double target, bool over, bool tokenRetried);
     void rotateGoatedSeed(const QString &clientSeed);
     void goatedVaultDeposit(double amount);
     void rotateShuffleSeed(const QString &clientSeed);

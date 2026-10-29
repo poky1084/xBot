@@ -4,7 +4,7 @@
 #include <QtGlobal>
 
 // ---- Casino selection in code ---------------------------------------------------
-// Default casino ("stake", "shuffle", "goated" or "wolfbet") used on the first launch only. After that the
+// Default casino ("stake", "shuffle", "goated", "wolfbet" or "duel") used on the first launch only. After that the
 // casino last selected (Casino menu / script) is saved on exit and restored at startup.
 namespace AppConfig {
 inline const QString casino = QStringLiteral("stake");
@@ -13,10 +13,10 @@ inline const QString casino = QStringLiteral("stake");
 // Connection settings for live (real-money) betting.
 struct LiveSettings
 {
-    enum class Casino { Stake, Shuffle, Goated, Wolfbet };
-    static constexpr int kCasinoCount = 4; // size of per-casino arrays indexed by int(Casino)
+    enum class Casino { Stake, Shuffle, Goated, Wolfbet, Duel };
+    static constexpr int kCasinoCount = 5; // size of per-casino arrays indexed by int(Casino)
 
-    // "shuffle" / "goated" / "wolfbet" (any case) -> that casino, anything else -> Stake.
+    // "shuffle" / "goated" / "wolfbet" / "duel" (any case) -> that casino, anything else -> Stake.
     static Casino fromName(const QString &name)
     {
         if (name.compare(QLatin1String("shuffle"), Qt::CaseInsensitive) == 0)
@@ -25,6 +25,8 @@ struct LiveSettings
             return Casino::Goated;
         if (name.compare(QLatin1String("wolfbet"), Qt::CaseInsensitive) == 0)
             return Casino::Wolfbet;
+        if (name.compare(QLatin1String("duel"), Qt::CaseInsensitive) == 0)
+            return Casino::Duel;
         return Casino::Stake;
     }
 
@@ -35,6 +37,7 @@ struct LiveSettings
         case Casino::Shuffle: return QStringLiteral("shuffle");
         case Casino::Goated:  return QStringLiteral("goated");
         case Casino::Wolfbet: return QStringLiteral("wolfbet");
+        case Casino::Duel:    return QStringLiteral("duel");
         default:              return QStringLiteral("stake");
         }
     }
@@ -61,12 +64,22 @@ struct LiveSettings
     // ---- Wolfbet (Direct mode only: plain HTTPS). Only a token is needed.
     QString wolfbetToken;          // "value" inside the "token" cookie (sent as "Authorization: Bearer <token>")
 
+    // ---- Duel (Direct mode only: plain HTTPS). Bets also need a security token, which the
+    // transport fetches by itself (and again every ~10 minutes).
+    QString duelToken;             // "duel" cookie ("Token" in Options)
+    QString duelUuid;              // localStorage "security:uuid"
+    QString duelClearance;         // "cf_clearance" cookie
+    QString duelUserAgent;         // User-Agent of the login browser (cf_clearance is bound to it)
+
     QString currency;              // lowercase API currency code ("btc", "usdt", ...) of the active casino
     quint16 extensionPort = 4444;  // local WebSocket port the extension connects to
 
     bool isShuffle() const { return casino == Casino::Shuffle; }
     bool isGoated() const { return casino == Casino::Goated; }
     bool isWolfbet() const { return casino == Casino::Wolfbet; }
+    bool isDuel() const { return casino == Casino::Duel; }
+    // Casinos reached with plain HTTPS from the app ("Direct mode"), i.e. everything but Stake.
+    bool isDirect() const { return casino != Casino::Stake; }
     QString casinoName() const { return nameOf(casino); }
 
     // Host of the active casino.
@@ -76,6 +89,8 @@ struct LiveSettings
             return QStringLiteral("goated.com");
         if (isWolfbet())
             return QStringLiteral("wolfbet.com");
+        if (isDuel())
+            return QStringLiteral("duel.com");
         return isShuffle() ? shuffleSite : site;
     }
 };

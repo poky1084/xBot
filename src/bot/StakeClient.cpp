@@ -2,12 +2,14 @@
 
 #include "bot/BotTypes.h"
 
+#include "bot/DuelTransport.h"
 #include "bot/GoatedTransport.h"
 #include "bot/ShuffleTransport.h"
 #include "bot/WolfbetTransport.h"
 
 #include <QJsonArray>
 #include <QJsonDocument>
+#include <QPointer>
 #include <QRandomGenerator>
 #include <QTimer>
 
@@ -148,6 +150,13 @@ void StakeClient::setTransport(IStakeTransport *transport)
         m_shuffleConnections << connect(wolfbet, &WolfbetTransport::balancesFailed, this,
                                         &StakeClient::balancesFailed);
     }
+    if (auto *duel = qobject_cast<DuelTransport *>(transport)) {
+        // Duel: balances are read over HTTPS; same signals as the other casinos.
+        m_shuffleConnections << connect(duel, &DuelTransport::balancesUpdated, this,
+                                        &StakeClient::balancesReady);
+        m_shuffleConnections << connect(duel, &DuelTransport::balancesFailed, this,
+                                        &StakeClient::balancesFailed);
+    }
 }
 
 bool StakeClient::isShuffle() const
@@ -163,6 +172,11 @@ bool StakeClient::isGoated() const
 bool StakeClient::isWolfbet() const
 {
     return qobject_cast<WolfbetTransport *>(m_transport) != nullptr;
+}
+
+bool StakeClient::isDuel() const
+{
+    return qobject_cast<DuelTransport *>(m_transport) != nullptr;
 }
 
 void StakeClient::setCurrency(const QString &currency)
@@ -206,6 +220,10 @@ void StakeClient::rotateSeedPair(const QString &clientSeed)
     }
     if (isWolfbet()) {
         rotateWolfbetSeed(); // the client seed cannot be chosen on Wolfbet
+        return;
+    }
+    if (isDuel()) {
+        rotateDuelSeed(clientSeed);
         return;
     }
 
@@ -378,6 +396,10 @@ void StakeClient::vaultDeposit(double amount)
         QTimer::singleShot(0, this, [this] { emit vaultFailed(tr("Wolfbet: vault deposits are not supported.")); });
         return;
     }
+    if (isDuel()) {
+        QTimer::singleShot(0, this, [this] { emit vaultFailed(tr("Duel: vault deposits are not supported.")); });
+        return;
+    }
     if (!isShuffle()) {
         stakeVaultDeposit(amount);
         return;
@@ -529,6 +551,11 @@ void StakeClient::fetchBalances()
         wolfbet->requestBalances();
         return;
     }
+    // Duel: GET /api/v2/metadata (user.balances); results arrive through the transport's signals.
+    if (auto *duel = qobject_cast<DuelTransport *>(m_transport)) {
+        duel->requestBalances();
+        return;
+    }
 
     postBalanceQuery(m_transport, false);
 }
@@ -602,7 +629,7 @@ void StakeClient::postBalanceQuery(IStakeTransport *via, bool background)
 void StakeClient::lookupBetIid(const QString &betId, std::function<void(const QString &)> done)
 {
     QString why;
-    if (betId.isEmpty() || !m_transport || isShuffle() || isGoated() || isWolfbet() || !m_transport->isReady(&why)) {
+    if (betId.isEmpty() || !m_transport || isShuffle() || isGoated() || isWolfbet() || isDuel() || !m_transport->isReady(&why)) {
         QTimer::singleShot(0, this, [done] { done(QString()); });
         return;
     }
@@ -654,6 +681,10 @@ void StakeClient::placeDice(const DiceBetRequest &request)
         placeWolfbetDice(request);
         return;
     }
+    if (isDuel()) {
+        placeDuelDice(request);
+        return;
+    }
 
     const double target = std::round(request.target * 100.0) / 100.0;
 
@@ -692,6 +723,10 @@ void StakeClient::placeLimbo(const LimboBetRequest &request)
     }
     if (isWolfbet()) {
         placeWolfbetLimbo(request);
+        return;
+    }
+    if (isDuel()) {
+        placeDuelLimbo(request);
         return;
     }
 
@@ -1221,6 +1256,274 @@ void StakeClient::placeWolfbetDice(const DiceBetRequest &request)
         r.betId = bet.value(QStringLiteral("hash")).toString();
         r.nonce = bet.contains(QStringLiteral("nonce")) ? qint64(numberOf(bet.value(QStringLiteral("nonce")))) : -1;
         emit diceFinished(r);
+    });
+}
+
+// Duel: POST https://duel.com/api/v2/client-seed/rotate {"client_seed":"R7mWIxg9Qf30VSJY"}
+// Answer: {"success":true,"data":{"client_seed":"R7mWIxg9Qf30VSJY","server_seed_hashed":"031f...",
+//   "next_server_seed_hash":"53b1...","nonce":0}}
+void StakeClient::rotateDuelSeed(const QString &clientSeed)
+{
+    QString why;
+    if (!m_transport || !m_transport->isReady(&why)) {
+        const QString msg = m_transport ? why : tr("No transport configured.");
+        QTimer::singleShot(0, this, [this, msg] { emit seedRotateFailed(msg); });
+        return;
+    }
+
+    QJsonObject body;
+    body.insert(QStringLiteral("client_seed"), clientSeed);
+
+    m_transport->post(QStringLiteral("api/v2/client-seed/rotate"), body,
+                      [this, clientSeed](const TransportReply &reply) {
+        if (!reply.ok) {
+            if (reply.status == 0)
+                emit sessionLost(reply.error);
+            emit seedRotateFailed(reply.error);
+            return;
+        }
+        const QJsonObject &json = reply.json;
+        QJsonObject data = json.value(QStringLiteral("data")).toObject();
+        if (data.isEmpty())
+            data = json; // also accept the fields at the top level
+        const bool success = !json.contains(QStringLiteral("success"))
+                             || json.value(QStringLiteral("success")).toBool();
+        const QString hash = data.value(QStringLiteral("server_seed_hashed")).toString();
+        if (!success || reply.status >= 400 || (hash.isEmpty() && !data.contains(QStringLiteral("client_seed")))) {
+            QString msg = goatedErrorText(json);
+            if (msg.isEmpty())
+                msg = tr("Duel seed rotation rejected (HTTP %1).").arg(reply.status);
+            emit seedRotateFailed(msg);
+            return;
+        }
+        QString activeClient = data.value(QStringLiteral("client_seed")).toString();
+        if (activeClient.isEmpty())
+            activeClient = clientSeed;
+        const qint64 nonce = data.contains(QStringLiteral("nonce"))
+                                 ? qint64(numberOf(data.value(QStringLiteral("nonce")))) : 0;
+        emit seedRotated(activeClient, nonce, hash,
+                         data.value(QStringLiteral("next_server_seed_hash")).toString());
+    });
+}
+
+// Duel dice: POST https://duel.com/api/v2/dice/bet
+//   {"amount":"0","bet_type":"over","currency":102,"security_token":"<token>","target":"5005"}
+// The roll runs 0 - 10000 (shown as 0.00 - 100.00), so the target is sent in hundredths:
+// "over 50.05" -> "5005". The currency is Duel's number (101 = btc, 102 = bch, ...).
+// Answer: {"data":{"round":{"id","result" (the roll, in hundredths),"is_win","amount_currency"
+//   (the stake),"amount_won" (the payout, stake included, 0 on a loss),"bet_type","target",
+//   "win_chance","multiplier","nonce","client_seed",...}}} (also accepted without "data").
+// The security token expires every 600 s: the transport renews it before that, and a bet the
+// server rejects for an invalid / expired token is sent once more with a fresh one.
+void StakeClient::placeDuelDice(const DiceBetRequest &request)
+{
+    const int currencyId = DuelTransport::currencyId(m_currency);
+    if (currencyId == 0) {
+        const LiveBetResult r = failed(tr("Duel: unknown currency \"%1\" (use one of: %2).")
+                                           .arg(m_currency,
+                                                DuelTransport::currencyCodes().join(QStringLiteral(", "))));
+        QTimer::singleShot(0, this, [this, r] { emit diceFinished(r); });
+        return;
+    }
+
+    const qint64 target = qint64(std::llround(request.target * 100.0));
+    if (target <= 0 || target >= 10000) {
+        const LiveBetResult r = failed(tr("Duel: invalid target %1.").arg(request.target, 0, 'f', 2));
+        QTimer::singleShot(0, this, [this, r] { emit diceFinished(r); });
+        return;
+    }
+
+    // Amount as a plain decimal string without trailing zeros ("0", "0.00012"), like the site.
+    QString amountText = QString::number(std::max(0.0, request.amount), 'f', 8);
+    while (amountText.contains(QLatin1Char('.')) && amountText.endsWith(QLatin1Char('0')))
+        amountText.chop(1);
+    if (amountText.endsWith(QLatin1Char('.')))
+        amountText.chop(1);
+
+    QJsonObject fields;
+    fields.insert(QStringLiteral("amount"), amountText);
+    fields.insert(QStringLiteral("bet_type"), request.over ? QStringLiteral("over") : QStringLiteral("under"));
+    fields.insert(QStringLiteral("currency"), currencyId);
+    fields.insert(QStringLiteral("target"), QString::number(target));
+    sendDuelBet(QStringLiteral("api/v2/dice/bet"), fields, request.amount, false,
+                double(target) / 100.0, request.over, false);
+}
+
+// Duel limbo: POST https://duel.com/api/v2/limbo/bet
+//   {"amount":"0.0114738","target":"2.00","currency":106,"security_token":"<token>","instant":false}
+// Answer: {"success":true,"data":{"round":{"id","result":"5.388335" (the multiplier rolled),"is_win",
+//   "amount_currency" (the stake),"amount_won" (the payout, stake included),"target","win_chance",
+//   "multiplier","nonce",...}}}
+void StakeClient::placeDuelLimbo(const LimboBetRequest &request)
+{
+    const int currencyId = DuelTransport::currencyId(m_currency);
+    if (currencyId == 0) {
+        const LiveBetResult r = failed(tr("Duel: unknown currency \"%1\" (use one of: %2).")
+                                           .arg(m_currency,
+                                                DuelTransport::currencyCodes().join(QStringLiteral(", "))));
+        QTimer::singleShot(0, this, [this, r] { emit diceFinished(r); });
+        return;
+    }
+    const double target = std::round(request.multiplierTarget * 100.0) / 100.0;
+    if (!(target > 1.0)) {
+        const LiveBetResult r = failed(tr("Duel: invalid Limbo multiplier %1.").arg(target));
+        QTimer::singleShot(0, this, [this, r] { emit diceFinished(r); });
+        return;
+    }
+
+    QString amountText = QString::number(std::max(0.0, request.amount), 'f', 8);
+    while (amountText.contains(QLatin1Char('.')) && amountText.endsWith(QLatin1Char('0')))
+        amountText.chop(1);
+    if (amountText.endsWith(QLatin1Char('.')))
+        amountText.chop(1);
+
+    QJsonObject fields;
+    fields.insert(QStringLiteral("amount"), amountText);
+    fields.insert(QStringLiteral("target"), QString::number(target, 'f', 2)); // "2.00", like the site
+    fields.insert(QStringLiteral("currency"), currencyId);
+    fields.insert(QStringLiteral("instant"), false);
+    sendDuelBet(QStringLiteral("api/v2/limbo/bet"), fields, request.amount, true, target, false, false);
+}
+
+namespace
+{
+// The bet was refused because the security token is missing, invalid or expired.
+bool isDuelTokenError(int status, const QString &text)
+{
+    if (status == 419)
+        return true;
+    const bool mentionsToken = containsCI(text, "security") || containsCI(text, "token");
+    const bool tokenProblem = containsCI(text, "expired") || containsCI(text, "invalid")
+                              || containsCI(text, "required") || containsCI(text, "missing")
+                              || containsCI(text, "not valid") || containsCI(text, "incorrect");
+    return mentionsToken && (tokenProblem || status == 401 || status == 403 || status == 422);
+}
+} // namespace
+
+void StakeClient::sendDuelBet(const QString &path, const QJsonObject &fields, double requestedAmount,
+                              bool limbo, double target, bool over, bool tokenRetried)
+{
+    auto *duel = qobject_cast<DuelTransport *>(m_transport);
+    if (!duel) {
+        const LiveBetResult r = failed(tr("No transport configured."));
+        QTimer::singleShot(0, this, [this, r] { emit diceFinished(r); });
+        return;
+    }
+    QPointer<DuelTransport> guard(duel);
+
+    duel->withSecurityToken([this, guard, path, fields, requestedAmount, limbo, target, over,
+                             tokenRetried](const QString &token, const QString &tokenError, int tokenStatus) {
+        if (!guard || guard.data() != m_transport) {
+            emit diceFinished(failed(tr("Duel: the casino was switched before the bet was sent.")));
+            return;
+        }
+        if (token.isEmpty()) {
+            // No token, so no bet was sent: safe to retry when it was a network / rate limit problem.
+            const bool retry = tokenStatus == 0 || tokenStatus == 429 || tokenStatus >= 500
+                               || isRetryable({}, tokenError);
+            if (tokenStatus == 0)
+                emit sessionLost(tokenError);
+            LiveBetResult r = failed(tr("Duel: could not get a security token: %1").arg(tokenError),
+                                     {}, retry, false);
+            emit diceFinished(r);
+            return;
+        }
+
+        QJsonObject body = fields;
+        body.insert(QStringLiteral("security_token"), token);
+
+        guard->post(path, body,
+                    [this, guard, path, fields, requestedAmount, limbo, target, over,
+                     tokenRetried](const TransportReply &reply) {
+            // Security token expired / rejected: the bet was not placed. Get a new token and
+            // send the same bet once more.
+            const QString replyText = reply.ok ? goatedErrorText(reply.json) : reply.error;
+            // {"data":{"round":{...}}} (also accepted: {"round":{...}}).
+            QJsonObject round = reply.json.value(QStringLiteral("round")).toObject();
+            if (round.isEmpty())
+                round = reply.json.value(QStringLiteral("data")).toObject()
+                            .value(QStringLiteral("round")).toObject();
+            const bool hasRound = reply.ok && !round.isEmpty();
+            if (!hasRound && !tokenRetried && guard && isDuelTokenError(reply.status, replyText)) {
+                guard->invalidateSecurityToken();
+                sendDuelBet(path, fields, requestedAmount, limbo, target, over, true);
+                return;
+            }
+
+            if (!reply.ok) {
+                const bool isTimeout = (reply.status == 0);
+                const bool unknown = (reply.status >= 500);
+                if (reply.status == 0)
+                    emit sessionLost(reply.error);
+                emit diceFinished(failed(reply.error, {}, isTimeout, unknown));
+                return;
+            }
+
+            const QJsonObject &json = reply.json;
+            if (round.isEmpty()) {
+                // No round in the answer: an API error (or rate limit notice) - the bet was not placed.
+                QString errText = replyText;
+                if (errText.isEmpty())
+                    errText = tr("Duel bet rejected (HTTP %1).").arg(reply.status);
+                if (reply.status >= 400 || isRetryable({}, errText)) {
+                    LiveBetResult r = failed(errText, {}, isRetryable({}, errText), false);
+                    r.retryDelayMs = fastRetryDelayMs({}, errText);
+                    emit diceFinished(r);
+                    return;
+                }
+                const QString raw = QString::fromUtf8(QJsonDocument(json).toJson(QJsonDocument::Compact)).left(400);
+                // The bet may or may not have been placed: do not retry blindly.
+                emit diceFinished(failed(tr("Unexpected Duel bet response (no round found): %1").arg(raw),
+                                         {}, false, true));
+                return;
+            }
+            if (!round.contains(QStringLiteral("result"))) {
+                const QString raw = QString::fromUtf8(QJsonDocument(json).toJson(QJsonDocument::Compact)).left(400);
+                emit diceFinished(failed(tr("Unexpected Duel bet response (no roll found): %1").arg(raw),
+                                         {}, false, true));
+                return;
+            }
+
+            LiveBetResult r;
+            r.ok = true;
+            // "amount_currency" is the stake the server took (same unit as the balance).
+            r.amount = round.contains(QStringLiteral("amount_currency"))
+                           ? numberOf(round.value(QStringLiteral("amount_currency")))
+                           : requestedAmount;
+            // Dice: the roll in hundredths (5005 -> 50.05). Limbo: the multiplier rolled ("5.388335").
+            r.roll = limbo ? numberOf(round.value(QStringLiteral("result")))
+                           : numberOf(round.value(QStringLiteral("result"))) / 100.0;
+
+            if (round.value(QStringLiteral("is_win")).isBool())
+                r.win = round.value(QStringLiteral("is_win")).toBool();
+            else if (limbo)
+                r.win = r.roll >= target;
+            else
+                r.win = over ? r.roll > target : r.roll < target;
+
+            if (r.win) {
+                double mult = numberOf(round.value(QStringLiteral("multiplier")));
+                if (!(mult > 0.0) && limbo)
+                    mult = target;
+                if (!(mult > 0.0)) {
+                    // Fallback: 0.1 % edge (what the server answered with).
+                    const double chance = numberOf(round.value(QStringLiteral("win_chance")));
+                    mult = chance > 0.0 ? 0.999 / chance : 0.0;
+                }
+                r.multiplier = mult;
+                r.payout = r.amount * r.multiplier;
+                // The server's payout (stake included) is the truth when it is there.
+                const double won = numberOf(round.value(QStringLiteral("amount_won")));
+                if (won > 0.0)
+                    r.payout = won;
+            }
+
+            const QJsonValue idv = round.value(QStringLiteral("id"));
+            r.betId = idv.isDouble() ? QString::number(qint64(idv.toDouble())) : idv.toString();
+            r.nonce = round.contains(QStringLiteral("nonce"))
+                          ? qint64(numberOf(round.value(QStringLiteral("nonce")))) : -1;
+            emit diceFinished(r);
+        });
     });
 }
 

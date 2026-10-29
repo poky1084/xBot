@@ -83,7 +83,7 @@ private:
     void onCasinoChanged(int index);
     // Adapts the "Live betting" box to the casino chosen in the Casino selector / menu
     // (Shuffle: Token, Direct mode only, USER_ID, BROWSER_ID;
-    // Goated, Wolfbet: just the Token).
+    // Goated, Wolfbet: just the Token; Duel: Token, UUID, cf_clearance).
     void applyCasinoUi();
     // The bet currency was typed / changed: fetch the balance for it (0 if the account
     // does not hold it), when the login data is complete.
@@ -104,6 +104,7 @@ private:
     void onShuffleLogin();
     void onGoatedLogin();
     void onWolfbetLogin();
+    void onDuelLogin();
     QComboBox *m_themeCombo = nullptr;
     QComboBox *m_currencyCombo = nullptr;
     QDoubleSpinBox *m_startBalanceSpin = nullptr;
@@ -116,10 +117,13 @@ private:
     bool m_shuffle = false;
     bool m_goated = false;
     bool m_wolfbet = false;
+    bool m_duel = false;
     QGroupBox *m_liveBox = nullptr;
     QFormLayout *m_liveForm = nullptr;
     QLineEdit *m_correlationEdit = nullptr;
     QLineEdit *m_browserIdEdit = nullptr;
+    QLineEdit *m_duelUuidEdit = nullptr;       // Duel only
+    QLineEdit *m_duelClearanceEdit = nullptr;  // Duel only
 
     QCheckBox *m_liveEnable = nullptr;
     QComboBox *m_casinoCombo = nullptr;
@@ -140,6 +144,7 @@ private:
     QPushButton *m_shuffleLoginBtn = nullptr;
     QPushButton *m_goatedLoginBtn = nullptr;
     QPushButton *m_wolfbetLoginBtn = nullptr;
+    QPushButton *m_duelLoginBtn = nullptr;
     QLabel *m_loginStatus = nullptr;
     quint16 m_extensionPort = 4444;
     bool m_extConnected = false;

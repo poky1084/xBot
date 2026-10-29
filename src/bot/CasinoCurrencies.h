@@ -15,12 +15,17 @@
 //   Stake:   no public list; the Options dialog collects the currencies from the
 //            UserBalances answer (fetched automatically once Site + API key are filled in)
 //            and merges them into this cache.
+//   Duel:    the site's wallet list (id 101 = btc, 102 = bch, ...; DuelTransport::currencyCodes()),
+//            plus the account's currencies from GET /api/v2/metadata (user.balances), which the
+//            login / balance fetch reads through the hidden Duel browser (Duel's Cloudflare
+//            refuses plain HTTPS); the Options dialog merges them in (setLiveCurrencies).
 //   Shuffle: fixed list (the site's wallet list); "gram" is sent to Shuffle as "TON",
 //            see ShuffleTransport::apiCurrency().
 //
 // Header-only and without Q_OBJECT, so it needs no extra build / moc entry.
 
 #include "bot/LiveSettings.h"
+#include "bot/DuelTransport.h"
 #include "bot/WolfbetTransport.h"
 
 #include <QCoreApplication>
@@ -83,6 +88,9 @@ inline QStringList cached(LiveSettings::Casino casino)
     QHash<int, QStringList> &mem = memoryCache();
     if (!mem.contains(int(casino)))
         mem.insert(int(casino), QSettings().value(cacheKey(casino)).toStringList());
+    // Duel: the site's wallet list until the first fetch.
+    if (casino == LiveSettings::Casino::Duel && mem.value(int(casino)).isEmpty())
+        return DuelTransport::allCurrencyCodes();
     return mem.value(int(casino));
 }
 
