@@ -2,14 +2,15 @@
   "name": "Originals Request Proxy",
   "description": "Forwards xBot's requests to the casino tab you have open (Stake, Shuffle, Goated, Wolfbet, Duel) and sends the answers back.",
   "manifest_version": 3,
-  "version": "2.0.1",
+  "version": "2.1.0",
   "permissions": [
     "webNavigation",
     "scripting",
     "tabs",
     "activeTab",
     "webRequest",
-    "webRequestAuthProvider"
+    "webRequestAuthProvider",
+    "cookies"
   ],
   "host_permissions": [
     "https://*.stake.bet/*",
@@ -35,7 +36,7 @@
     "https://*.goated.com/*",
     "https://*.wolfbet.com/*",
     "https://*.duel.com/*",
-	"https://*.duel.net/*"
+    "https://*.duel.net/*"
   ],
   "background": {
     "service_worker": "background.js"

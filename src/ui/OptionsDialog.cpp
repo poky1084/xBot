@@ -232,7 +232,7 @@ OptionsDialog::OptionsDialog(QWidget *parent)
     m_clearanceEdit = new QLineEdit;
     m_clearanceEdit->setEchoMode(QLineEdit::Password);
     m_clearanceEdit->setPlaceholderText(tr("cf_clearance cookie value"));
-    //liveForm->addRow(tr("cf_clearance:"), m_clearanceEdit);
+    liveForm->addRow(tr("cf_clearance:"), m_clearanceEdit); // Stake only (Duel has its own)
 
 	m_grabCookieBtn = new QPushButton(tr("Open site && grab cf_clearance…"));
 	m_grabCookieBtn->setEnabled(CookieGrabberDialog::isAvailable());
@@ -344,7 +344,7 @@ OptionsDialog::OptionsDialog(QWidget *parent)
     root->addWidget(buttons);
 
     // Opens wide enough for both columns; the width can then be changed freely.
-    resize(qMax(900, content->sizeHint().width() + 40), content->sizeHint().height() + 90);
+    resize(qMax(900, content->sizeHint().width() + 40), content->sizeHint().height() + 150); // 60 px taller than before
 }
 
 bool OptionsDialog::clearStoredData(QString *error)
@@ -486,7 +486,7 @@ void OptionsDialog::applyCasinoUi()
     const bool duel = m_duel;
     const bool tokenOnly = goated || wolfbet;        // the token is the only input
     const bool noSite = tokenOnly;                   // no "Site / mirror" input
-    const bool direct = shuffle || noSite; // all use "Direct mode" (plain HTTPS)
+    const bool direct = shuffle || noSite || duel; // all but Stake use "Direct mode"
 
     m_liveBox->setTitle(duel ? tr("Live betting — Duel")
                         : wolfbet ? tr("Live betting — Wolfbet")
@@ -516,6 +516,7 @@ void OptionsDialog::applyCasinoUi()
                                              : QStringLiteral("stake.com"));
 
     setFormRowVisible(m_siteEdit, !noSite);        // Goated / Wolfbet: fixed site
+    setFormRowVisible(m_clearanceEdit, !direct);   // Stake's cf_clearance
     setFormRowVisible(m_correlationEdit, shuffle);
     setFormRowVisible(m_browserIdEdit, shuffle);
     setFormRowVisible(m_shuffleLoginBtn, shuffle);
@@ -530,7 +531,7 @@ void OptionsDialog::applyCasinoUi()
 void OptionsDialog::updateAuthFields()
 {
     const bool ext = m_authCombo->currentIndex() == 1; // "Browser extension" (every casino)
-    m_clearanceEdit->setEnabled(!ext);
+    m_clearanceEdit->setEnabled(true); // typed in, or read from the Stake tab in extension mode
     m_userAgentEdit->setEnabled(!ext);
     m_extStatus->setEnabled(ext);
     if (m_grabCookieBtn)
@@ -777,12 +778,12 @@ void OptionsDialog::onCurrencyEdited()
 QString OptionsDialog::missingLoginData() const
 {
     const auto empty = [](const QLineEdit *e) { return !e || e->text().trimmed().isEmpty(); };
+    // "Browser extension": every token / id / API key is read from the casino's tab.
+    if (m_authCombo && m_authCombo->currentIndex() == 1)
+        return QString();
     if (m_goated || m_wolfbet)
         return empty(m_apiKeyEdit) ? tr("the token is empty.") : QString();
     if (m_duel) {
-        // Extension mode: the Duel tab has its own login cookie and UUID: nothing is needed.
-        if (m_authCombo->currentIndex() == 1)
-            return QString();
         if (empty(m_apiKeyEdit))
             return tr("the token (\"duel\" cookie) is empty.");
         if (empty(m_duelUuidEdit))
@@ -816,6 +817,8 @@ QString OptionsDialog::autoFetchKey() const
 {
     const LiveSettings s = liveSettings();
     QStringList parts{s.casinoName(), s.activeUsesExtension() ? QStringLiteral("ext") : QStringLiteral("direct")};
+    if (s.activeUsesExtension()) // the login comes from the tab: only the site matters
+        return (parts + s.extensionHosts(s.casino)).join(QChar(0x1f));
     if (s.isDuel())
         parts << s.duelSite << s.duelToken << s.duelUuid << s.duelClearance;
     else if (s.isWolfbet())
@@ -857,6 +860,39 @@ void OptionsDialog::maybeAutoFetch()
     m_loginBusy = true;
     m_fetchedCurrency = s.currency;
     emit loginRequested(); // same as "Log in": applies the inputs and fetches the balances
+}
+
+void OptionsDialog::setGrabbedCredentials(const LiveSettings &grabbed)
+{
+    m_base.copyCredentials(grabbed.casino, grabbed); // also kept when switching casinos here
+    const LiveSettings cur = liveSettings();
+    if (cur.casino != grabbed.casino)
+        return;
+    switch (grabbed.casino) {
+    case LiveSettings::Casino::Shuffle:
+        m_apiKeyEdit->setText(grabbed.shuffleToken);
+        m_correlationEdit->setText(grabbed.correlationUserId);
+        m_browserIdEdit->setText(grabbed.browserId);
+        break;
+    case LiveSettings::Casino::Goated:
+        m_apiKeyEdit->setText(grabbed.goatedToken);
+        break;
+    case LiveSettings::Casino::Wolfbet:
+        m_apiKeyEdit->setText(grabbed.wolfbetToken);
+        break;
+    case LiveSettings::Casino::Duel:
+        if (!grabbed.duelToken.isEmpty())
+            m_apiKeyEdit->setText(grabbed.duelToken);
+        m_duelUuidEdit->setText(grabbed.duelUuid);
+        if (!grabbed.duelClearance.isEmpty())
+            m_duelClearanceEdit->setText(grabbed.duelClearance);
+        break;
+    default:
+        m_apiKeyEdit->setText(grabbed.apiKey);
+        if (!grabbed.clearance.isEmpty())
+            m_clearanceEdit->setText(grabbed.clearance);
+        break;
+    }
 }
 
 void OptionsDialog::setExtensionStatus(bool listening, const QStringList &hosts)

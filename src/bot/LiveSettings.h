@@ -112,6 +112,43 @@ struct LiveSettings
         }
     }
     bool activeUsesExtension() const { return usesExtension(casino); }
+
+    // The login data of casino `c` (token, ids, API key) taken from `from`.
+    void copyCredentials(Casino c, const LiveSettings &from)
+    {
+        switch (c) {
+        case Casino::Shuffle:
+            shuffleToken = from.shuffleToken;
+            correlationUserId = from.correlationUserId;
+            browserId = from.browserId;
+            break;
+        case Casino::Goated:  goatedToken = from.goatedToken; break;
+        case Casino::Wolfbet: wolfbetToken = from.wolfbetToken; break;
+        case Casino::Duel:
+            duelToken = from.duelToken;
+            duelUuid = from.duelUuid;
+            duelClearance = from.duelClearance;
+            break;
+        default:
+            apiKey = from.apiKey;
+            clearance = from.clearance;
+            break;
+        }
+    }
+    bool sameCredentials(Casino c, const LiveSettings &o) const
+    {
+        switch (c) {
+        case Casino::Shuffle:
+            return shuffleToken == o.shuffleToken && correlationUserId == o.correlationUserId
+                   && browserId == o.browserId;
+        case Casino::Goated:  return goatedToken == o.goatedToken;
+        case Casino::Wolfbet: return wolfbetToken == o.wolfbetToken;
+        case Casino::Duel:
+            return duelToken == o.duelToken && duelUuid == o.duelUuid
+                   && duelClearance == o.duelClearance;
+        default:              return apiKey == o.apiKey && clearance == o.clearance;
+        }
+    }
     bool anyUsesExtension() const
     {
         return extensionMode || shuffleExtension || goatedExtension || wolfbetExtension || duelExtension;

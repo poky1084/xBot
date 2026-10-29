@@ -10,6 +10,8 @@
 //               {"id":"...","status":0,"error":"..."}                     network error / timeout
 //   app -> ext  {"id":"...","payload":{"raw":true,"op":"storage","key":"security:uuid"}}
 //   ext -> app  {"id":"...","status":200,"body":"{\"value\":<string|null>}"}  (page localStorage)
+//   app -> ext  {"id":"...","payload":{"raw":true,"op":"cookie","key":"session"}}
+//   ext -> app  {"id":"...","status":200,"body":"{\"value\":<string|null>}"}  (cookie of this site)
 //   Legacy requests (no "raw", sent by older xBot versions for Stake):
 //   ext -> app  {"id":"...","response":<JSON>}  or  {"id":"...","error":"..."}
 (function () {
@@ -17,7 +19,7 @@
     return; // already running in this page
   window.__xbotRequestProxy = true;
 
-  const VERSION = '2.0.1';
+  const VERSION = '2.1.0';
   const URL_WS = 'ws://localhost:4444';
   const RECONNECT_MS = 5000;
   const STANDBY_MS = 15000;      // another tab of this site is connected already
@@ -56,6 +58,19 @@
         send({ id: message.id, status: 200, body: JSON.stringify({ value: value }) });
         return;
       }
+      if (payload.raw && payload.op === 'cookie') { // a cookie of this site (also httpOnly ones)
+        let reply;
+        try {
+          const r = await chrome.runtime.sendMessage({ type: 'xbot-cookie', name: String(payload.key) });
+          reply = (r && r.error) ? { status: 0, error: r.error }
+                                 : { status: 200, body: JSON.stringify({ value: r ? r.value : null }) };
+        } catch (e) {
+          // e.g. "Extension context invalidated" after reloading the extension: refresh the tab
+          reply = { status: 0, error: String((e && e.message) || e) + ' (refresh the casino tab)' };
+        }
+        send(Object.assign({ id: message.id }, reply));
+        return;
+      }
       if (payload.raw) {
         send(Object.assign({ id: message.id }, await rawRequest(payload)));
         return;
@@ -70,6 +85,8 @@
     ws.onerror = () => {};
 
     ws.onclose = (event) => {
+      if (retired)
+        return;
       const standby = event && event.code === CLOSE_DUPLICATE;
       console.log(standby ? 'xBot proxy: another tab of this site is connected (standby)'
                           : 'xBot proxy disconnected');
@@ -132,6 +149,23 @@
         throw new Error((error && error.message) || String(error));
       });
   }
+
+  // The extension was reloaded / updated: this copy can no longer reach it (cookies), so it
+  // steps aside and lets the new copy (injected into this tab) take over.
+  let retired = false;
+  setInterval(() => {
+    let alive = false;
+    try {
+      alive = !!(chrome.runtime && chrome.runtime.id);
+    } catch (e) {}
+    if (!alive && !retired) {
+      retired = true;
+      if (ws) {
+        ws.onclose = null;
+        ws.close();
+      }
+    }
+  }, 2000);
 
   connect();
 })();

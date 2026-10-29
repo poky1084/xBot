@@ -47,6 +47,7 @@
 #include <QHeaderView>
 #include <QHBoxLayout>
 #include <QJsonDocument>
+#include <QJsonObject>
 #include <QLabel>
 #include <QFontMetrics>
 #include <QLineEdit>
@@ -2222,56 +2223,38 @@ void MainWindow::onOpenOptions()
         dialog.setExtensionStatus(m_ext->isListening(), m_ext->connectedHosts());
     });
     connect(&dialog, &OptionsDialog::loginRequested, this, [this, &dialog] {
+        const LiveSettings cur = dialog.liveSettings();
+        if (!cur.activeUsesExtension()) {
+            loginFromDialog(dialog);
+            return;
+        }
+        // "Browser extension": nothing is typed in; the login is read from the casino's tab.
         QString err;
-        if (!configureConnection(dialog.liveSettings(), &err)) {
+        if (!configureConnection(cur, &err)) { // starts the extension server
             dialog.setLoginStatus(err, false);
             return;
         }
         dialog.setExtensionStatus(m_ext->isListening(), m_ext->connectedHosts());
-
-        // Shuffle direct mode talks to Shuffle straight from the app (HTTPS + websocket) and
-        // never uses the hidden WebView2 browser (which only loads Stake's site), so there is
-        // nothing to wait for. Waiting on it made the login hang on "Loading browser…"
-        // whenever that unrelated Stake page was slow or failed to load.
-        const LiveSettings cur = dialog.liveSettings();
-        // Duel: its requests run in the hidden Duel browser; the pageLoaded handler in
-        // ensureDuelBrowser() fetches the balances once it is there.
-        if (cur.isDuel() && !cur.duelExtension && m_duelBrowser && !m_duelBrowser->isPageLoaded()) {
-            dialog.setLoginStatus(tr("Loading the Duel browser…"), true);
+        const QStringList hosts = extensionTabHosts(cur, cur.casino);
+        if (!m_ext->isConnectedTo(hosts)) {
+            dialog.setLoginStatus(tr("Open %1 in your browser (with the extension) and log in "
+                                     "there — this connects by itself.")
+                                      .arg(hosts.value(0)),
+                                  false);
             return;
         }
-        if (cur.isDuel() && !cur.duelExtension && !m_duelBrowser) {
-            dialog.setLoginStatus(tr("Duel needs the WebView2 Runtime (Microsoft Edge WebView2)."), false);
-            return;
-        }
-        const bool needsBrowser = !cur.isDirect() && !cur.extensionMode;
-        // Stake cookie mode: the browser was just (re)created and is still loading: wait for
-        // it, but not forever.
-        if (needsBrowser && m_hiddenBrowser && !m_hiddenBrowser->isPageLoaded()) {
-            dialog.setLoginStatus(tr("Loading browser…"), true);
-            QPointer<OptionsDialog> dlg(&dialog);
-            auto done = std::make_shared<bool>(false);
-            connect(m_hiddenBrowser, &CookieGrabberDialog::pageLoaded, dlg.data(),
-                    [this, done] {
-                        if (*done)
-                            return;
-                        *done = true;
-                        m_stake->fetchBalances();
-                    },
-                    Qt::SingleShotConnection); // Qt 6.0+
-            // Give up after 30 s so the dialog never stays stuck on "Loading browser…".
-            QTimer::singleShot(30000, dlg.data(), [dlg, done] {
-                if (*done || !dlg)
-                    return;
-                *done = true;
-                dlg->setLoginStatus(
-                    tr("The browser page did not finish loading (Cloudflare check or network "
-                       "problem?). Press Log in to try again."),
-                    false);
-            });
-            return;
-        }
-        m_stake->fetchBalances(); // answer arrives in onBalancesReady/Failed
+        dialog.setLoginStatus(tr("Reading the login from the %1 tab…").arg(hosts.value(0)), true);
+        QPointer<OptionsDialog> dlg(&dialog);
+        grabExtensionCredentials(cur.casino, cur, [this, dlg](const LiveSettings &got, const QString &error) {
+            if (!dlg)
+                return;
+            if (!error.isEmpty()) {
+                dlg->setLoginStatus(error, false);
+                return;
+            }
+            dlg->setGrabbedCredentials(got); // shows what was read; OK saves it
+            loginFromDialog(*dlg);
+        });
     });
 
     // "Site / mirror" is saved as soon as it is typed (also when the dialog is cancelled).
@@ -2352,6 +2335,275 @@ void MainWindow::onOpenOptions()
 }
 
 // ---------------------------------------------------------------- live betting
+
+// "Log in" in Options with every input in place: applies them and reads the balances.
+void MainWindow::loginFromDialog(OptionsDialog &dialog)
+{
+    QString err;
+    if (!configureConnection(dialog.liveSettings(), &err)) {
+        dialog.setLoginStatus(err, false);
+        return;
+    }
+    dialog.setExtensionStatus(m_ext->isListening(), m_ext->connectedHosts());
+
+    // Shuffle direct mode talks to Shuffle straight from the app (HTTPS + websocket) and
+    // never uses the hidden WebView2 browser (which only loads Stake's site), so there is
+    // nothing to wait for. Waiting on it made the login hang on "Loading browser…"
+    // whenever that unrelated Stake page was slow or failed to load.
+    const LiveSettings cur = dialog.liveSettings();
+    // Duel: its requests run in the hidden Duel browser; the pageLoaded handler in
+    // ensureDuelBrowser() fetches the balances once it is there.
+    if (cur.isDuel() && !cur.duelExtension && m_duelBrowser && !m_duelBrowser->isPageLoaded()) {
+        dialog.setLoginStatus(tr("Loading the Duel browser…"), true);
+        return;
+    }
+    if (cur.isDuel() && !cur.duelExtension && !m_duelBrowser) {
+        dialog.setLoginStatus(tr("Duel needs the WebView2 Runtime (Microsoft Edge WebView2)."), false);
+        return;
+    }
+    const bool needsBrowser = !cur.isDirect() && !cur.extensionMode;
+    // Stake cookie mode: the browser was just (re)created and is still loading: wait for
+    // it, but not forever.
+    if (needsBrowser && m_hiddenBrowser && !m_hiddenBrowser->isPageLoaded()) {
+        dialog.setLoginStatus(tr("Loading browser…"), true);
+        QPointer<OptionsDialog> dlg(&dialog);
+        auto done = std::make_shared<bool>(false);
+        connect(m_hiddenBrowser, &CookieGrabberDialog::pageLoaded, dlg.data(),
+                [this, done] {
+                    if (*done)
+                        return;
+                    *done = true;
+                    m_stake->fetchBalances();
+                },
+                Qt::SingleShotConnection); // Qt 6.0+
+        // Give up after 30 s so the dialog never stays stuck on "Loading browser…".
+        QTimer::singleShot(30000, dlg.data(), [dlg, done] {
+            if (*done || !dlg)
+                return;
+            *done = true;
+            dlg->setLoginStatus(
+                tr("The browser page did not finish loading (Cloudflare check or network "
+                   "problem?). Press Log in to try again."),
+                false);
+        });
+        return;
+    }
+    m_stake->fetchBalances(); // answer arrives in onBalancesReady/Failed
+}
+
+// Sites whose tab can serve casino `c` (Stake: any Stake domain as a fallback).
+QStringList MainWindow::extensionTabHosts(const LiveSettings &s, LiveSettings::Casino c) const
+{
+    QStringList hosts = s.extensionHosts(c);
+    if (c == LiveSettings::Casino::Stake)
+        hosts += ExtensionTransport::stakeHosts();
+    return hosts;
+}
+
+// Reads casino `c`'s login data from its tab: the same values the "Open … & Log in" windows
+// read, so nothing has to be typed in. `done` gets `base` with them filled in.
+void MainWindow::grabExtensionCredentials(LiveSettings::Casino c, const LiveSettings &base, GrabDone done)
+{
+    auto out = std::make_shared<LiveSettings>(base);
+    out->casino = c;
+    const QStringList hosts = extensionTabHosts(base, c);
+    const QString site = hosts.value(0);
+    QPointer<MainWindow> self(this);
+    const auto notLoggedIn = [site](const QString &what) {
+        return tr("Not logged in on the %1 tab (%2 not found) — log in there in your browser.")
+            .arg(site, what);
+    };
+
+    switch (c) {
+    case LiveSettings::Casino::Goated:
+        // localStorage "g3_token" (a plain or a JSON-quoted string)
+        m_ext->readStorage(hosts, QStringLiteral("g3_token"),
+                           [self, out, done, notLoggedIn](bool ok, const QString &v, const QString &err) {
+            if (!self)
+                return;
+            if (!ok)
+                return done(*out, err);
+            const QString token = GoatedTransport::cleanToken(v);
+            if (token.isEmpty())
+                return done(*out, notLoggedIn(QStringLiteral("g3_token")));
+            out->goatedToken = token;
+            done(*out, QString());
+        });
+        return;
+
+    case LiveSettings::Casino::Wolfbet:
+        // "token" cookie: URL-encoded JSON {"value":"<jwt>","expire":...}
+        m_ext->readCookie(hosts, QStringLiteral("token"),
+                          [self, out, done, notLoggedIn](bool ok, const QString &v, const QString &err) {
+            if (!self)
+                return;
+            if (!ok)
+                return done(*out, err);
+            const QString decoded = QUrl::fromPercentEncoding(v.toUtf8());
+            QString token = QJsonDocument::fromJson(decoded.toUtf8()).object()
+                                .value(QStringLiteral("value")).toString().trimmed();
+            if (token.isEmpty() && !decoded.trimmed().startsWith(QLatin1Char('{')))
+                token = decoded.trimmed(); // a plain token
+            if (token.isEmpty())
+                return done(*out, notLoggedIn(QStringLiteral("the \"token\" cookie")));
+            out->wolfbetToken = token;
+            done(*out, QString());
+        });
+        return;
+
+    case LiveSettings::Casino::Duel:
+        // localStorage "security:uuid" + the "duel" and "cf_clearance" cookies (httpOnly; shown
+        // in Options only: in extension mode the tab sends them by itself)
+        m_ext->readStorage(hosts, QStringLiteral("security:uuid"),
+                           [this, self, hosts, out, done, notLoggedIn](bool ok, const QString &v, const QString &err) {
+            if (!self)
+                return;
+            if (!ok)
+                return done(*out, err);
+            const QString uuid = DuelTransport::cleanUuid(v);
+            if (uuid.isEmpty())
+                return done(*out, notLoggedIn(QStringLiteral("security:uuid")));
+            out->duelUuid = uuid;
+            m_ext->readCookie(hosts, QStringLiteral("duel"),
+                              [this, self, hosts, out, done](bool ok2, const QString &v2, const QString &) {
+                if (!self)
+                    return;
+                if (ok2 && !v2.trimmed().isEmpty())
+                    out->duelToken = DuelTransport::cleanCookie(v2, QStringLiteral("duel"));
+                m_ext->readCookie(hosts, QStringLiteral("cf_clearance"),
+                                  [self, out, done](bool ok3, const QString &v3, const QString &) {
+                    if (!self)
+                        return;
+                    if (ok3 && !v3.trimmed().isEmpty())
+                        out->duelClearance = DuelTransport::cleanCookie(v3, QStringLiteral("cf_clearance"));
+                    done(*out, QString()); // both cookies are optional here
+                });
+            });
+        });
+        return;
+
+    case LiveSettings::Casino::Shuffle:
+        // localStorage "persist:root" -> auth (JSON string) -> accessToken, plus
+        // CORRELATION_USER_ID and BROWSER_ID
+        m_ext->readStorage(hosts, QStringLiteral("persist:root"),
+                           [this, self, hosts, out, done, notLoggedIn](bool ok, const QString &v, const QString &err) {
+            if (!self)
+                return;
+            if (!ok)
+                return done(*out, err);
+            const QJsonObject root = QJsonDocument::fromJson(v.toUtf8()).object();
+            const QJsonObject auth =
+                QJsonDocument::fromJson(root.value(QStringLiteral("auth")).toString().toUtf8()).object();
+            const QString token = auth.value(QStringLiteral("accessToken")).toString().trimmed();
+            if (token.isEmpty())
+                return done(*out, notLoggedIn(QStringLiteral("accessToken")));
+            out->shuffleToken = token;
+            m_ext->readStorage(hosts, QStringLiteral("CORRELATION_USER_ID"),
+                               [this, self, hosts, out, done, notLoggedIn](bool ok2, const QString &v2, const QString &err2) {
+                if (!self)
+                    return;
+                if (!ok2)
+                    return done(*out, err2);
+                if (v2.trimmed().isEmpty())
+                    return done(*out, notLoggedIn(QStringLiteral("CORRELATION_USER_ID")));
+                out->correlationUserId = v2.trimmed();
+                m_ext->readStorage(hosts, QStringLiteral("BROWSER_ID"),
+                                   [self, out, done, notLoggedIn](bool ok3, const QString &v3, const QString &err3) {
+                    if (!self)
+                        return;
+                    if (!ok3)
+                        return done(*out, err3);
+                    if (v3.trimmed().isEmpty())
+                        return done(*out, notLoggedIn(QStringLiteral("BROWSER_ID")));
+                    out->browserId = v3.trimmed();
+                    done(*out, QString());
+                });
+            });
+        });
+        return;
+
+    default:
+        // Stake: the "session" cookie (httpOnly) holds the token the site sends as x-access-token;
+        // "cf_clearance" (optional) is shown in Options.
+        m_ext->readCookie(hosts, QStringLiteral("session"),
+                          [this, self, hosts, out, done, notLoggedIn](bool ok, const QString &v, const QString &err) {
+            if (!self)
+                return;
+            if (!ok)
+                return done(*out, err);
+            if (v.trimmed().isEmpty() && out->apiKey.trimmed().isEmpty())
+                return done(*out, notLoggedIn(QStringLiteral("the \"session\" cookie")));
+            if (!v.trimmed().isEmpty())
+                out->apiKey = v.trimmed(); // else: keep the API key typed in Options
+            m_ext->readCookie(hosts, QStringLiteral("cf_clearance"),
+                              [self, out, done](bool ok2, const QString &v2, const QString &) {
+                if (!self)
+                    return;
+                if (ok2 && !v2.trimmed().isEmpty())
+                    out->clearance = v2.trimmed();
+                done(*out, QString()); // cf_clearance is optional
+            });
+        });
+        return;
+    }
+}
+
+void MainWindow::applyGrabbedCredentials(LiveSettings::Casino c, const LiveSettings &grabbed)
+{
+    if (m_live.sameCredentials(c, grabbed))
+        return;
+    m_live.copyCredentials(c, grabbed);
+    configureConnection(m_live);
+    ScopedSettings settings(settingsGroup());
+    saveOptionsSettings(settings); // survives a crash, like Options -> OK
+    settings.sync();
+}
+
+void MainWindow::refreshExtensionLogin(LiveSettings::Casino c)
+{
+    if (!m_live.usesExtension(c) || m_optionsDialog) // Options reads it by itself
+        return;
+    if (!m_ext->isConnectedTo(extensionTabHosts(m_live, c)))
+        return;
+    QPointer<MainWindow> self(this);
+    grabExtensionCredentials(c, m_live, [self, c](const LiveSettings &got, const QString &error) {
+        if (!self || !self->m_live.usesExtension(c))
+            return;
+        const bool active = self->m_live.casino == c;
+        if (!error.isEmpty()) {
+            if (active && self->m_live.enabled)
+                self->onLogMessage(error, true);
+            return;
+        }
+        self->applyGrabbedCredentials(c, got);
+        if (!self->m_live.enabled)
+            return;
+        if (active) {
+            self->m_stake->fetchBalances();
+            return;
+        }
+        switch (c) { // background casino: fill its cache
+        case LiveSettings::Casino::Goated:
+            if (self->m_goated->isReady())
+                self->m_goated->requestBalances();
+            break;
+        case LiveSettings::Casino::Wolfbet:
+            if (self->m_wolfbet->isReady())
+                self->m_wolfbet->requestBalances();
+            break;
+        case LiveSettings::Casino::Duel:
+            if (self->m_duel->isReady())
+                self->m_duel->requestBalances();
+            break;
+        case LiveSettings::Casino::Shuffle:
+            self->updateShuffleBackground(self->m_live, false);
+            break;
+        default:
+            self->requestStakeBackgroundBalance();
+            break;
+        }
+    });
+}
 
 // The hidden WebView2 browser (Stake's cookie mode) is created once and kept open, also
 // while Shuffle is the active casino, so switching back to Stake needs no page load.
@@ -2758,7 +3010,14 @@ void MainWindow::applyLiveSettings(const LiveSettings &requested)
     m_lastBalanceError.clear();
     if (live) {
         m_engine->markLiveConnecting(); // Start / Roll wait for the login instead of failing
-        fetchActiveBalance(4000);       // not again within 4 s: quick script switches would hit rate limits
+        if (m_live.activeUsesExtension() && !m_optionsDialog
+            && m_ext->isConnectedTo(extensionTabHosts(m_live, m_live.casino))) {
+            // The login is read from the casino's tab first (it may have changed), then the balances.
+            m_extGrabClock.start();
+            refreshExtensionLogin(m_live.casino);
+        } else {
+            fetchActiveBalance(4000); // not again within 4 s: quick script switches would hit rate limits
+        }
         // The casino just left is read again right away (exact server figure), the others too.
         refreshBackgroundBalances();
         m_balanceTimer->setInterval(m_isLoggedIn ? 10000 : 2000); // quick retries until logged in
@@ -3133,14 +3392,13 @@ void MainWindow::onBalancesFailed(const QString &error)
 void MainWindow::onExtensionReadyChanged(bool ready)
 {
     if (ready && m_live.enabled) {
-        // Casinos that are not active fill their caches through their tab.
+        // Casinos that are not active read their login from their tab and fill their caches.
+        for (int i = 0; i < LiveSettings::kCasinoCount; ++i) {
+            const auto c = static_cast<LiveSettings::Casino>(i);
+            if (c != m_live.casino)
+                refreshExtensionLogin(c);
+        }
         requestStakeBackgroundBalance();
-        if (!m_live.isGoated() && m_live.goatedExtension && m_goated->isReady())
-            m_goated->requestBalances();
-        if (!m_live.isWolfbet() && m_live.wolfbetExtension && m_wolfbet->isReady())
-            m_wolfbet->requestBalances();
-        if (!m_live.isDuel() && m_live.duelExtension && m_duel->isReady())
-            m_duel->requestBalances();
     }
     if (!m_stake || !m_live.activeUsesExtension()) {
         m_extActiveConnected = false;
@@ -3153,8 +3411,9 @@ void MainWindow::onExtensionReadyChanged(bool ready)
     m_extActiveConnected = now;
     if (now) {
         onLogMessage(tr("Browser extension connected (%1 tab).").arg(m_live.activeSite()), false);
-        if (m_live.enabled || m_optionsDialog)
-            m_stake->fetchBalances();
+        // The login (API key / token / ids) is read from the tab, then the balances.
+        if (m_live.enabled && !m_optionsDialog)
+            refreshExtensionLogin(m_live.casino);
     } else {
         onLogMessage(tr("Browser extension: the %1 tab disconnected.").arg(m_live.activeSite()), true);
         m_isLoggedIn = false;
@@ -3166,6 +3425,14 @@ void MainWindow::onBalanceTimer()
 {
     if (!m_live.enabled)
         return;
+    // Extension mode and not logged in yet (e.g. logged in in the browser just now): read the
+    // login from the tab again, at most every 5 s.
+    if (!m_isLoggedIn && m_live.activeUsesExtension() && !m_optionsDialog
+        && (!m_extGrabClock.isValid() || m_extGrabClock.elapsed() > 5000)) {
+        m_extGrabClock.start();
+        refreshExtensionLogin(m_live.casino); // fetches the balances when it is read
+        return;
+    }
     fetchActiveBalance(1500);
     // Until the login went through, retry every 2 s so betting can start as early as possible.
     m_balanceTimer->setInterval(m_isLoggedIn ? 10000 : 2000);

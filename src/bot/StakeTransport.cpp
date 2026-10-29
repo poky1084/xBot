@@ -408,7 +408,7 @@ void ExtensionTransport::addSocket(QWebSocket *sock, const QString &host)
 
 void ExtensionTransport::onSocketClosed(QWebSocket *socket)
 {
-    const bool known = m_sockets.remove(socket);
+    const bool known = m_sockets.remove(socket); // Qt 6: true when it was there
     socket->deleteLater();
     if (known) {
         failAll(tr("Browser extension disconnected."), socket);
@@ -528,6 +528,19 @@ void ExtensionTransport::fetch(const QStringList &pageHosts, const QByteArray &m
 void ExtensionTransport::readStorage(const QStringList &pageHosts, const QString &key,
                                      StorageCallback cb)
 {
+    readValue(QStringLiteral("storage"), pageHosts, key, std::move(cb));
+}
+
+void ExtensionTransport::readCookie(const QStringList &pageHosts, const QString &name,
+                                    StorageCallback cb)
+{
+    readValue(QStringLiteral("cookie"), pageHosts, name, std::move(cb));
+}
+
+// {"op":"storage"|"cookie","key":...} -> {"status":200,"body":"{\"value\":...}"}
+void ExtensionTransport::readValue(const QString &op, const QStringList &pageHosts,
+                                   const QString &key, StorageCallback cb)
+{
     QWebSocket *sock = isListening() ? socketFor(pageHosts, false) : nullptr;
     if (!sock) {
         const QString why = tr("No tab with the extension is open on %1.")
@@ -537,14 +550,14 @@ void ExtensionTransport::readStorage(const QStringList &pageHosts, const QString
     }
     QJsonObject payload;
     payload.insert(QStringLiteral("raw"), true);
-    payload.insert(QStringLiteral("op"), QStringLiteral("storage"));
+    payload.insert(QStringLiteral("op"), op);
     payload.insert(QStringLiteral("key"), key);
 
     Pending p;
     p.fetchCb = [cb](int status, const QByteArray &body, const QString &error) {
         if (status != 200) {
             cb(false, QString(),
-               error.isEmpty() ? tr("The tab could not read its storage (update the browser extension).")
+               error.isEmpty() ? tr("The tab could not read it (update the browser extension).")
                                : error);
             return;
         }

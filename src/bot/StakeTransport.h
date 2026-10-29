@@ -149,6 +149,8 @@ public:
     // `ok` false = no tab / no answer (`error` explains); a missing key gives ok with "".
     using StorageCallback = std::function<void(bool ok, const QString &value, const QString &error)>;
     void readStorage(const QStringList &pageHosts, const QString &key, StorageCallback cb);
+    // Reads the cookie `name` of the tab's site, httpOnly ones included (needs extension 2.1.0+).
+    void readCookie(const QStringList &pageHosts, const QString &name, StorageCallback cb);
 
 signals:
     // A connection attempt was refused because of its Origin header.
@@ -175,6 +177,7 @@ private:
     void finishFetch(const QString &id, int status, const QByteArray &body, const QString &error);
     void failAll(const QString &why, QWebSocket *only = nullptr);
     QString sendRequest(QWebSocket *sock, const QJsonObject &payload, Pending p, int timeoutMs);
+    void readValue(const QString &op, const QStringList &pageHosts, const QString &key, StorageCallback cb);
 
     QWebSocketServer *m_server = nullptr;
     QHash<QWebSocket *, QString> m_sockets; // connected tabs -> their site ("" = not known yet)

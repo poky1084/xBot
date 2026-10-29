@@ -194,6 +194,15 @@ private:
     bool configureTransports(const LiveSettings &settings, QString *errorOut);
     // Starts / stops the extension server and points every casino's transport at it (or not).
     bool updateExtensionServer(const LiveSettings &s, QString *errorOut);
+    // "Browser extension": the login data (API key / tokens / ids) is read from the casino's tab.
+    using GrabDone = std::function<void(const LiveSettings &grabbed, const QString &error)>;
+    void grabExtensionCredentials(LiveSettings::Casino c, const LiveSettings &base, GrabDone done);
+    QStringList extensionTabHosts(const LiveSettings &s, LiveSettings::Casino c) const;
+    // Takes casino `c`'s login data from `grabbed` into m_live (reconfigures + saves when it changed).
+    void applyGrabbedCredentials(LiveSettings::Casino c, const LiveSettings &grabbed);
+    // Reads casino `c`'s login from its tab, then fetches its balances (active / background).
+    void refreshExtensionLogin(LiveSettings::Casino c);
+    void loginFromDialog(OptionsDialog &dialog); // "Log in" in Options once the inputs are set
     void applyLiveSettings(const LiveSettings &settings);
     void resetSessionState();
     // Graph, run clock, speed and labels after the session statistics were reset.
@@ -220,6 +229,7 @@ private:
 	
 	bool m_isLoggedIn = false;
     bool m_extActiveConnected = false; // the active casino's extension tab is connected
+    QElapsedTimer m_extGrabClock;      // throttles re-reading the login while not logged in
 
 	
     // Live betting

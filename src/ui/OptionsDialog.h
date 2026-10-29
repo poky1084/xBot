@@ -53,6 +53,8 @@ public:
     void setLoginStatus(const QString &text, bool ok);
     // The first login input the selected casino needs that is still empty ("" = complete).
     QString missingLoginData() const;
+    // "Browser extension": shows the login data read from the casino's tab (`grabbed.casino`).
+    void setGrabbedCredentials(const LiveSettings &grabbed);
     // Shows which currencies the account holds (as a hint; the bet currency stays what the
     // user typed).
     void setLiveCurrencies(const QStringList &codes, const QString &selected);
