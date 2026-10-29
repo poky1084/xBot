@@ -19,7 +19,7 @@
     return; // already running in this page
   window.__xbotRequestProxy = true;
 
-  const VERSION = '2.1.0';
+  const VERSION = '2.1.1';
   const URL_WS = 'ws://localhost:4444';
   const RECONNECT_MS = 5000;
   const STANDBY_MS = 15000;      // another tab of this site is connected already
