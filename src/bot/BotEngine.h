@@ -161,7 +161,7 @@ private:
     BetRecord placeBet(const BotConfig &cfg, double betSize);
     BetRecord recordBet(const BotConfig &cfg, double betSize, double roll, bool win,
                         double mult, double payout, qint64 nonce,
-                        const QString &betId = QString());
+                        const QString &betId = QString(), const QString &casino = QString());
     bool checkStopConditions(); // true if a stop condition fired (engine stopped)
     void scheduleNext();
     // "Auto-bet <reason> (N bets, P/L x)". When the stop happens while a bet is still in flight
@@ -243,6 +243,7 @@ private:
     bool m_inFlight = false;
     bool m_inFlightManual = false;
     BotConfig m_inFlightCfg;
+    QString m_inFlightCasino; // casino the bet in flight was sent to (its row shows this one)
     int m_retryStreak = 0;
 
     // resetseed() in live mode: the next bet waits until the server answered the

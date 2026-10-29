@@ -105,6 +105,9 @@ void BotEngine::requestLiveBet(const BotConfig &cfg, double betSize, bool manual
     m_inFlight = true;
     m_inFlightManual = manual;
     m_inFlightCfg = cfg;
+    // The row of this bet names the casino it went to, even if the casino is switched before
+    // its result arrives (Casino menu / script).
+    m_inFlightCasino = m_casinoGetter ? m_casinoGetter().trimmed().toLower() : QString();
 
     if (cfg.game == Game::Limbo) {
         LimboBetRequest req;
@@ -138,6 +141,7 @@ void BotEngine::onLiveFinished(const LiveBetResult &r)
         dispatchSeedRotation();
     const bool manual = m_inFlightManual;
     const BotConfig cfg = m_inFlightCfg;
+    const QString betCasino = m_inFlightCasino; // read before any switch below can matter
 
     if (!r.ok) {
         emit logMessage(tr("Bet failed: %1").arg(r.error), true);
@@ -168,7 +172,7 @@ void BotEngine::onLiveFinished(const LiveBetResult &r)
 
     m_retryStreak = 0;
     const BetRecord rec = recordBet(cfg, r.amount, r.roll, r.win, r.multiplier, r.payout,
-                                    r.nonce, r.betId);
+                                    r.nonce, r.betId, betCasino);
     flushPauseLog(); // a pause that came while this bet was in flight: now the numbers are final
     flushStopLog(); // a stop that came while this bet was in flight: now the numbers are final
 
@@ -828,13 +832,17 @@ void BotEngine::scheduleNext()
 
 BetRecord BotEngine::recordBet(const BotConfig &cfg, double betSize, double roll, bool win,
                                double mult, double payout, qint64 nonce,
-                               const QString &betId)
+                               const QString &betId, const QString &casino)
 {
     BetRecord rec;
     rec.nonce = nonce;
     rec.betId = betId;
-    if (m_casinoGetter)
-        rec.casino = m_casinoGetter().trimmed().toLower(); // casino selected when the bet was made
+    // Live bets: the casino the bet was sent to (captured in requestLiveBet()). Simulated bets
+    // are recorded at once, so the casino selected now is the right one.
+    if (!casino.isEmpty())
+        rec.casino = casino;
+    else if (m_casinoGetter)
+        rec.casino = m_casinoGetter().trimmed().toLower();
 
     const double profit = payout - betSize;
 
