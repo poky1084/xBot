@@ -57,11 +57,11 @@ static const wchar_t *kPollScript = LR"JS(
 })()
 )JS";
 
-DuelLoginDialog::DuelLoginDialog(QWidget *parent)
+DuelLoginDialog::DuelLoginDialog(const QString &site, QWidget *parent)
     : QDialog(parent)
-    , m_site(QStringLiteral("duel.com"))
+    , m_site(site.trimmed().isEmpty() ? QStringLiteral("duel.com") : site.trimmed())
 {
-    setWindowTitle(tr("Log in to Duel.com"));
+    setWindowTitle(tr("Log in to %1").arg(m_site));
     resize(1000, 720);
 
     auto *root = new QVBoxLayout(this);

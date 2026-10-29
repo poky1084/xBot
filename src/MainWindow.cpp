@@ -2274,6 +2274,24 @@ void MainWindow::onOpenOptions()
         m_stake->fetchBalances(); // answer arrives in onBalancesReady/Failed
     });
 
+    // "Site / mirror" is saved as soon as it is typed (also when the dialog is cancelled).
+    connect(&dialog, &OptionsDialog::siteEdited, this, [this, &dialog] {
+        const LiveSettings cur = dialog.liveSettings();
+        ScopedSettings settings(settingsGroup());
+        settings.beginGroup(QStringLiteral("Live"));
+        if (cur.isDuel()) {
+            m_live.duelSite = cur.duelSite;
+            settings.setValue(QStringLiteral("duelSite"), m_live.duelSite);
+        } else if (cur.isShuffle()) {
+            m_live.shuffleSite = cur.shuffleSite;
+            settings.setValue(QStringLiteral("shuffleSite"), m_live.shuffleSite);
+        } else if (cur.casino == LiveSettings::Casino::Stake) {
+            m_live.site = cur.site;
+            settings.setValue(QStringLiteral("site"), m_live.site);
+        }
+        settings.endGroup();
+    });
+
     connect(&dialog, &OptionsDialog::dataCleared, this, [this, &dialog] {
         m_discardSettings = true;
         dialog.reject();
@@ -2404,6 +2422,8 @@ void MainWindow::applyDuelCredentials(const LiveSettings &s)
     m_duel->setCredentials(dc);
     if (!m_duel->credentials().token.isEmpty() && !m_duel->credentials().uuid.isEmpty())
         ensureDuelBrowser();
+    if (m_duelBrowser)
+        m_duelBrowser->setSite(s.duelSite); // a new mirror reloads the hidden page there
 }
 
 // Duel's Cloudflare drops plain HTTPS from the app, so its requests run in a hidden WebView2
@@ -2673,7 +2693,8 @@ void MainWindow::applyLiveSettings(const LiveSettings &requested)
         m_goatedBalances.clear();
     if (!next.enabled || m_live.wolfbetToken != next.wolfbetToken)
         m_wolfbetBalances.clear();
-    if (!next.enabled || m_live.duelToken != next.duelToken || m_live.duelUuid != next.duelUuid)
+    if (!next.enabled || m_live.duelToken != next.duelToken || m_live.duelUuid != next.duelUuid
+        || m_live.duelSite != next.duelSite)
         m_duelBalances.clear();
     if (!next.enabled || m_live.apiKey != next.apiKey || m_live.site != next.site)
         m_stakeBalances.clear();
@@ -3619,6 +3640,8 @@ void MainWindow::loadSettings()
     m_live.shuffleToken = settings.value(QStringLiteral("shuffleToken")).toString();
     m_live.goatedToken = settings.value(QStringLiteral("goatedToken")).toString();
     m_live.wolfbetToken = settings.value(QStringLiteral("wolfbetToken")).toString();
+    m_live.duelSite = LiveSettings::hostOf(
+        settings.value(QStringLiteral("duelSite"), m_live.duelSite).toString(), QStringLiteral("duel.com"));
     m_live.duelToken = settings.value(QStringLiteral("duelToken")).toString();
     m_live.duelUuid = settings.value(QStringLiteral("duelUuid")).toString();
     m_live.duelClearance = settings.value(QStringLiteral("duelClearance")).toString();
@@ -3705,6 +3728,7 @@ void MainWindow::saveOptionsSettings(QSettings &settings)
     settings.setValue(QStringLiteral("shuffleToken"), m_live.shuffleToken);
     settings.setValue(QStringLiteral("goatedToken"), m_live.goatedToken);
     settings.setValue(QStringLiteral("wolfbetToken"), m_live.wolfbetToken);
+    settings.setValue(QStringLiteral("duelSite"), m_live.duelSite);
     settings.setValue(QStringLiteral("duelToken"), m_live.duelToken);
     settings.setValue(QStringLiteral("duelUuid"), m_live.duelUuid);
     settings.setValue(QStringLiteral("duelClearance"), m_live.duelClearance);

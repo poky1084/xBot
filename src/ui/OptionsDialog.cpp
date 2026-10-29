@@ -308,6 +308,8 @@ OptionsDialog::OptionsDialog(QWidget *parent)
         connect(edit, &QLineEdit::textEdited, this, &OptionsDialog::scheduleAutoFetch);
         connect(edit, &QLineEdit::editingFinished, this, &OptionsDialog::maybeAutoFetch);
     }
+    // The site / mirror is saved on every keystroke (see siteEdited()).
+    connect(m_siteEdit, &QLineEdit::textEdited, this, &OptionsDialog::siteEdited);
     // Wolfbet's currency list needs the token: fetch it once one is entered.
     connect(m_apiKeyEdit, &QLineEdit::editingFinished, this, [this] {
         if (m_wolfbet)
@@ -481,7 +483,7 @@ void OptionsDialog::applyCasinoUi()
     const bool wolfbet = m_wolfbet;
     const bool duel = m_duel;
     const bool tokenOnly = goated || wolfbet;        // the token is the only input
-    const bool noSite = tokenOnly || duel;           // no "Site / mirror" input
+    const bool noSite = tokenOnly;                   // no "Site / mirror" input
     const bool direct = shuffle || noSite; // all use "Direct mode" (plain HTTPS)
 
     m_liveBox->setTitle(duel ? tr("Live betting — Duel")
@@ -511,10 +513,11 @@ void OptionsDialog::applyCasinoUi()
                                              : goated ? tr("g3_token (JWT)")
                                                       : shuffle ? tr("authorization token (JWT)")
                                                                 : tr("x-access-token (API key)"));
-    m_siteEdit->setPlaceholderText(shuffle ? QStringLiteral("shuffle.com")
-                                           : QStringLiteral("stake.com"));
+    m_siteEdit->setPlaceholderText(duel      ? QStringLiteral("duel.com")
+                                   : shuffle ? QStringLiteral("shuffle.com")
+                                             : QStringLiteral("stake.com"));
 
-    setFormRowVisible(m_siteEdit, !noSite);        // Goated / Wolfbet / Duel: fixed site
+    setFormRowVisible(m_siteEdit, !noSite);        // Goated / Wolfbet: fixed site
     setFormRowVisible(m_correlationEdit, shuffle);
     setFormRowVisible(m_browserIdEdit, shuffle);
     setFormRowVisible(m_shuffleLoginBtn, shuffle);
@@ -547,6 +550,7 @@ LiveSettings OptionsDialog::liveSettings() const
                : m_goated ? LiveSettings::Casino::Goated
                           : m_shuffle ? LiveSettings::Casino::Shuffle : LiveSettings::Casino::Stake;
     if (m_duel) {
+        s.duelSite = LiveSettings::hostOf(m_siteEdit->text(), QStringLiteral("duel.com"));
         s.duelToken = m_apiKeyEdit->text().trimmed();
         s.duelUuid = m_duelUuidEdit->text().trimmed();
         s.duelClearance = m_duelClearanceEdit->text().trimmed();
@@ -589,6 +593,7 @@ void OptionsDialog::setLiveSettings(const LiveSettings &s)
     m_liveEnable->setChecked(s.enabled);
     if (m_duel) {
         m_authCombo->setCurrentIndex(0); // Direct mode
+        m_siteEdit->setText(s.duelSite);
         m_apiKeyEdit->setText(s.duelToken);
         m_duelUuidEdit->setText(s.duelUuid);
         m_duelClearanceEdit->setText(s.duelClearance);
@@ -809,7 +814,7 @@ QString OptionsDialog::autoFetchKey() const
     const LiveSettings s = liveSettings();
     QStringList parts{s.casinoName()};
     if (s.isDuel())
-        parts << s.duelToken << s.duelUuid << s.duelClearance;
+        parts << s.duelSite << s.duelToken << s.duelUuid << s.duelClearance;
     else if (s.isWolfbet())
         parts << s.wolfbetToken;
     else if (s.isGoated())
@@ -926,7 +931,7 @@ void OptionsDialog::onWolfbetLogin()
 
 void OptionsDialog::onDuelLogin()
 {
-    DuelLoginDialog dlg(this);
+    DuelLoginDialog dlg(LiveSettings::hostOf(m_siteEdit->text(), QStringLiteral("duel.com")), this);
     if (dlg.exec() != QDialog::Accepted)
         return;
 

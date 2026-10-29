@@ -159,7 +159,7 @@ void DuelBrowser::initializeWebView()
                                             // e.g. a Cloudflare check that redirects: try again shortly.
                                             QTimer::singleShot(5000, self.data(), [self] {
                                                 if (self && self->m_webview && !self->m_pageLoaded)
-                                                    self->m_webview->Navigate(L"https://duel.com/dice");
+                                                    self->navigateToSite();
                                             });
                                         }
                                         return S_OK;
@@ -167,11 +167,31 @@ void DuelBrowser::initializeWebView()
                                 &navTok);
 
                             self->applySessionCookie();
-                            self->m_webview->Navigate(L"https://duel.com/dice");
+                            self->navigateToSite();
                             return S_OK;
                         }).Get());
                 return S_OK;
             }).Get());
+}
+
+void DuelBrowser::navigateToSite()
+{
+    if (m_webview)
+        m_webview->Navigate((L"https://" + m_site.toStdWString() + L"/dice").c_str());
+}
+
+void DuelBrowser::setSite(const QString &site)
+{
+    const QString s = site.trimmed().isEmpty() ? QStringLiteral("duel.com") : site.trimmed();
+    if (s == m_site)
+        return;
+    m_site = s;
+    if (!m_webview)
+        return; // the first navigation (initializeWebView) uses the new site
+    // Requests wait until the page on the new site has loaded (pageLoaded is emitted again).
+    m_pageLoaded = false;
+    applySessionCookie();
+    navigateToSite();
 }
 
 void DuelBrowser::setSessionCookie(const QString &token)
@@ -198,7 +218,8 @@ void DuelBrowser::applySessionCookie()
         return;
     ICoreWebView2Cookie *cookie = nullptr;
     const std::wstring value = m_sessionCookie.toStdWString();
-    if (SUCCEEDED(manager->CreateCookie(L"duel", value.c_str(), L"duel.com", L"/", &cookie)) && cookie) {
+    const std::wstring domain = m_site.toStdWString();
+    if (SUCCEEDED(manager->CreateCookie(L"duel", value.c_str(), domain.c_str(), L"/", &cookie)) && cookie) {
         cookie->put_IsHttpOnly(TRUE);
         cookie->put_IsSecure(TRUE);
         cookie->put_SameSite(COREWEBVIEW2_COOKIE_SAME_SITE_KIND_LAX);
@@ -218,7 +239,7 @@ void DuelBrowser::fetch(const QString &method, const QString &path, const QByteA
         return;
     }
 
-    const QString url = QStringLiteral("https://duel.com/") + path;
+    const QString url = QStringLiteral("https://%1/").arg(m_site) + path;
     const QString js = QStringLiteral(
         "(typeof window.__xbotDuel === 'function')"
         " ? window.__xbotDuel(%1, %2, %3, %4, %5)"

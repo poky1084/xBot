@@ -12,7 +12,7 @@ class QLabel;
 class QPushButton;
 class QTimer;
 
-// Opens duel.com in an embedded Edge (WebView2) window. The user logs in there; once the
+// Opens duel.com (or the mirror set in Options) in an embedded Edge (WebView2) window. The user logs in there; once the
 // session works (the site hands out a security token), everything the app needs is read and
 // the dialog closes by itself:
 //   token      the "duel" session cookie (httpOnly: read through the WebView2 cookie manager)
@@ -25,7 +25,8 @@ class DuelLoginDialog : public QDialog
     Q_OBJECT
 
 public:
-    explicit DuelLoginDialog(QWidget *parent = nullptr);
+    // `site` = Duel's host or a mirror (empty = duel.com).
+    explicit DuelLoginDialog(const QString &site = QString(), QWidget *parent = nullptr);
     ~DuelLoginDialog() override;
 
     QString token() const { return m_token; }

@@ -66,6 +66,7 @@ struct LiveSettings
 
     // ---- Duel (Direct mode only: plain HTTPS). Bets also need a security token, which the
     // transport fetches by itself (and again every ~10 minutes).
+    QString duelSite = QStringLiteral("duel.com"); // "Site / mirror" in Options
     QString duelToken;             // "duel" cookie ("Token" in Options)
     QString duelUuid;              // localStorage "security:uuid"
     QString duelClearance;         // "cf_clearance" cookie
@@ -82,6 +83,20 @@ struct LiveSettings
     bool isDirect() const { return casino != Casino::Stake; }
     QString casinoName() const { return nameOf(casino); }
 
+    // "https://Duel.com/dice/" -> "duel.com": the host of a typed site / mirror; empty -> `fallback`.
+    static QString hostOf(const QString &typed, const QString &fallback)
+    {
+        QString h = typed.trimmed();
+        const int scheme = h.indexOf(QLatin1String("://"));
+        if (scheme >= 0)
+            h = h.mid(scheme + 3);
+        const int slash = h.indexOf(QLatin1Char('/'));
+        if (slash >= 0)
+            h = h.left(slash);
+        h = h.trimmed().toLower();
+        return h.isEmpty() ? fallback : h;
+    }
+
     // Host of the active casino.
     QString activeSite() const
     {
@@ -90,7 +105,7 @@ struct LiveSettings
         if (isWolfbet())
             return QStringLiteral("wolfbet.com");
         if (isDuel())
-            return QStringLiteral("duel.com");
+            return duelSite;
         return isShuffle() ? shuffleSite : site;
     }
 };

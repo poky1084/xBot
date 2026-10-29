@@ -76,6 +76,9 @@ signals:
     void loginRequested();
     // All stored data was deleted; the app must exit without saving settings again.
     void dataCleared();
+    // The user typed in "Site / mirror": liveSettings() holds the new site of the shown casino
+    // (saved right away, not only when the dialog is accepted).
+    void siteEdited();
 
 private:
     void updateAuthFields();

@@ -34,12 +34,16 @@ public:
     // status = HTTP status (0 = network / page problem: `error` explains), body = response text.
     using FetchCallback = std::function<void(int status, const QByteArray &body, const QString &error)>;
 
-    // fetch(<https://duel.com/path>) in the page. `body` empty = no body (GET).
+    // fetch(<https://<site>/path>) in the page. `body` empty = no body (GET).
     // `uuid` goes into "x-duel-device-identifier" (empty = the page's localStorage "security:uuid").
     // `balancesOnly`: for the metadata request, only {"user":{"balances":[...]}} is passed back
     // (the full answer is ~70 KB).
     void fetch(const QString &method, const QString &path, const QByteArray &body,
                const QString &uuid, FetchCallback cb, bool balancesOnly = false);
+
+    // Duel's host or a mirror (empty = duel.com). A change reloads the page on the new site.
+    void setSite(const QString &site);
+    QString site() const { return m_site; }
 
     // Puts the "duel" session cookie into the browser (a token pasted in Options without using
     // the login button). Empty = leave the browser's cookie as it is.
@@ -54,10 +58,12 @@ protected:
 private:
     void initializeWebView();
     void applySessionCookie();
+    void navigateToSite();
 
     ICoreWebView2Environment *m_env = nullptr;
     ICoreWebView2Controller *m_controller = nullptr;
     ICoreWebView2 *m_webview = nullptr;
     bool m_pageLoaded = false;
     QString m_sessionCookie;
+    QString m_site = QStringLiteral("duel.com");
 };
