@@ -568,9 +568,19 @@ bool BotEngine::applyScriptCasino()
     // next bet back until it is ready instead of failing and retrying.
     m_awaitTransport = true;
     m_awaitTimer.start();
-    // The new casino brings its own bet currency; do not try to "switch back" to the old one.
+    // The new casino bets in its own currency (the one set for it in Options). The script's
+    // `currency` still holds the old casino's currency: overwrite it, otherwise the next bet
+    // would try to "switch back" to it (e.g. USDC on a Wolfbet account that has none).
     m_runCfg.currency = currentCurrency();
-    emit logMessage(tr("Casino switched to %1.").arg(want), false);
+    if (m_script) {
+        m_script->setGlobalString("casino", want);
+        if (!m_runCfg.currency.isEmpty())
+            m_script->setGlobalString("currency", m_runCfg.currency);
+    }
+    emit logMessage(m_runCfg.currency.isEmpty()
+                        ? tr("Casino switched to %1.").arg(want)
+                        : tr("Casino switched to %1 (currency: %2).").arg(want, m_runCfg.currency.toUpper()),
+                    false);
     return false;
 }
 
