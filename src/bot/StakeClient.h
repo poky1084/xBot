@@ -135,6 +135,7 @@ private:
     void placeWolfbetLimbo(const LimboBetRequest &request);
     void rotateWolfbetSeed();
     void placeParadiceDice(const DiceBetRequest &request);
+    void rotateParadiceSeed();
     void placeDuelDice(const DiceBetRequest &request);
     void rotateDuelSeed(const QString &clientSeed);
     void placeDuelLimbo(const LimboBetRequest &request);

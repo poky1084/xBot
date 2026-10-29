@@ -242,10 +242,7 @@ void StakeClient::rotateSeedPair(const QString &clientSeed)
         return;
     }
     if (isParadice()) {
-        // The seed-change request of Paradice has not been captured yet.
-        QTimer::singleShot(0, this, [this] {
-            emit seedRotateFailed(tr("Paradice: seed rotation is not supported yet."));
-        });
+        rotateParadiceSeed(); // the client seed cannot be chosen on Paradice
         return;
     }
 
@@ -1343,6 +1340,49 @@ void StakeClient::rotateDuelSeed(const QString &clientSeed)
                                  ? qint64(numberOf(data.value(QStringLiteral("nonce")))) : 0;
         emit seedRotated(activeClient, nonce, hash,
                          data.value(QStringLiteral("next_server_seed_hash")).toString());
+    });
+}
+
+// Paradice: mutation updateServerSeed (no arguments: only the server seed is renewed).
+// Answer: {"data":{"updateServerSeed":{"id","serverSeed" (hash of the new active seed),
+//   "serverSeedNonce" (0),"clientSeed" (unchanged),"serverSeedNext" (hash of the following one)}}}
+void StakeClient::rotateParadiceSeed()
+{
+    QString why;
+    if (!m_transport || !m_transport->isReady(&why)) {
+        const QString msg = m_transport ? why : tr("No transport configured.");
+        QTimer::singleShot(0, this, [this, msg] { emit seedRotateFailed(msg); });
+        return;
+    }
+
+    QJsonObject body;
+    body.insert(QStringLiteral("operationName"), QStringLiteral("updateServerSeed"));
+    body.insert(QStringLiteral("variables"), QJsonObject());
+    body.insert(QStringLiteral("query"), QStringLiteral(
+        "mutation updateServerSeed {\n  updateServerSeed {\n    id\n    serverSeed\n"
+        "    serverSeedNonce\n    clientSeed\n    serverSeedNext\n    __typename\n  }\n}\n"));
+
+    m_transport->post(QString(), body, [this](const TransportReply &reply) {
+        if (!reply.ok) {
+            if (reply.status == 0)
+                emit sessionLost(reply.error);
+            emit seedRotateFailed(reply.error);
+            return;
+        }
+        const QJsonObject data = reply.json.value(QStringLiteral("data")).toObject()
+                                     .value(QStringLiteral("updateServerSeed")).toObject();
+        const QString hash = data.value(QStringLiteral("serverSeed")).toString();
+        if (data.isEmpty() || hash.isEmpty()) {
+            QString msg = firstErrorText(reply.json, nullptr);
+            if (msg.isEmpty())
+                msg = tr("Paradice seed rotation rejected (HTTP %1).").arg(reply.status);
+            emit seedRotateFailed(msg);
+            return;
+        }
+        const qint64 nonce = data.contains(QStringLiteral("serverSeedNonce"))
+                                 ? qint64(numberOf(data.value(QStringLiteral("serverSeedNonce")))) : 0;
+        emit seedRotated(data.value(QStringLiteral("clientSeed")).toString(), nonce, hash,
+                         data.value(QStringLiteral("serverSeedNext")).toString());
     });
 }
 

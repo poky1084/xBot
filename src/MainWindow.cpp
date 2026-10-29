@@ -1522,10 +1522,11 @@ void MainWindow::applyClientSeed(const std::function<void()> &then)
     const QString seed = m_randomClientSeed ? StakeClient::randomClientSeed(10) : typed;
 
     if (m_engine->liveMode() && m_live.isParadice()) {
-        // Paradice's seed-change request is not known yet: bet on with the current seed pair.
+        // Paradice's client seed cannot be set (updateServerSeed only renews the server seed):
+        // do not rotate before every bet, just bet on with the current seed pair.
         m_clientSeedPending = false;
-        onLogMessage(tr("Paradice: the client seed cannot be set from the bot yet - betting with "
-                        "the current seed pair."), false);
+        onLogMessage(tr("Paradice: the client seed cannot be set - betting with the current "
+                        "seed pair (use Rotate seed to renew the server seed)."), false);
         then();
         return;
     }
