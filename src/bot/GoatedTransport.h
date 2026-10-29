@@ -4,6 +4,7 @@
 
 #include <QMap>
 #include <QNetworkAccessManager>
+#include <QPointer>
 #include <QString>
 
 // Credentials for goated.com: only the token (localStorage "g3_token").
@@ -13,7 +14,8 @@ struct GoatedCredentials
     QString userAgent;        // optional override
 };
 
-// Direct HTTPS transport for goated.com (no WebView2, no extension, no websocket).
+// HTTPS transport for goated.com: straight from the app ("Direct mode") or through the browser
+// extension's goated.com tab (setExtension()).
 //
 //  * post()            -> HTTPS POST to https://apis.goated.com/<path> with the Bearer token.
 //  * requestBalances() -> GET https://apis.goated.com/user/wallet/balances
@@ -29,7 +31,15 @@ public:
     void setCredentials(const GoatedCredentials &cred);
     const GoatedCredentials &credentials() const { return m_cred; }
 
-    QString name() const override { return QStringLiteral("Goated (direct)"); }
+    // Requests go through the extension's goated.com tab (nullptr = straight from the app).
+    void setExtension(ExtensionTransport *ext);
+    bool usesExtension() const { return m_ext != nullptr; }
+    static QStringList pageHosts() { return {QStringLiteral("goated.com")}; }
+
+    QString name() const override
+    {
+        return m_ext ? QStringLiteral("Goated (extension)") : QStringLiteral("Goated (direct)");
+    }
     bool isReady(QString *whyNot = nullptr) const override;
     void post(const QString &path, const QJsonObject &body, TransportCallback cb) override;
 
@@ -50,9 +60,12 @@ signals:
 
 private:
     QNetworkRequest makeRequest(const QString &path, bool json) const;
-    void handleReply(class QNetworkReply *reply, TransportCallback cb);
+    void send(const QByteArray &method, const QString &path, const QByteArray &body, bool json,
+              TransportCallback cb);
+    TransportReply interpret(int status, const QByteArray &data, const QString &netError) const;
 
     QNetworkAccessManager m_nam;
+    QPointer<ExtensionTransport> m_ext;
     GoatedCredentials m_cred;
     QString m_deviceId;
     QString m_sessionId;

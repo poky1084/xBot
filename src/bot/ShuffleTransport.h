@@ -21,7 +21,9 @@ struct ShuffleCredentials
     QString userAgent;                             // optional override
 };
 
-// Direct (no WebView2, no browser extension) transport for shuffle.game.
+// Transport for shuffle.game. HTTPS requests (bets, balance list) go straight from the app
+// ("Direct mode") or through the browser extension's Shuffle tab (setExtension()); the balance
+// WebSocket always runs from the app.
 //
 //  * post()            -> HTTPS POST to https://<site>/<path> with the Bearer token and an
 //                         X-Correlation-Id header (BROWSER_ID-<random21>-t::CORRELATION_USER_ID).
@@ -58,7 +60,15 @@ public:
     // Lowercase currency code the bot bets with ("" = none chosen yet).
     void setWantedCurrency(const QString &currency) { m_wanted = currency.trimmed().toLower(); }
 
-    QString name() const override { return QStringLiteral("Shuffle (direct)"); }
+    // HTTPS requests go through the extension's tab on the Shuffle site (nullptr = from the app).
+    void setExtension(ExtensionTransport *ext);
+    bool usesExtension() const { return m_ext != nullptr; }
+    QStringList pageHosts() const { return {m_cred.site}; }
+
+    QString name() const override
+    {
+        return m_ext ? QStringLiteral("Shuffle (extension)") : QStringLiteral("Shuffle (direct)");
+    }
     bool isReady(QString *whyNot = nullptr) const override;
     void post(const QString &path, const QJsonObject &body, TransportCallback cb) override;
 
@@ -105,6 +115,7 @@ private:
     void emitBalances();
 
     QNetworkAccessManager m_nam;
+    QPointer<ExtensionTransport> m_ext;
     ShuffleCredentials m_cred;
     QString m_wanted;
 

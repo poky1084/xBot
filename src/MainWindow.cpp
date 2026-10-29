@@ -628,9 +628,9 @@ MainWindow::MainWindow(int slot, bool freshWebSession, QWidget *parent)
     connect(m_ext, &IStakeTransport::readyChanged, this, &MainWindow::onExtensionReadyChanged);
     connect(m_ext, &ExtensionTransport::originRejected, this, [this](const QString &origin) {
         onLogMessage(tr("Rejected a connection to the extension port from origin \"%1\". Allowed: "
-                        "browser extensions and https://%2 — set Site/mirror in Options if your "
-                        "extension runs on another domain.")
-                         .arg(origin, m_live.site),
+                        "browser extensions, the casino sites and the mirrors set in Options — set "
+                        "Site/mirror in Options if your casino tab runs on another domain.")
+                         .arg(origin),
                      true);
     });
 
@@ -2216,10 +2216,10 @@ void MainWindow::onOpenOptions()
     // a bet or auto-bet is running.
     dialog.setAutoFetchEnabled(!m_engine->isRunning() && !m_engine->betInFlight());
     dialog.setLiveSettings(m_live); // shows the typed currency of the active casino
-    dialog.setExtensionStatus(m_ext->isListening(), m_ext->isConnected());
+    dialog.setExtensionStatus(m_ext->isListening(), m_ext->connectedHosts());
 
     connect(m_ext, &IStakeTransport::readyChanged, &dialog, [this, &dialog](bool) {
-        dialog.setExtensionStatus(m_ext->isListening(), m_ext->isConnected());
+        dialog.setExtensionStatus(m_ext->isListening(), m_ext->connectedHosts());
     });
     connect(&dialog, &OptionsDialog::loginRequested, this, [this, &dialog] {
         QString err;
@@ -2227,7 +2227,7 @@ void MainWindow::onOpenOptions()
             dialog.setLoginStatus(err, false);
             return;
         }
-        dialog.setExtensionStatus(m_ext->isListening(), m_ext->isConnected());
+        dialog.setExtensionStatus(m_ext->isListening(), m_ext->connectedHosts());
 
         // Shuffle direct mode talks to Shuffle straight from the app (HTTPS + websocket) and
         // never uses the hidden WebView2 browser (which only loads Stake's site), so there is
@@ -2236,11 +2236,11 @@ void MainWindow::onOpenOptions()
         const LiveSettings cur = dialog.liveSettings();
         // Duel: its requests run in the hidden Duel browser; the pageLoaded handler in
         // ensureDuelBrowser() fetches the balances once it is there.
-        if (cur.isDuel() && m_duelBrowser && !m_duelBrowser->isPageLoaded()) {
+        if (cur.isDuel() && !cur.duelExtension && m_duelBrowser && !m_duelBrowser->isPageLoaded()) {
             dialog.setLoginStatus(tr("Loading the Duel browser…"), true);
             return;
         }
-        if (cur.isDuel() && !m_duelBrowser) {
+        if (cur.isDuel() && !cur.duelExtension && !m_duelBrowser) {
             dialog.setLoginStatus(tr("Duel needs the WebView2 Runtime (Microsoft Edge WebView2)."), false);
             return;
         }
@@ -2419,8 +2419,11 @@ void MainWindow::applyDuelCredentials(const LiveSettings &s)
     dc.uuid = s.duelUuid;
     dc.clearance = s.duelClearance;
     dc.userAgent = s.duelUserAgent;
+    dc.site = s.duelSite;
     m_duel->setCredentials(dc);
-    if (!m_duel->credentials().token.isEmpty() && !m_duel->credentials().uuid.isEmpty())
+    // Extension mode: the requests go out from the Duel tab, no hidden browser is needed.
+    if (!s.duelExtension && !m_duel->credentials().token.isEmpty()
+        && !m_duel->credentials().uuid.isEmpty())
         ensureDuelBrowser();
     if (m_duelBrowser)
         m_duelBrowser->setSite(s.duelSite); // a new mirror reloads the hidden page there
@@ -2456,21 +2459,8 @@ void MainWindow::keepStakeSessionAlive(const LiveSettings &s)
 {
     if (s.apiKey.isEmpty() && !s.extensionMode)
         return;
-    if (s.extensionMode) {
-        StakeCredentials cred;
-        cred.site = s.site;
-        cred.apiKey = s.apiKey;
-        cred.clearance = s.clearance;
-        cred.userAgent = s.userAgent;
-        m_ext->setCredentials(cred);
-        QString extErr;
-        if (!m_ext->start(s.extensionPort, &extErr))
-            onLogMessage(tr("Could not start the extension server on 127.0.0.1:%1 (%2)")
-                             .arg(s.extensionPort)
-                             .arg(extErr),
-                         true);
-    } else {
-        m_ext->stop();
+    // Extension mode: the server is kept running by updateExtensionServer().
+    if (!s.extensionMode) {
         ensureHiddenBrowser(s);
         m_webTransport->setBrowser(m_hiddenBrowser); // so it can read Stake's balance
     }
@@ -2531,7 +2521,56 @@ void MainWindow::onStakeBackgroundBalances(const QMap<QString, double> &balances
     refreshStakeBalanceVar();
 }
 
+// The extension server runs while any casino uses the "Browser extension" login method; each
+// casino's transport sends its requests through it when that casino's own method is the extension.
+bool MainWindow::updateExtensionServer(const LiveSettings &s, QString *errorOut)
+{
+    StakeCredentials cred;
+    cred.site = s.site;
+    cred.apiKey = s.apiKey;
+    cred.clearance = s.clearance;
+    cred.userAgent = s.userAgent;
+    m_ext->setCredentials(cred);
+    m_ext->setAllowedHosts(s.allExtensionHosts());
+
+    m_shuffle->setExtension(s.shuffleExtension ? m_ext : nullptr);
+    m_goated->setExtension(s.goatedExtension ? m_ext : nullptr);
+    m_wolfbet->setExtension(s.wolfbetExtension ? m_ext : nullptr);
+    m_duel->setExtension(s.duelExtension ? m_ext : nullptr);
+
+    if (!s.anyUsesExtension()) {
+        m_ext->stop();
+        return true;
+    }
+    QString err;
+    if (m_ext->start(s.extensionPort, &err))
+        return true;
+    const QString msg = tr("Could not start the extension server on 127.0.0.1:%1 (%2)")
+                            .arg(s.extensionPort)
+                            .arg(err);
+    onLogMessage(msg, true);
+    if (errorOut)
+        *errorOut = msg;
+    return false;
+}
+
 bool MainWindow::configureConnection(const LiveSettings &s, QString *errorOut)
+{
+    QString extErr;
+    const bool extOk = updateExtensionServer(s, &extErr);
+    const bool ok = configureTransports(s, errorOut);
+    m_extActiveConnected = s.activeUsesExtension()
+                           && (m_ext->isConnectedTo(s.extensionHosts(s.casino))
+                               || (s.casino == LiveSettings::Casino::Stake && m_ext->isReady()));
+    if (ok && !extOk && s.activeUsesExtension()) {
+        if (errorOut)
+            *errorOut = extErr;
+        return false;
+    }
+    return ok;
+}
+
+bool MainWindow::configureTransports(const LiveSettings &s, QString *errorOut)
 {
     if (s.isDuel()) {
         // Direct mode: plain HTTPS straight from the app (cookie + UUID; the security token is
@@ -2605,23 +2644,9 @@ bool MainWindow::configureConnection(const LiveSettings &s, QString *errorOut)
         sc.correlationUserId = s.correlationUserId;
         sc.browserId = s.browserId;
         m_shuffle->setCredentials(sc);
-        if (s.extensionMode) {
-            // Keep the extension server (and its connected browser) alive while Shuffle is
-            // active, so switching back to Stake finds it still connected.
-            StakeCredentials cred;
-            cred.site = s.site;
-            cred.apiKey = s.apiKey;
-            cred.clearance = s.clearance;
-            cred.userAgent = s.userAgent;
-            m_ext->setCredentials(cred);
-            QString extErr;
-            if (!m_ext->start(s.extensionPort, &extErr))
-                onLogMessage(tr("Could not start the extension server on 127.0.0.1:%1 (%2)")
-                                 .arg(s.extensionPort)
-                                 .arg(extErr),
-                             true);
-        } else {
-            m_ext->stop();
+        // Stake extension mode: the server stays up (updateExtensionServer()), so switching back
+        // to Stake finds the tab still connected.
+        if (!s.extensionMode) {
             ensureHiddenBrowser(s); // keep WebView2 open for a quick switch back to Stake
             m_webTransport->setBrowser(m_hiddenBrowser); // so it can read Stake's balance
         }
@@ -2654,22 +2679,11 @@ bool MainWindow::configureConnection(const LiveSettings &s, QString *errorOut)
     cred.clearance = s.clearance;
     cred.userAgent = s.userAgent;
     m_cookie->setCredentials(cred);
-    m_ext->setCredentials(cred);
+    Q_UNUSED(errorOut); // a failing extension server is reported by configureConnection()
 
     if (s.extensionMode) {
-        QString err;
-        if (!m_ext->start(s.extensionPort, &err)) {
-            const QString msg = tr("Could not start the extension server on 127.0.0.1:%1 (%2)")
-                                    .arg(s.extensionPort)
-                                    .arg(err);
-            if (errorOut)
-                *errorOut = msg;
-            onLogMessage(msg, true);
-            return false;
-        }
-        m_stake->setTransport(m_ext);
+        m_stake->setTransport(m_ext); // server started by updateExtensionServer()
     } else {
-        m_ext->stop();
         
         ensureHiddenBrowser(s);
         m_webTransport->setBrowser(m_hiddenBrowser);
@@ -2751,8 +2765,8 @@ void MainWindow::applyLiveSettings(const LiveSettings &requested)
         m_balanceTimer->start();
         onLogMessage(tr("Live betting enabled (%1, %2). Fetching balance…")
                          .arg(m_live.activeSite(),
-                              m_live.isDirect() ? tr("direct")
-                                                 : (m_live.extensionMode ? tr("extension") : tr("cookie"))),
+                              m_live.activeUsesExtension() ? tr("extension")
+                                                           : (m_live.isDirect() ? tr("direct") : tr("cookie"))),
                      false);
     } else {
         m_balanceTimer->stop();
@@ -3115,19 +3129,35 @@ void MainWindow::onBalancesFailed(const QString &error)
 	updateConnectionStatus();
 }
 
+// A casino tab with the extension connected or closed.
 void MainWindow::onExtensionReadyChanged(bool ready)
 {
-    if (ready)
-        requestStakeBackgroundBalance(); // Shuffle / Goated active: fill Stake's cache
-    if (!m_stake || m_stake->transport() != m_ext)
+    if (ready && m_live.enabled) {
+        // Casinos that are not active fill their caches through their tab.
+        requestStakeBackgroundBalance();
+        if (!m_live.isGoated() && m_live.goatedExtension && m_goated->isReady())
+            m_goated->requestBalances();
+        if (!m_live.isWolfbet() && m_live.wolfbetExtension && m_wolfbet->isReady())
+            m_wolfbet->requestBalances();
+        if (!m_live.isDuel() && m_live.duelExtension && m_duel->isReady())
+            m_duel->requestBalances();
+    }
+    if (!m_stake || !m_live.activeUsesExtension()) {
+        m_extActiveConnected = false;
         return;
-    if (ready) {
-        onLogMessage(tr("Browser extension connected."), false);
+    }
+    const bool now = m_ext->isConnectedTo(m_live.extensionHosts(m_live.casino))
+                     || (m_live.casino == LiveSettings::Casino::Stake && m_ext->isReady());
+    if (now == m_extActiveConnected)
+        return; // a tab of another casino came or went
+    m_extActiveConnected = now;
+    if (now) {
+        onLogMessage(tr("Browser extension connected (%1 tab).").arg(m_live.activeSite()), false);
         if (m_live.enabled || m_optionsDialog)
             m_stake->fetchBalances();
     } else {
-        onLogMessage(tr("Browser extension disconnected."), true);
-        m_isLoggedIn = false; // <--- ADD THIS LINE
+        onLogMessage(tr("Browser extension: the %1 tab disconnected.").arg(m_live.activeSite()), true);
+        m_isLoggedIn = false;
     }
     updateModeWidgets();
 }
@@ -3221,12 +3251,11 @@ void MainWindow::updateModeWidgets()
         const bool ready = m_stake->transport() && m_stake->transport()->isReady(&why);
         m_statusMode->setText(tr("%1 · %2%3")
                                   .arg(m_live.activeSite(),
-                                       m_live.isDirect()
-                                           ? tr("direct")
-                                           : (m_live.extensionMode ? tr("extension")
-                                                                   : tr("cookie")),
-                                       (ready || m_live.isDirect()
-                                        || !m_live.extensionMode) ? QString() : tr(" (not connected)")));
+                                       m_live.activeUsesExtension()
+                                           ? tr("extension")
+                                           : (m_live.isDirect() ? tr("direct") : tr("cookie")),
+                                       (ready || !m_live.activeUsesExtension())
+                                           ? QString() : tr(" (not connected)")));
         m_statusMode->setStyleSheet(QStringLiteral("color:#c9372a;font-weight:bold;"));
     } else {
         m_statusMode->setText(tr("Simulation"));
@@ -3625,6 +3654,10 @@ void MainWindow::loadSettings()
     m_live.site = settings.value(QStringLiteral("site"), m_live.site).toString();
     m_live.shuffleSite = settings.value(QStringLiteral("shuffleSite"), m_live.shuffleSite).toString();
     m_live.extensionMode = settings.value(QStringLiteral("extensionMode"), false).toBool();
+    m_live.shuffleExtension = settings.value(QStringLiteral("shuffleExtension"), false).toBool();
+    m_live.goatedExtension = settings.value(QStringLiteral("goatedExtension"), false).toBool();
+    m_live.wolfbetExtension = settings.value(QStringLiteral("wolfbetExtension"), false).toBool();
+    m_live.duelExtension = settings.value(QStringLiteral("duelExtension"), false).toBool();
     m_currencyByCasino[0] = settings.value(QStringLiteral("currency")).toString();
     m_currencyByCasino[1] = settings.value(QStringLiteral("shuffleCurrency")).toString();
     m_currencyByCasino[2] = settings.value(QStringLiteral("goatedCurrency")).toString();
@@ -3714,6 +3747,10 @@ void MainWindow::saveOptionsSettings(QSettings &settings)
     settings.setValue(QStringLiteral("site"), m_live.site);
     settings.setValue(QStringLiteral("shuffleSite"), m_live.shuffleSite);
     settings.setValue(QStringLiteral("extensionMode"), m_live.extensionMode);
+    settings.setValue(QStringLiteral("shuffleExtension"), m_live.shuffleExtension);
+    settings.setValue(QStringLiteral("goatedExtension"), m_live.goatedExtension);
+    settings.setValue(QStringLiteral("wolfbetExtension"), m_live.wolfbetExtension);
+    settings.setValue(QStringLiteral("duelExtension"), m_live.duelExtension);
     settings.setValue(QStringLiteral("currency"), m_currencyByCasino[0]);
     settings.setValue(QStringLiteral("shuffleCurrency"), m_currencyByCasino[1]);
     settings.setValue(QStringLiteral("goatedCurrency"), m_currencyByCasino[2]);

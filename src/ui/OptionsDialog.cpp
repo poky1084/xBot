@@ -6,6 +6,7 @@
 #include "ui/DuelLoginDialog.h"
 #include "ui/WolfbetLoginDialog.h"
 #include "bot/CasinoCurrencies.h"
+#include "bot/StakeTransport.h" // ExtensionTransport::bareHost / stakeHosts
 
 #include <QCheckBox>
 #include <QComboBox>
@@ -320,7 +321,7 @@ OptionsDialog::OptionsDialog(QWidget *parent)
     rightCol->addWidget(liveBox);
     applyCasinoUi();
     updateAuthFields();
-    setExtensionStatus(false, false);
+    setExtensionStatus(false, QStringList());
 
     // ------------------------------------------------------------------- data
     auto *dataBox = new QGroupBox(tr("Data"), this);
@@ -492,17 +493,13 @@ void OptionsDialog::applyCasinoUi()
                                 : goated ? tr("Live betting — Goated")
                                          : shuffle ? tr("Live betting — Shuffle") : tr("Live betting"));
 
-    // Login method: Shuffle, Goated and Wolfbet have the one "Direct mode" (no WebView2, no browser
-    // extension).
+    // Login method: every casino can send its requests through the browser extension (its own
+    // tab in the browser). Index 1 is always "Browser extension".
     {
         const QSignalBlocker blocker(m_authCombo);
         m_authCombo->clear();
-        if (direct) {
-            m_authCombo->addItem(tr("Direct mode"));
-        } else {
-            m_authCombo->addItem(tr("Cookie (cf_clearance)"));
-            m_authCombo->addItem(tr("Browser extension"));
-        }
+        m_authCombo->addItem(direct ? tr("Direct mode") : tr("Cookie (cf_clearance)"));
+        m_authCombo->addItem(tr("Browser extension"));
         m_authCombo->setCurrentIndex(0);
     }
 
@@ -527,18 +524,19 @@ void OptionsDialog::applyCasinoUi()
     setFormRowVisible(m_duelUuidEdit, duel);
     setFormRowVisible(m_duelClearanceEdit, duel);
     setFormRowVisible(m_duelLoginBtn, duel);
-    setFormRowVisible(m_extStatus, !direct);
+    setFormRowVisible(m_extStatus, true); // every casino can use the extension
 }
 
 void OptionsDialog::updateAuthFields()
 {
-    const bool ext = !m_shuffle && !m_goated && !m_wolfbet && !m_duel && m_authCombo->currentIndex() == 1;
+    const bool ext = m_authCombo->currentIndex() == 1; // "Browser extension" (every casino)
     m_clearanceEdit->setEnabled(!ext);
     m_userAgentEdit->setEnabled(!ext);
     m_extStatus->setEnabled(ext);
     if (m_grabCookieBtn)
         m_grabCookieBtn->setEnabled(!ext && !m_shuffle && !m_goated && !m_wolfbet && !m_duel
                                     && CookieGrabberDialog::isAvailable());
+    updateExtensionStatusText();
 }
 
 LiveSettings OptionsDialog::liveSettings() const
@@ -572,6 +570,7 @@ LiveSettings OptionsDialog::liveSettings() const
         s.clearance = m_clearanceEdit->text().trimmed();
         s.userAgent = m_userAgentEdit->text().trimmed();
     }
+    s.setUsesExtension(s.casino, m_authCombo->currentIndex() == 1);
     s.currency = m_liveCurrencyCombo->currentText().trimmed().toLower();
     s.extensionPort = m_extensionPort;
     return s;
@@ -593,19 +592,19 @@ void OptionsDialog::setLiveSettings(const LiveSettings &s)
 
     m_liveEnable->setChecked(s.enabled);
     if (m_duel) {
-        m_authCombo->setCurrentIndex(0); // Direct mode
+        m_authCombo->setCurrentIndex(s.usesExtension(s.casino) ? 1 : 0); // Direct mode / extension
         m_siteEdit->setText(s.duelSite);
         m_apiKeyEdit->setText(s.duelToken);
         m_duelUuidEdit->setText(s.duelUuid);
         m_duelClearanceEdit->setText(s.duelClearance);
     } else if (m_wolfbet) {
-        m_authCombo->setCurrentIndex(0); // Direct mode
+        m_authCombo->setCurrentIndex(s.usesExtension(s.casino) ? 1 : 0); // Direct mode / extension
         m_apiKeyEdit->setText(s.wolfbetToken);
     } else if (m_goated) {
-        m_authCombo->setCurrentIndex(0); // Direct mode
+        m_authCombo->setCurrentIndex(s.usesExtension(s.casino) ? 1 : 0); // Direct mode / extension
         m_apiKeyEdit->setText(s.goatedToken);
     } else if (m_shuffle) {
-        m_authCombo->setCurrentIndex(0); // Direct mode
+        m_authCombo->setCurrentIndex(s.usesExtension(s.casino) ? 1 : 0); // Direct mode / extension
         m_siteEdit->setText(s.shuffleSite);
         m_apiKeyEdit->setText(s.shuffleToken);
         m_correlationEdit->setText(s.correlationUserId);
@@ -781,6 +780,9 @@ QString OptionsDialog::missingLoginData() const
     if (m_goated || m_wolfbet)
         return empty(m_apiKeyEdit) ? tr("the token is empty.") : QString();
     if (m_duel) {
+        // Extension mode: the Duel tab has its own login cookie and UUID: nothing is needed.
+        if (m_authCombo->currentIndex() == 1)
+            return QString();
         if (empty(m_apiKeyEdit))
             return tr("the token (\"duel\" cookie) is empty.");
         if (empty(m_duelUuidEdit))
@@ -813,7 +815,7 @@ void OptionsDialog::setAutoFetchEnabled(bool on)
 QString OptionsDialog::autoFetchKey() const
 {
     const LiveSettings s = liveSettings();
-    QStringList parts{s.casinoName()};
+    QStringList parts{s.casinoName(), s.activeUsesExtension() ? QStringLiteral("ext") : QStringLiteral("direct")};
     if (s.isDuel())
         parts << s.duelSite << s.duelToken << s.duelUuid << s.duelClearance;
     else if (s.isWolfbet())
@@ -857,21 +859,52 @@ void OptionsDialog::maybeAutoFetch()
     emit loginRequested(); // same as "Log in": applies the inputs and fetches the balances
 }
 
-void OptionsDialog::setExtensionStatus(bool listening, bool connected)
+void OptionsDialog::setExtensionStatus(bool listening, const QStringList &hosts)
 {
-    // Stake extension mode: the extension just connected, so the currencies can now be read.
-    const bool nowConnected = listening && connected && !m_extConnected;
-    m_extConnected = listening && connected;
-    if (nowConnected && !m_shuffle && !m_goated && !m_wolfbet && !m_duel && m_authCombo->currentIndex() == 1) {
-        m_autoFetchedKey[int(LiveSettings::Casino::Stake)].clear();
+    m_extListening = listening;
+    m_extHosts = hosts;
+    updateExtensionStatusText();
+}
+
+// Shows whether the shown casino's tab is connected; when it just connected (and its login
+// method is the extension), the currencies can now be read.
+void OptionsDialog::updateExtensionStatusText()
+{
+    if (!m_extStatus || !m_authCombo)
+        return;
+    const LiveSettings s = liveSettings();
+    const QStringList want = s.extensionHosts(s.casino);
+    bool connected = false;
+    for (const QString &h : want) {
+        const QString bare = ExtensionTransport::bareHost(h);
+        for (const QString &have : m_extHosts)
+            connected = connected || ExtensionTransport::bareHost(have) == bare;
+    }
+    // Stake: a tab on any Stake domain works too.
+    if (!connected && s.casino == LiveSettings::Casino::Stake) {
+        for (const QString &have : m_extHosts)
+            connected = connected || ExtensionTransport::stakeHosts().contains(ExtensionTransport::bareHost(have));
+    }
+    connected = connected && m_extListening;
+
+    const bool ext = m_authCombo->currentIndex() == 1;
+    const bool nowConnected = connected && !m_extConnected;
+    m_extConnected = connected;
+    if (nowConnected && ext) {
+        m_autoFetchedKey[int(s.casino)].clear();
         QTimer::singleShot(0, this, &OptionsDialog::maybeAutoFetch);
     }
-    if (!listening)
-        m_extStatus->setText(tr("server off (select \"Browser extension\" and log in)"));
+
+    const QString site = want.isEmpty() ? s.activeSite() : want.first();
+    if (!m_extListening)
+        m_extStatus->setText(ext ? tr("server off (press Log in to start it)")
+                                 : tr("server off (select \"Browser extension\" and log in)"));
     else if (connected)
-        m_extStatus->setText(tr("connected"));
+        m_extStatus->setText(tr("connected (%1 tab)").arg(site));
     else
-        m_extStatus->setText(tr("waiting for the extension on ws://127.0.0.1:%1").arg(m_extensionPort));
+        m_extStatus->setText(tr("waiting for a %1 tab with the extension (ws://127.0.0.1:%2)")
+                                 .arg(site)
+                                 .arg(m_extensionPort));
 }
 
 void OptionsDialog::onGrabCookie()

@@ -56,7 +56,8 @@ public:
     // Shows which currencies the account holds (as a hint; the bet currency stays what the
     // user typed).
     void setLiveCurrencies(const QStringList &codes, const QString &selected);
-    void setExtensionStatus(bool listening, bool connected);
+    // `hosts` = sites of the casino tabs connected to the extension server.
+    void setExtensionStatus(bool listening, const QStringList &hosts);
     // When on (default), the dialog logs in by itself (same as "Log in") as soon as every
     // input the selected casino needs is filled in, so its currencies load without a click.
     // Shuffle is skipped: its currency list is built in. Turn off while a bet is running.
@@ -82,6 +83,7 @@ signals:
 
 private:
     void updateAuthFields();
+    void updateExtensionStatusText();
     // The Casino selector changed: keep what was typed for the old casino and show the new one's.
     void onCasinoChanged(int index);
     // Adapts the "Live betting" box to the casino chosen in the Casino selector / menu
@@ -151,7 +153,9 @@ private:
     QPushButton *m_duelLoginBtn = nullptr;
     QLabel *m_loginStatus = nullptr;
     quint16 m_extensionPort = 4444;
-    bool m_extConnected = false;
+    bool m_extConnected = false;      // the shown casino's tab is connected
+    bool m_extListening = false;
+    QStringList m_extHosts;           // sites of the connected tabs
     bool m_autoFetchEnabled = true;
     QTimer *m_autoFetchTimer = nullptr;
     QString m_autoFetchedKey[LiveSettings::kCasinoCount]; // inputs last auto-fetched with

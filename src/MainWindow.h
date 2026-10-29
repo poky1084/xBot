@@ -191,6 +191,9 @@ private:
 	
     // Live betting helpers
     bool configureConnection(const LiveSettings &settings, QString *errorOut = nullptr);
+    bool configureTransports(const LiveSettings &settings, QString *errorOut);
+    // Starts / stops the extension server and points every casino's transport at it (or not).
+    bool updateExtensionServer(const LiveSettings &s, QString *errorOut);
     void applyLiveSettings(const LiveSettings &settings);
     void resetSessionState();
     // Graph, run clock, speed and labels after the session statistics were reset.
@@ -216,6 +219,7 @@ private:
     SimulatedProvider *m_provider = nullptr;
 	
 	bool m_isLoggedIn = false;
+    bool m_extActiveConnected = false; // the active casino's extension tab is connected
 
 	
     // Live betting

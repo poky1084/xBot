@@ -145,9 +145,23 @@ bool ShuffleTransport::isReady(QString *whyNot) const
         why = tr("CORRELATION_USER_ID is empty.");
     else if (m_cred.browserId.isEmpty())
         why = tr("BROWSER_ID is empty.");
+    else if (m_ext && !m_ext->isConnectedTo(pageHosts()))
+        why = tr("Shuffle: no %1 tab with the browser extension is open.").arg(m_cred.site);
     if (whyNot)
         *whyNot = why;
     return why.isEmpty();
+}
+
+void ShuffleTransport::setExtension(ExtensionTransport *ext)
+{
+    if (m_ext == ext)
+        return;
+    if (m_ext)
+        disconnect(m_ext, nullptr, this, nullptr);
+    m_ext = ext;
+    if (m_ext)
+        connect(m_ext, &IStakeTransport::readyChanged, this, [this] { emit readyChanged(isReady()); });
+    emit readyChanged(isReady());
 }
 
 QString ShuffleTransport::bearerToken() const
@@ -186,11 +200,9 @@ void ShuffleTransport::post(const QString &path, const QJsonObject &body, Transp
                   m_cred.userAgent.isEmpty() ? defaultUserAgent() : m_cred.userAgent);
     req.setTransferTimeout(kRequestTimeoutMs);
 
-    QNetworkReply *reply = m_nam.post(req, QJsonDocument(body).toJson(QJsonDocument::Compact));
-    connect(reply, &QNetworkReply::finished, this, [this, reply, cb] {
-        reply->deleteLater();
-        const int status = reply->attribute(QNetworkRequest::HttpStatusCodeAttribute).toInt();
-        const QByteArray data = reply->readAll();
+    sendHttp(this, m_nam, m_ext, pageHosts(), "POST", req,
+             QJsonDocument(body).toJson(QJsonDocument::Compact),
+             [this, cb](int status, const QByteArray &data, const QString &netError) {
 
         const QJsonDocument doc = QJsonDocument::fromJson(data);
         if (doc.isObject()) {
@@ -216,8 +228,8 @@ void ShuffleTransport::post(const QString &path, const QJsonObject &body, Transp
         } else if (status == 401) {
             cb(failure(tr("HTTP 401: unauthorized — the token was rejected or has expired."), status));
         } else if (status == 403 || status == 503) {
-            cb(failure(tr("HTTP %1: blocked (Cloudflare or the token/ids were refused). Direct mode "
-                          "has no browser session to pass a challenge.")
+            cb(failure(tr("HTTP %1: blocked (Cloudflare or the token/ids were refused). "
+                          "Use the browser extension or log in again.")
                            .arg(status),
                        status));
         } else if (status > 0) {
@@ -226,7 +238,7 @@ void ShuffleTransport::post(const QString &path, const QJsonObject &body, Transp
                            .arg(QString::fromUtf8(data.left(300)).simplified()),
                        status));
         } else {
-            cb(failure(reply->errorString(), 0));
+            cb(failure(netError.isEmpty() ? tr("Network error.") : netError, 0));
         }
     });
 }

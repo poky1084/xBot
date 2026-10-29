@@ -153,6 +153,27 @@ void CookieTransport::post(const QString &path, const QJsonObject &body, Transpo
 
 // =============================================================== extension
 
+namespace
+{
+constexpr int kCloseDuplicate = 4001; // the extension stands by and retries later
+
+// "https://www.duel.com" -> "duel.com"; "" when the origin is not an https page.
+QString hostOfOrigin(const QString &origin)
+{
+    if (!origin.startsWith(QLatin1String("https://")))
+        return QString();
+    return ExtensionTransport::bareHost(normalizeSite(origin));
+}
+
+// Headers a page cannot set (the browser sends its own) are not forwarded.
+bool forwardHeader(const QByteArray &name)
+{
+    static const QList<QByteArray> skip{"origin", "referer", "user-agent", "cookie", "host",
+                                        "content-length", "connection", "accept-encoding"};
+    return !skip.contains(name.toLower());
+}
+} // namespace
+
 ExtensionTransport::ExtensionTransport(QObject *parent)
     : IStakeTransport(parent)
 {
@@ -163,10 +184,40 @@ ExtensionTransport::~ExtensionTransport()
     stop();
 }
 
+QString ExtensionTransport::bareHost(const QString &host)
+{
+    QString h = host.trimmed().toLower();
+    if (h.startsWith(QLatin1String("www.")))
+        h.remove(0, 4);
+    return h;
+}
+
+const QStringList &ExtensionTransport::stakeHosts()
+{
+    static const QStringList hosts{
+        QStringLiteral("stake.bet"),     QStringLiteral("stake.com"),       QStringLiteral("stake.pet"),
+        QStringLiteral("stake.kim"),     QStringLiteral("stake.us"),        QStringLiteral("stake.games"),
+        QStringLiteral("stake.mba"),     QStringLiteral("stake.ac"),        QStringLiteral("stake.jp"),
+        QStringLiteral("stake.bz"),      QStringLiteral("stake.krd"),       QStringLiteral("stake.ceo"),
+        QStringLiteral("staketr.com"),   QStringLiteral("primedice.com"),   QStringLiteral("primedice.games"),
+        QStringLiteral("stake1021.com"), QStringLiteral("stake1067.com"),   QStringLiteral("stake3075.com")};
+    return hosts;
+}
+
 void ExtensionTransport::setCredentials(const StakeCredentials &cred)
 {
     m_cred = cred;
     m_cred.site = normalizeSite(cred.site);
+}
+
+void ExtensionTransport::setAllowedHosts(const QStringList &hosts)
+{
+    m_allowedHosts.clear();
+    for (const QString &h : hosts) {
+        const QString b = bareHost(normalizeSite(h));
+        if (!b.isEmpty() && !m_allowedHosts.contains(b))
+            m_allowedHosts << b;
+    }
 }
 
 bool ExtensionTransport::start(quint16 port, QString *errorOut)
@@ -201,9 +252,10 @@ bool ExtensionTransport::start(quint16 port, QString *errorOut)
 void ExtensionTransport::stop()
 {
     failAll(tr("Extension server stopped."));
-    if (m_socket) {
-        QWebSocket *s = m_socket;
-        m_socket = nullptr;
+    const bool hadSockets = !m_sockets.isEmpty();
+    const QList<QWebSocket *> sockets = m_sockets.keys();
+    m_sockets.clear();
+    for (QWebSocket *s : sockets) {
         s->disconnect(this);
         s->close();
         s->deleteLater();
@@ -214,6 +266,8 @@ void ExtensionTransport::stop()
         m_server = nullptr;
     }
     m_port = 0;
+    if (hadSockets)
+        emit readyChanged(false);
 }
 
 bool ExtensionTransport::isListening() const
@@ -223,7 +277,49 @@ bool ExtensionTransport::isListening() const
 
 bool ExtensionTransport::isConnected() const
 {
-    return m_socket && m_socket->state() == QAbstractSocket::ConnectedState;
+    for (auto it = m_sockets.constBegin(); it != m_sockets.constEnd(); ++it) {
+        if (it.key()->state() == QAbstractSocket::ConnectedState)
+            return true;
+    }
+    return false;
+}
+
+bool ExtensionTransport::isConnectedTo(const QStringList &hosts) const
+{
+    return socketFor(hosts, false) != nullptr;
+}
+
+QStringList ExtensionTransport::connectedHosts() const
+{
+    QStringList out;
+    for (auto it = m_sockets.constBegin(); it != m_sockets.constEnd(); ++it) {
+        if (!it.value().isEmpty() && it.key()->state() == QAbstractSocket::ConnectedState
+            && !out.contains(it.value()))
+            out << it.value();
+    }
+    return out;
+}
+
+// The tab for the first of `hosts` that has one; `allowUnknown`: else a tab that did not say
+// its site (an older extension version connecting from the extension's own origin).
+QWebSocket *ExtensionTransport::socketFor(const QStringList &hosts, bool allowUnknown) const
+{
+    for (const QString &h : hosts) {
+        const QString want = bareHost(h);
+        if (want.isEmpty())
+            continue;
+        for (auto it = m_sockets.constBegin(); it != m_sockets.constEnd(); ++it) {
+            if (it.value() == want && it.key()->state() == QAbstractSocket::ConnectedState)
+                return it.key();
+        }
+    }
+    if (allowUnknown) {
+        for (auto it = m_sockets.constBegin(); it != m_sockets.constEnd(); ++it) {
+            if (it.value().isEmpty() && it.key()->state() == QAbstractSocket::ConnectedState)
+                return it.key();
+        }
+    }
+    return nullptr;
 }
 
 bool ExtensionTransport::isReady(QString *whyNot) const
@@ -231,10 +327,12 @@ bool ExtensionTransport::isReady(QString *whyNot) const
     QString why;
     if (!isListening())
         why = tr("Extension server is not running.");
-    else if (!isConnected())
-        why = tr("Browser extension not connected (ws://127.0.0.1:%1).").arg(m_port);
     else if (m_cred.site.isEmpty())
         why = tr("Invalid site/mirror domain.");
+    else if (!socketFor(QStringList{m_cred.site} + stakeHosts(), true))
+        why = isConnected()
+                  ? tr("No Stake tab with the extension is open (open https://%1).").arg(m_cred.site)
+                  : tr("Browser extension not connected (ws://127.0.0.1:%1).").arg(m_port);
     else if (m_cred.apiKey.trimmed().isEmpty())
         why = tr("API key is empty.");
     if (whyNot)
@@ -246,19 +344,19 @@ bool ExtensionTransport::originAllowed(const QString &origin) const
 {
     // A browser always sends an Origin for WebSocket handshakes, so this stops
     // arbitrary web pages from connecting to localhost and impersonating the
-    // extension (they would then receive your API key in every request).
+    // extension (they would then receive your API key / tokens in every request).
     if (origin.isEmpty())
         return true; // non-browser local client
     if (origin.startsWith(QLatin1String("chrome-extension://"))
         || origin.startsWith(QLatin1String("moz-extension://")))
         return true;
-    // Extensions that open the socket from a content script on the casino page
-    // carry that page's origin.
-    if (!m_cred.site.isEmpty()
-        && (origin == QLatin1String("https://") + m_cred.site
-            || origin == QLatin1String("https://www.") + m_cred.site))
-        return true;
-    return false;
+    // The extension opens the socket from a content script on the casino page, so it carries
+    // that page's origin: any casino site it runs on, or a mirror typed in Options.
+    const QString host = hostOfOrigin(origin);
+    if (host.isEmpty())
+        return false;
+    return host == bareHost(m_cred.site) || m_allowedHosts.contains(host)
+           || stakeHosts().contains(host);
 }
 
 void ExtensionTransport::onNewConnection()
@@ -272,33 +370,78 @@ void ExtensionTransport::onNewConnection()
             sock->deleteLater();
             continue;
         }
-
-        if (m_socket) { // extension reconnected: drop the stale socket
-            QWebSocket *old = m_socket;
-            m_socket = nullptr;
-            old->disconnect(this);
-            old->close();
-            old->deleteLater();
-            failAll(tr("Extension reconnected; request dropped."));
-        }
-
-        m_socket = sock;
-        connect(sock, &QWebSocket::textMessageReceived, this, &ExtensionTransport::onText);
+        connect(sock, &QWebSocket::textMessageReceived, this,
+                [this, sock](const QString &message) { onText(sock, message); });
         connect(sock, &QWebSocket::disconnected, this, [this, sock] { onSocketClosed(sock); });
-        emit readyChanged(true);
+        // The page's origin names the site; the "hello" message confirms it.
+        addSocket(sock, hostOfOrigin(sock->origin()));
     }
+}
+
+// Registers a tab for `host`. A second tab of the same site stands by; a tab of unknown site
+// (older extension) replaces the previous unknown one, like before.
+void ExtensionTransport::addSocket(QWebSocket *sock, const QString &host)
+{
+    for (auto it = m_sockets.begin(); it != m_sockets.end(); ++it) {
+        if (it.key() == sock || it.value() != host)
+            continue;
+        if (!host.isEmpty() && it.key()->state() == QAbstractSocket::ConnectedState) {
+            m_sockets.remove(sock);
+            sock->disconnect(this);
+            sock->close(static_cast<QWebSocketProtocol::CloseCode>(kCloseDuplicate),
+                        QStringLiteral("another tab of this site is connected"));
+            sock->deleteLater();
+            emit readyChanged(isConnected());
+            return;
+        }
+        QWebSocket *old = it.key();
+        m_sockets.erase(it);
+        failAll(tr("Extension reconnected; request dropped."), old);
+        old->disconnect(this);
+        old->close();
+        old->deleteLater();
+        break;
+    }
+    m_sockets.insert(sock, host);
+    emit readyChanged(true);
 }
 
 void ExtensionTransport::onSocketClosed(QWebSocket *socket)
 {
-    const bool wasCurrent = (socket == m_socket);
-    if (wasCurrent)
-        m_socket = nullptr;
+    const bool known = m_sockets.remove(socket);
     socket->deleteLater();
-    if (wasCurrent) {
-        failAll(tr("Browser extension disconnected."));
-        emit readyChanged(false);
+    if (known) {
+        failAll(tr("Browser extension disconnected."), socket);
+        emit readyChanged(isConnected());
     }
+}
+
+QString ExtensionTransport::sendRequest(QWebSocket *sock, const QJsonObject &payload, Pending p,
+                                        int timeoutMs)
+{
+    const QString id = QUuid::createUuid().toString(QUuid::WithoutBraces);
+    QJsonObject msg;
+    msg.insert(QStringLiteral("id"), id);
+    msg.insert(QStringLiteral("payload"), payload);
+
+    auto *timer = new QTimer(this);
+    timer->setSingleShot(true);
+    connect(timer, &QTimer::timeout, this, [this, id] {
+        auto it = m_pending.constFind(id);
+        if (it == m_pending.constEnd())
+            return;
+        if (it->fetchCb)
+            finishFetch(id, 0, QByteArray(), tr("Request timed out (extension)."));
+        else
+            finish(id, failure(tr("Request timed out (extension).")));
+    });
+    p.timer = timer;
+    p.socket = sock;
+    m_pending.insert(id, std::move(p));
+    timer->start(timeoutMs);
+
+    sock->sendTextMessage(QString::fromUtf8(QJsonDocument(msg).toJson(QJsonDocument::Compact)));
+    return id;
 }
 
 void ExtensionTransport::post(const QString &path, const QJsonObject &body, TransportCallback cb)
@@ -308,8 +451,7 @@ void ExtensionTransport::post(const QString &path, const QJsonObject &body, Tran
         deferred(this, cb, failure(why));
         return;
     }
-
-    const QString id = QUuid::createUuid().toString(QUuid::WithoutBraces);
+    QWebSocket *sock = socketFor(QStringList{m_cred.site} + stakeHosts(), true);
 
     QJsonObject headers;
     headers.insert(QStringLiteral("Content-Type"), QStringLiteral("application/json"));
@@ -322,37 +464,141 @@ void ExtensionTransport::post(const QString &path, const QJsonObject &body, Tran
     options.insert(QStringLiteral("body"),
                    QString::fromUtf8(QJsonDocument(body).toJson(QJsonDocument::Compact)));
 
+    // The request goes to the site of the connected tab (same origin as the page).
+    QString site = m_sockets.value(sock);
+    if (site.isEmpty())
+        site = m_cred.site;
     QJsonObject payload;
-    payload.insert(QStringLiteral("url"), QStringLiteral("https://%1/%2").arg(m_cred.site, path));
+    payload.insert(QStringLiteral("url"), QStringLiteral("https://%1/%2").arg(site, path));
     payload.insert(QStringLiteral("options"), options);
 
-    QJsonObject msg;
-    msg.insert(QStringLiteral("id"), id);
-    msg.insert(QStringLiteral("payload"), payload);
-
-    auto *timer = new QTimer(this);
-    timer->setSingleShot(true);
-    connect(timer, &QTimer::timeout, this, [this, id] {
-        finish(id, failure(tr("Request timed out (extension).")));
-    });
-    m_pending.insert(id, Pending{std::move(cb), timer});
-    timer->start(kRequestTimeoutMs);
-
-    m_socket->sendTextMessage(
-        QString::fromUtf8(QJsonDocument(msg).toJson(QJsonDocument::Compact)));
+    Pending p;
+    p.cb = std::move(cb);
+    sendRequest(sock, payload, std::move(p), kRequestTimeoutMs);
 }
 
-void ExtensionTransport::onText(const QString &message)
+void ExtensionTransport::fetch(const QStringList &pageHosts, const QByteArray &method,
+                               const QNetworkRequest &req, const QByteArray &body, FetchCallback cb)
+{
+    QString why;
+    QWebSocket *sock = nullptr;
+    if (!isListening()) {
+        why = tr("Extension server is not running.");
+    } else {
+        sock = socketFor(pageHosts, false);
+        if (!sock)
+            why = isConnected() ? tr("No tab with the extension is open on %1.")
+                                      .arg(pageHosts.isEmpty() ? QStringLiteral("?") : pageHosts.first())
+                                : tr("Browser extension not connected (ws://127.0.0.1:%1).").arg(m_port);
+    }
+    if (!sock) {
+        QTimer::singleShot(0, this, [cb, why] { cb(0, QByteArray(), why); });
+        return;
+    }
+
+    QJsonObject headers;
+    const QVariant contentType = req.header(QNetworkRequest::ContentTypeHeader);
+    if (contentType.isValid())
+        headers.insert(QStringLiteral("Content-Type"), contentType.toString());
+    const QList<QByteArray> names = req.rawHeaderList();
+    for (const QByteArray &name : names) {
+        if (forwardHeader(name) && name.toLower() != "content-type")
+            headers.insert(QString::fromLatin1(name), QString::fromUtf8(req.rawHeader(name)));
+    }
+
+    QJsonObject options;
+    options.insert(QStringLiteral("method"), QString::fromLatin1(method));
+    options.insert(QStringLiteral("headers"), headers);
+    if (!body.isEmpty())
+        options.insert(QStringLiteral("body"), QString::fromUtf8(body));
+
+    const int timeoutMs = req.transferTimeout() > 0 ? req.transferTimeout() : kRequestTimeoutMs;
+    QJsonObject payload;
+    payload.insert(QStringLiteral("raw"), true);
+    payload.insert(QStringLiteral("url"), req.url().toString(QUrl::FullyEncoded));
+    payload.insert(QStringLiteral("options"), options);
+    payload.insert(QStringLiteral("timeoutMs"), timeoutMs);
+
+    Pending p;
+    p.fetchCb = std::move(cb);
+    // A little longer than the page's own timeout, so its answer ("timeout") arrives first.
+    sendRequest(sock, payload, std::move(p), timeoutMs + 3000);
+}
+
+void ExtensionTransport::readStorage(const QStringList &pageHosts, const QString &key,
+                                     StorageCallback cb)
+{
+    QWebSocket *sock = isListening() ? socketFor(pageHosts, false) : nullptr;
+    if (!sock) {
+        const QString why = tr("No tab with the extension is open on %1.")
+                                .arg(pageHosts.isEmpty() ? QStringLiteral("?") : pageHosts.first());
+        QTimer::singleShot(0, this, [cb, why] { cb(false, QString(), why); });
+        return;
+    }
+    QJsonObject payload;
+    payload.insert(QStringLiteral("raw"), true);
+    payload.insert(QStringLiteral("op"), QStringLiteral("storage"));
+    payload.insert(QStringLiteral("key"), key);
+
+    Pending p;
+    p.fetchCb = [cb](int status, const QByteArray &body, const QString &error) {
+        if (status != 200) {
+            cb(false, QString(),
+               error.isEmpty() ? tr("The tab could not read its storage (update the browser extension).")
+                               : error);
+            return;
+        }
+        const QJsonObject o = QJsonDocument::fromJson(body).object();
+        if (!o.contains(QStringLiteral("value"))) { // an older extension tried to fetch() it
+            cb(false, QString(), tr("The browser extension is too old: reload the updated one."));
+            return;
+        }
+        cb(true, o.value(QStringLiteral("value")).toString(), QString());
+    };
+    sendRequest(sock, payload, std::move(p), 5000);
+}
+
+void ExtensionTransport::onText(QWebSocket *sock, const QString &message)
 {
     const QJsonDocument doc = QJsonDocument::fromJson(message.toUtf8());
     if (!doc.isObject())
         return;
     const QJsonObject obj = doc.object();
+
+    if (obj.value(QStringLiteral("type")).toString() == QLatin1String("hello")) {
+        const QString host = bareHost(normalizeSite(obj.value(QStringLiteral("host")).toString()));
+        if (!host.isEmpty() && m_sockets.contains(sock) && m_sockets.value(sock) != host) {
+            m_sockets.remove(sock);
+            addSocket(sock, host); // may put it on standby when that site already has a tab
+        }
+        return;
+    }
+
     const QString id = obj.value(QStringLiteral("id")).toString();
-    if (id.isEmpty() || !m_pending.contains(id))
+    auto it = m_pending.constFind(id);
+    if (id.isEmpty() || it == m_pending.constEnd())
         return; // late reply for a request that already timed out
 
     const QJsonValue resp = obj.value(QStringLiteral("response"));
+    if (it->fetchCb) {
+        if (obj.contains(QStringLiteral("status"))) {
+            finishFetch(id, obj.value(QStringLiteral("status")).toInt(),
+                        obj.value(QStringLiteral("body")).toString().toUtf8(),
+                        obj.value(QStringLiteral("error")).toString());
+        } else if (resp.isObject() || resp.isArray()) { // older extension: JSON only
+            const QJsonDocument inner = resp.isObject() ? QJsonDocument(resp.toObject())
+                                                        : QJsonDocument(resp.toArray());
+            finishFetch(id, 200, inner.toJson(QJsonDocument::Compact), QString());
+        } else if (resp.isString()) {
+            finishFetch(id, 200, resp.toString().toUtf8(), QString());
+        } else {
+            const QString err = obj.value(QStringLiteral("error")).toString();
+            finishFetch(id, 0, QByteArray(),
+                        err.isEmpty() ? tr("Unexpected response from the extension.") : err);
+        }
+        return;
+    }
+
     TransportReply reply;
     if (resp.isObject()) {
         reply.ok = true;
@@ -385,13 +631,68 @@ void ExtensionTransport::finish(const QString &id, const TransportReply &reply)
         p.timer->stop();
         p.timer->deleteLater();
     }
-    if (p.cb)
+    if (p.fetchCb)
+        p.fetchCb(0, QByteArray(), reply.error);
+    else if (p.cb)
         p.cb(reply);
 }
 
-void ExtensionTransport::failAll(const QString &why)
+void ExtensionTransport::finishFetch(const QString &id, int status, const QByteArray &body,
+                                     const QString &error)
+{
+    auto it = m_pending.find(id);
+    if (it == m_pending.end())
+        return;
+    Pending p = it.value();
+    m_pending.erase(it);
+    if (p.timer) {
+        p.timer->stop();
+        p.timer->deleteLater();
+    }
+    if (p.fetchCb)
+        p.fetchCb(status, body, error);
+    else if (p.cb)
+        p.cb(failure(error.isEmpty() ? tr("Unexpected response from the extension.") : error, status));
+}
+
+// Fails the requests waiting for an answer (all, or those sent to the tab `only`).
+void ExtensionTransport::failAll(const QString &why, QWebSocket *only)
 {
     const QStringList ids = m_pending.keys();
-    for (const QString &id : ids)
+    for (const QString &id : ids) {
+        auto it = m_pending.constFind(id);
+        if (it == m_pending.constEnd())
+            continue;
+        if (only && it->socket && it->socket != only)
+            continue;
         finish(id, failure(why));
+    }
+}
+
+// ------------------------------------------------------------------ HTTP helper
+
+void sendHttp(QObject *context, QNetworkAccessManager &nam, ExtensionTransport *ext,
+              const QStringList &pageHosts, const QByteArray &method, const QNetworkRequest &req,
+              const QByteArray &body, HttpDone done)
+{
+    if (ext) {
+        ext->fetch(pageHosts, method, req, body,
+                   [done](int status, const QByteArray &data, const QString &error) {
+            done(status, data, error);
+        });
+        return;
+    }
+    QNetworkReply *reply = nullptr;
+    if (method == "GET")
+        reply = nam.get(req);
+    else if (method == "POST")
+        reply = nam.post(req, body);
+    else
+        reply = nam.sendCustomRequest(req, method, body);
+    QObject::connect(reply, &QNetworkReply::finished, context, [reply, done] {
+        reply->deleteLater();
+        const int status = reply->attribute(QNetworkRequest::HttpStatusCodeAttribute).toInt();
+        const QByteArray data = reply->readAll();
+        done(status, data, status > 0 ? QString() : reply->errorString());
+    });
 }

@@ -1,6 +1,7 @@
 #pragma once
 
 #include <QString>
+#include <QStringList>
 #include <QtGlobal>
 
 // ---- Casino selection in code ---------------------------------------------------
@@ -72,6 +73,13 @@ struct LiveSettings
     QString duelClearance;         // "cf_clearance" cookie
     QString duelUserAgent;         // User-Agent of the login browser (cf_clearance is bound to it)
 
+    // ---- Browser extension: the casino's requests go out from its own tab in the browser (the
+    // "Browser extension" login method in Options). Stake's flag is extensionMode above.
+    bool shuffleExtension = false; // HTTPS only; Shuffle's balance WebSocket stays in the app
+    bool goatedExtension = false;
+    bool wolfbetExtension = false;
+    bool duelExtension = false;    // replaces the hidden WebView2 browser
+
     QString currency;              // lowercase API currency code ("btc", "usdt", ...) of the active casino
     quint16 extensionPort = 4444;  // local WebSocket port the extension connects to
 
@@ -82,6 +90,51 @@ struct LiveSettings
     // Casinos reached with plain HTTPS from the app ("Direct mode"), i.e. everything but Stake.
     bool isDirect() const { return casino != Casino::Stake; }
     QString casinoName() const { return nameOf(casino); }
+
+    bool usesExtension(Casino c) const
+    {
+        switch (c) {
+        case Casino::Shuffle: return shuffleExtension;
+        case Casino::Goated:  return goatedExtension;
+        case Casino::Wolfbet: return wolfbetExtension;
+        case Casino::Duel:    return duelExtension;
+        default:              return extensionMode;
+        }
+    }
+    void setUsesExtension(Casino c, bool on)
+    {
+        switch (c) {
+        case Casino::Shuffle: shuffleExtension = on; break;
+        case Casino::Goated:  goatedExtension = on; break;
+        case Casino::Wolfbet: wolfbetExtension = on; break;
+        case Casino::Duel:    duelExtension = on; break;
+        default:              extensionMode = on; break;
+        }
+    }
+    bool activeUsesExtension() const { return usesExtension(casino); }
+    bool anyUsesExtension() const
+    {
+        return extensionMode || shuffleExtension || goatedExtension || wolfbetExtension || duelExtension;
+    }
+    // Sites of the browser tab the extension uses for casino `c` (compared without "www.").
+    QStringList extensionHosts(Casino c) const
+    {
+        switch (c) {
+        case Casino::Shuffle: return {hostOf(shuffleSite, QStringLiteral("shuffle.com"))};
+        case Casino::Goated:  return {QStringLiteral("goated.com")};
+        case Casino::Wolfbet: return {QStringLiteral("wolfbet.com")};
+        case Casino::Duel:    return {duelSite};
+        default:              return {hostOf(site, QStringLiteral("stake.com"))};
+        }
+    }
+    // Every casino site a tab may connect from (the mirrors typed in Options).
+    QStringList allExtensionHosts() const
+    {
+        QStringList out;
+        for (int i = 0; i < kCasinoCount; ++i)
+            out += extensionHosts(static_cast<Casino>(i));
+        return out;
+    }
 
     // "https://Duel.com/dice/" -> "duel.com": the host of a typed site / mirror; empty -> `fallback`.
     static QString hostOf(const QString &typed, const QString &fallback)

@@ -102,11 +102,29 @@ void WolfbetTransport::setCredentials(const WolfbetCredentials &cred)
     }
 }
 
+void WolfbetTransport::setExtension(ExtensionTransport *ext)
+{
+    if (m_ext == ext)
+        return;
+    if (m_ext)
+        disconnect(m_ext, nullptr, this, nullptr);
+    m_ext = ext;
+    if (m_ext)
+        connect(m_ext, &IStakeTransport::readyChanged, this, [this] { emit readyChanged(isReady()); });
+    ++m_generation; // answers of the other path are stale
+    emit readyChanged(isReady());
+}
+
 bool WolfbetTransport::isReady(QString *whyNot) const
 {
     if (m_cred.token.isEmpty()) {
         if (whyNot)
             *whyNot = tr("Wolfbet: the token is empty (log in or paste the \"token\" cookie in Options).");
+        return false;
+    }
+    if (m_ext && !m_ext->isConnectedTo(pageHosts())) {
+        if (whyNot)
+            *whyNot = tr("Wolfbet: no wolfbet.com tab with the browser extension is open.");
         return false;
     }
     return true;
@@ -129,14 +147,20 @@ QNetworkRequest WolfbetTransport::makeRequest(const QString &path, bool json) co
     return req;
 }
 
-// Shared by post() and requestBalances(): turns the HTTP answer into a TransportReply.
-void WolfbetTransport::handleReply(QNetworkReply *reply, TransportCallback cb)
+// Sends the request straight from the app or through the extension's wolfbet.com tab.
+void WolfbetTransport::send(const QByteArray &method, const QString &path, const QByteArray &body,
+                            TransportCallback cb)
 {
-    connect(reply, &QNetworkReply::finished, this, [this, reply, cb] {
-        reply->deleteLater();
-        const int status = reply->attribute(QNetworkRequest::HttpStatusCodeAttribute).toInt();
-        const QByteArray data = reply->readAll();
+    sendHttp(this, m_nam, m_ext, pageHosts(), method, makeRequest(path, true), body,
+             [this, cb](int status, const QByteArray &data, const QString &netError) {
+        cb(interpret(status, data, netError));
+    });
+}
 
+// Shared by post(), get() and requestBalances(): turns the HTTP answer into a TransportReply.
+TransportReply WolfbetTransport::interpret(int status, const QByteArray &data, const QString &netError) const
+{
+    {
         const QJsonDocument doc = QJsonDocument::fromJson(data);
         if (doc.isObject()) {
             TransportReply r;
@@ -149,8 +173,7 @@ void WolfbetTransport::handleReply(QNetworkReply *reply, TransportCallback cb)
                 err.insert(QStringLiteral("message"), QStringLiteral("HTTP 429: slow down"));
                 r.json.insert(QStringLiteral("errors"), QJsonArray{err});
             }
-            cb(r);
-            return;
+            return r;
         }
 
         if (status == 429) {
@@ -162,23 +185,23 @@ void WolfbetTransport::handleReply(QNetworkReply *reply, TransportCallback cb)
             r.ok = true;
             r.status = status;
             r.json = json;
-            cb(r);
+            return r;
         } else if (status == 401) {
-            cb(failure(tr("HTTP 401: unauthorized — the token was rejected or has expired."), status));
+            return failure(tr("HTTP 401: unauthorized — the token was rejected or has expired."), status);
         } else if (status == 403 || status == 503) {
-            cb(failure(tr("HTTP %1: blocked (Cloudflare or the token was refused). Direct mode "
-                          "has no browser session to pass a challenge.")
+            return failure(tr("HTTP %1: blocked (Cloudflare or the token was refused). "
+                          "Use the browser extension or log in again.")
                            .arg(status),
-                       status));
+                       status);
         } else if (status > 0) {
-            cb(failure(tr("HTTP %1: %2")
+            return failure(tr("HTTP %1: %2")
                            .arg(status)
                            .arg(QString::fromUtf8(data.left(300)).simplified()),
-                       status));
+                       status);
         } else {
-            cb(failure(reply->errorString(), 0));
+            return failure(netError.isEmpty() ? tr("Network error.") : netError, 0);
         }
-    });
+    }
 }
 
 void WolfbetTransport::post(const QString &path, const QJsonObject &body, TransportCallback cb)
@@ -188,9 +211,7 @@ void WolfbetTransport::post(const QString &path, const QJsonObject &body, Transp
         QTimer::singleShot(0, this, [cb, why] { cb(failure(why)); });
         return;
     }
-    QNetworkReply *reply = m_nam.post(makeRequest(path, true),
-                                      QJsonDocument(body).toJson(QJsonDocument::Compact));
-    handleReply(reply, std::move(cb));
+    send("POST", path, QJsonDocument(body).toJson(QJsonDocument::Compact), std::move(cb));
 }
 
 void WolfbetTransport::get(const QString &path, TransportCallback cb)
@@ -200,7 +221,7 @@ void WolfbetTransport::get(const QString &path, TransportCallback cb)
         QTimer::singleShot(0, this, [cb, why] { cb(failure(why)); });
         return;
     }
-    handleReply(m_nam.get(makeRequest(path, true)), std::move(cb));
+    send("GET", path, QByteArray(), std::move(cb));
 }
 
 void WolfbetTransport::requestBalances()
@@ -212,8 +233,8 @@ void WolfbetTransport::requestBalances()
     }
 
     const quint32 generation = m_generation;
-    QNetworkReply *reply = m_nam.get(makeRequest(QStringLiteral("api/v2/user/balances"), true));
-    handleReply(reply, [this, generation](const TransportReply &r) {
+    send("GET", QStringLiteral("api/v2/user/balances"), QByteArray(),
+         [this, generation](const TransportReply &r) {
         if (generation != m_generation)
             return; // credentials changed meanwhile: stale answer
         if (!r.ok) {

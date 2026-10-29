@@ -1,5 +1,8 @@
 #include "bot/DuelTransport.h"
 
+#include <QNetworkRequest>
+#include <QUrl>
+
 #include "ui/DuelBrowser.h"
 
 #include <QJsonArray>
@@ -216,13 +219,16 @@ void DuelTransport::setCredentials(const DuelCredentials &cred)
     c.uuid = cleanUuid(c.uuid);
     c.clearance = cleanCookie(c.clearance, QStringLiteral("cf_clearance"));
     c.userAgent = c.userAgent.trimmed();
+    c.site = c.site.trimmed().isEmpty() ? QStringLiteral("duel.com") : c.site.trimmed().toLower();
     const bool changed = c.token != m_cred.token || c.uuid != m_cred.uuid
-                         || c.clearance != m_cred.clearance || c.userAgent != m_cred.userAgent;
+                         || c.clearance != m_cred.clearance || c.userAgent != m_cred.userAgent
+                         || c.site != m_cred.site;
     m_cred = c;
     if (m_browser)
         m_browser->setSessionCookie(m_cred.token);
     if (changed) {
         ++m_generation;
+        m_tabUuid.clear();
         m_securityToken.clear();
         m_securityExpiry = QDateTime();
         // Waiters of a token request made with the old credentials get an error.
@@ -234,8 +240,39 @@ void DuelTransport::setCredentials(const DuelCredentials &cred)
     }
 }
 
+void DuelTransport::setExtension(ExtensionTransport *ext)
+{
+    if (m_ext == ext)
+        return;
+    if (m_ext)
+        disconnect(m_ext, nullptr, this, nullptr);
+    m_ext = ext;
+    m_tabUuid.clear();
+    if (m_ext)
+        connect(m_ext, &IStakeTransport::readyChanged, this, [this] {
+            if (!m_ext->isConnectedTo(pageHosts()) && !m_tabUuid.isEmpty()) {
+                m_tabUuid.clear(); // the next tab may be another session
+                m_securityToken.clear();
+                m_securityExpiry = QDateTime();
+            }
+            emit readyChanged(isReady());
+        });
+    ++m_generation; // answers of the other path are stale
+    m_securityToken.clear(); // bound to the session it was fetched with
+    m_securityExpiry = QDateTime();
+    emit readyChanged(isReady());
+}
+
 bool DuelTransport::isReady(QString *whyNot) const
 {
+    if (m_ext) { // the extension's tab is logged in by itself and has its own UUID
+        if (!m_ext->isConnectedTo(pageHosts())) {
+            if (whyNot)
+                *whyNot = tr("Duel: no %1 tab with the browser extension is open.").arg(m_cred.site);
+            return false;
+        }
+        return true;
+    }
     if (m_cred.token.isEmpty()) {
         if (whyNot)
             *whyNot = tr("Duel: the token (\"duel\" cookie) is empty (log in or paste it in Options).");
@@ -283,8 +320,7 @@ void DuelTransport::send(const QString &method, const QString &path, const QByte
         QTimer::singleShot(0, this, [cb, why] { cb(failure(why)); });
         return;
     }
-    m_browser->fetch(method, path, body, m_cred.uuid,
-                     [cb](int status, const QByteArray &data, const QString &error) {
+    auto handle = [cb](int status, const QByteArray &data, const QString &error) {
         if (status == 0) {
             cb(failure(error.isEmpty() ? tr("Duel: network error.") : tr("Duel: %1").arg(error), 0));
             return;
@@ -329,7 +365,21 @@ void DuelTransport::send(const QString &method, const QString &path, const QByte
                            .arg(QString::fromUtf8(data.left(300)).simplified()),
                        status));
         }
-    }, balancesOnly);
+    };
+
+    if (m_ext) {
+        // Same request as the hidden browser's fetch(), sent from the extension's Duel tab.
+        QNetworkRequest req(QUrl(QStringLiteral("https://%1/").arg(m_cred.site) + path));
+        req.setRawHeader("Accept", "application/json, text/plain, */*");
+        if (!uuid().isEmpty())
+            req.setRawHeader("x-duel-device-identifier", uuid().toUtf8());
+        if (!body.isEmpty())
+            req.setHeader(QNetworkRequest::ContentTypeHeader, QStringLiteral("application/json"));
+        req.setTransferTimeout(15000);
+        m_ext->fetch(pageHosts(), method.toLatin1(), req, body, handle);
+        return;
+    }
+    m_browser->fetch(method, path, body, m_cred.uuid, handle, balancesOnly);
 }
 
 void DuelTransport::post(const QString &path, const QJsonObject &body, TransportCallback cb)
@@ -373,9 +423,19 @@ void DuelTransport::fetchSecurityToken()
 {
     m_fetchingToken = true;
     const quint32 generation = m_generation;
+    withTabUuid([this, generation](const QString &uuidError) {
+    if (generation != m_generation)
+        return;
+    if (!uuidError.isEmpty()) {
+        m_fetchingToken = false;
+        const QList<SecurityTokenCallback> waiters = std::exchange(m_tokenWaiters, {});
+        for (const SecurityTokenCallback &w : waiters)
+            w(QString(), uuidError, 0);
+        return;
+    }
 
     QJsonObject body;
-    body.insert(QStringLiteral("uuid"), m_cred.uuid);
+    body.insert(QStringLiteral("uuid"), uuid());
     body.insert(QStringLiteral("code"), QStringLiteral("0000"));
     body.insert(QStringLiteral("type"), QStringLiteral("standard"));
 
@@ -416,6 +476,7 @@ void DuelTransport::fetchSecurityToken()
         for (const SecurityTokenCallback &w : waiters)
             w(token, error, r.status);
     });
+    });
 }
 
 // ------------------------------------------------------------------ balances
@@ -431,7 +492,14 @@ void DuelTransport::requestBalances()
     }
 
     const quint32 generation = m_generation;
-    send(QStringLiteral("GET"), metadataPath(m_cred.uuid), QByteArray(), [this, generation](const TransportReply &r) {
+    withTabUuid([this, generation](const QString &uuidError) {
+    if (generation != m_generation)
+        return;
+    if (!uuidError.isEmpty()) {
+        emit balancesFailed(uuidError);
+        return;
+    }
+    send(QStringLiteral("GET"), metadataPath(uuid()), QByteArray(), [this, generation](const TransportReply &r) {
         if (generation != m_generation)
             return; // credentials changed meanwhile: stale answer
         if (!r.ok) {
@@ -445,9 +513,44 @@ void DuelTransport::requestBalances()
         QMap<QString, double> balances;
         QString error;
         if (!parseMetadataBalances(r.json, &balances, &error)) {
+            if (m_ext) {
+                m_tabUuid.clear(); // read again next time (it changes when you log in)
+                error = tr("Duel: the %1 tab in your browser is not logged in - log in to Duel "
+                           "there (the extension uses that tab's session).")
+                            .arg(m_cred.site);
+            }
             emit balancesFailed(error);
             return;
         }
         emit balancesUpdated(balances);
     }, true);
+    });
+}
+
+void DuelTransport::withTabUuid(std::function<void(const QString &error)> next)
+{
+    if (!m_ext || !m_tabUuid.isEmpty()) {
+        next(QString());
+        return;
+    }
+    m_tabUuidWaiters << std::move(next);
+    if (m_readingTabUuid)
+        return;
+    m_readingTabUuid = true;
+    const quint32 generation = m_generation;
+    m_ext->readStorage(pageHosts(), QStringLiteral("security:uuid"),
+                       [this, generation](bool ok, const QString &value, const QString &error) {
+        m_readingTabUuid = false;
+        QString why;
+        if (generation == m_generation && ok)
+            m_tabUuid = cleanUuid(value);
+        if (!ok)
+            why = tr("Duel: %1").arg(error);
+        else if (uuid().isEmpty())
+            why = tr("Duel: the %1 tab has no UUID yet - open Duel in that tab and log in.")
+                      .arg(m_cred.site);
+        const auto waiters = std::exchange(m_tabUuidWaiters, {});
+        for (const auto &w : waiters)
+            w(why);
+    });
 }

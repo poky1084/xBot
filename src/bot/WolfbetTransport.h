@@ -4,6 +4,7 @@
 
 #include <QMap>
 #include <QNetworkAccessManager>
+#include <QPointer>
 #include <QString>
 
 // Credentials for wolfbet.com: only the token (the "value" inside the "token" cookie).
@@ -13,7 +14,8 @@ struct WolfbetCredentials
     QString userAgent;        // optional override
 };
 
-// Direct HTTPS transport for wolfbet.com (no WebView2, no extension, no websocket).
+// HTTPS transport for wolfbet.com: straight from the app ("Direct mode") or through the browser
+// extension's wolfbet.com tab (setExtension()).
 //
 //  * post()            -> HTTPS POST to https://wolfbet.com/<path> with the Bearer token.
 //  * requestBalances() -> GET https://wolfbet.com/api/v2/user/balances
@@ -29,7 +31,15 @@ public:
     void setCredentials(const WolfbetCredentials &cred);
     const WolfbetCredentials &credentials() const { return m_cred; }
 
-    QString name() const override { return QStringLiteral("Wolfbet (direct)"); }
+    // Requests go through the extension's wolfbet.com tab (nullptr = straight from the app).
+    void setExtension(ExtensionTransport *ext);
+    bool usesExtension() const { return m_ext != nullptr; }
+    static QStringList pageHosts() { return {QStringLiteral("wolfbet.com")}; }
+
+    QString name() const override
+    {
+        return m_ext ? QStringLiteral("Wolfbet (extension)") : QStringLiteral("Wolfbet (direct)");
+    }
     bool isReady(QString *whyNot = nullptr) const override;
     void post(const QString &path, const QJsonObject &body, TransportCallback cb) override;
     // Same as post() but a GET request (e.g. "api/v1/game/seed/refresh").
@@ -53,9 +63,12 @@ signals:
 
 private:
     QNetworkRequest makeRequest(const QString &path, bool json) const;
-    void handleReply(class QNetworkReply *reply, TransportCallback cb);
+    void send(const QByteArray &method, const QString &path, const QByteArray &body,
+              TransportCallback cb);
+    TransportReply interpret(int status, const QByteArray &data, const QString &netError) const;
 
     QNetworkAccessManager m_nam;
+    QPointer<ExtensionTransport> m_ext;
     WolfbetCredentials m_cred;
     quint32 m_generation = 0; // bumped when the credentials change (drops stale replies)
 };

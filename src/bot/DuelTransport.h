@@ -19,6 +19,7 @@ struct DuelCredentials
     QString uuid;       // localStorage "security:uuid" (also sent as x-duel-device-identifier)
     QString clearance;  // value of the "cf_clearance" cookie (optional, but Cloudflare may need it)
     QString userAgent;  // User-Agent of the browser that got cf_clearance (it is bound to it)
+    QString site = QStringLiteral("duel.com"); // Duel's host or a mirror ("Site / mirror")
 };
 
 // Transport for duel.com. Duel's Cloudflare drops connections that are not from a real browser
@@ -50,9 +51,17 @@ public:
     // The hidden browser the requests go through (owned by the main window).
     void setBrowser(DuelBrowser *browser);
     DuelBrowser *browser() const { return m_browser; }
+    // Requests go through the browser extension's Duel tab instead of the hidden browser
+    // (nullptr = hidden browser). The tab's own "duel" cookie is used: no token needed.
+    void setExtension(ExtensionTransport *ext);
+    bool usesExtension() const { return m_ext != nullptr; }
+    QStringList pageHosts() const { return {m_cred.site}; }
     const DuelCredentials &credentials() const { return m_cred; }
 
-    QString name() const override { return QStringLiteral("Duel (direct)"); }
+    QString name() const override
+    {
+        return m_ext ? QStringLiteral("Duel (extension)") : QStringLiteral("Duel (direct)");
+    }
     bool isReady(QString *whyNot = nullptr) const override;
     void post(const QString &path, const QJsonObject &body, TransportCallback cb) override;
     void get(const QString &path, TransportCallback cb);
@@ -99,8 +108,16 @@ private:
     void send(const QString &method, const QString &path, const QByteArray &body, TransportCallback cb,
               bool balancesOnly = false);
     void fetchSecurityToken();
+    // Extension mode: the Duel tab's own localStorage "security:uuid" (its session is bound to it).
+    QString uuid() const { return (m_ext && !m_tabUuid.isEmpty()) ? m_tabUuid : m_cred.uuid; }
+    // Calls `next` once the tab's UUID is known (at once without the extension); error = why not.
+    void withTabUuid(std::function<void(const QString &error)> next);
 
     QPointer<DuelBrowser> m_browser;
+    QPointer<ExtensionTransport> m_ext;
+    QString m_tabUuid;                                         // read from the Duel tab
+    bool m_readingTabUuid = false;
+    QList<std::function<void(const QString &)>> m_tabUuidWaiters;
     DuelCredentials m_cred;
     quint32 m_generation = 0; // bumped when the credentials change (drops stale replies)
 

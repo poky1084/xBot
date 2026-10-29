@@ -81,11 +81,29 @@ void GoatedTransport::setCredentials(const GoatedCredentials &cred)
     }
 }
 
+void GoatedTransport::setExtension(ExtensionTransport *ext)
+{
+    if (m_ext == ext)
+        return;
+    if (m_ext)
+        disconnect(m_ext, nullptr, this, nullptr);
+    m_ext = ext;
+    if (m_ext)
+        connect(m_ext, &IStakeTransport::readyChanged, this, [this] { emit readyChanged(isReady()); });
+    ++m_generation; // answers of the other path are stale
+    emit readyChanged(isReady());
+}
+
 bool GoatedTransport::isReady(QString *whyNot) const
 {
     if (m_cred.token.isEmpty()) {
         if (whyNot)
             *whyNot = tr("Goated: the token is empty (log in or paste g3_token in Options).");
+        return false;
+    }
+    if (m_ext && !m_ext->isConnectedTo(pageHosts())) {
+        if (whyNot)
+            *whyNot = tr("Goated: no goated.com tab with the browser extension is open.");
         return false;
     }
     return true;
@@ -108,14 +126,20 @@ QNetworkRequest GoatedTransport::makeRequest(const QString &path, bool json) con
     return req;
 }
 
-// Shared by post() and requestBalances(): turns the HTTP answer into a TransportReply.
-void GoatedTransport::handleReply(QNetworkReply *reply, TransportCallback cb)
+// Sends the request straight from the app or through the extension's goated.com tab.
+void GoatedTransport::send(const QByteArray &method, const QString &path, const QByteArray &body,
+                           bool json, TransportCallback cb)
 {
-    connect(reply, &QNetworkReply::finished, this, [this, reply, cb] {
-        reply->deleteLater();
-        const int status = reply->attribute(QNetworkRequest::HttpStatusCodeAttribute).toInt();
-        const QByteArray data = reply->readAll();
+    sendHttp(this, m_nam, m_ext, pageHosts(), method, makeRequest(path, json), body,
+             [this, cb](int status, const QByteArray &data, const QString &netError) {
+        cb(interpret(status, data, netError));
+    });
+}
 
+// Shared by post() and requestBalances(): turns the HTTP answer into a TransportReply.
+TransportReply GoatedTransport::interpret(int status, const QByteArray &data, const QString &netError) const
+{
+    {
         const QJsonDocument doc = QJsonDocument::fromJson(data);
         if (doc.isObject()) {
             TransportReply r;
@@ -128,8 +152,7 @@ void GoatedTransport::handleReply(QNetworkReply *reply, TransportCallback cb)
                 err.insert(QStringLiteral("message"), QStringLiteral("HTTP 429: slow down"));
                 r.json.insert(QStringLiteral("errors"), QJsonArray{err});
             }
-            cb(r);
-            return;
+            return r;
         }
 
         if (status == 429) {
@@ -141,23 +164,23 @@ void GoatedTransport::handleReply(QNetworkReply *reply, TransportCallback cb)
             r.ok = true;
             r.status = status;
             r.json = json;
-            cb(r);
+            return r;
         } else if (status == 401) {
-            cb(failure(tr("HTTP 401: unauthorized — the token was rejected or has expired."), status));
+            return failure(tr("HTTP 401: unauthorized — the token was rejected or has expired."), status);
         } else if (status == 403 || status == 503) {
-            cb(failure(tr("HTTP %1: blocked (Cloudflare or the token was refused). Direct mode "
-                          "has no browser session to pass a challenge.")
+            return failure(tr("HTTP %1: blocked (Cloudflare or the token was refused). "
+                          "Use the browser extension or log in again.")
                            .arg(status),
-                       status));
+                       status);
         } else if (status > 0) {
-            cb(failure(tr("HTTP %1: %2")
+            return failure(tr("HTTP %1: %2")
                            .arg(status)
                            .arg(QString::fromUtf8(data.left(300)).simplified()),
-                       status));
+                       status);
         } else {
-            cb(failure(reply->errorString(), 0));
+            return failure(netError.isEmpty() ? tr("Network error.") : netError, 0);
         }
-    });
+    }
 }
 
 void GoatedTransport::post(const QString &path, const QJsonObject &body, TransportCallback cb)
@@ -167,9 +190,7 @@ void GoatedTransport::post(const QString &path, const QJsonObject &body, Transpo
         QTimer::singleShot(0, this, [cb, why] { cb(failure(why)); });
         return;
     }
-    QNetworkReply *reply = m_nam.post(makeRequest(path, true),
-                                      QJsonDocument(body).toJson(QJsonDocument::Compact));
-    handleReply(reply, std::move(cb));
+    send("POST", path, QJsonDocument(body).toJson(QJsonDocument::Compact), true, std::move(cb));
 }
 
 void GoatedTransport::requestBalances()
@@ -181,8 +202,8 @@ void GoatedTransport::requestBalances()
     }
 
     const quint32 generation = m_generation;
-    QNetworkReply *reply = m_nam.get(makeRequest(QStringLiteral("user/wallet/balances"), false));
-    handleReply(reply, [this, generation](const TransportReply &r) {
+    send("GET", QStringLiteral("user/wallet/balances"), QByteArray(), false,
+         [this, generation](const TransportReply &r) {
         if (generation != m_generation)
             return; // credentials changed meanwhile: stale answer
         if (!r.ok) {
