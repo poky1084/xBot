@@ -66,7 +66,8 @@ public:
     // GoatedTransport to Goated's REST API (dice and limbo; balances over HTTPS), a
     // WolfbetTransport to Wolfbet's REST API (dice only; balances over HTTPS), a DuelTransport
     // to Duel's REST API (dice and limbo; balances over HTTPS), a ParadiceTransport to Paradice's
-    // GraphQL API (dice only; balances over HTTPS).
+    // GraphQL API (dice only; balances over HTTPS), a PasinoTransport to Pasino's REST API
+    // (dice and limbo; balances over HTTPS).
     void setTransport(IStakeTransport *transport);
     IStakeTransport *transport() const { return m_transport; }
     bool isShuffle() const;
@@ -74,6 +75,7 @@ public:
     bool isWolfbet() const;
     bool isDuel() const;
     bool isParadice() const;
+    bool isPasino() const;
 
     // API currency code, lowercase ("btc", "usdt", ...).
     void setCurrency(const QString &currency);
@@ -136,6 +138,9 @@ private:
     void rotateWolfbetSeed();
     void placeParadiceDice(const DiceBetRequest &request);
     void rotateParadiceSeed();
+    void placePasinoDice(const DiceBetRequest &request);
+    void placePasinoLimbo(const LimboBetRequest &request);
+    void rotatePasinoSeed(const QString &clientSeed);
     void placeDuelDice(const DiceBetRequest &request);
     void rotateDuelSeed(const QString &clientSeed);
     void placeDuelLimbo(const LimboBetRequest &request);
@@ -153,4 +158,6 @@ private:
     IStakeTransport *m_transport = nullptr;
     QList<QMetaObject::Connection> m_shuffleConnections;
     QString m_currency;
+    // Pasino sends the client seed with every bet ("client_seed"); set by rotateSeedPair().
+    QString m_pasinoClientSeed;
 };

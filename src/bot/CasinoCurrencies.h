@@ -14,6 +14,8 @@
 //            -> userBalances[].currency: every currency, also those at 0 ("free" included)
 //   Paradice: POST https://api.paradice.in/api.php, GraphQL "me { wallets }" (needs the token)
 //            -> data.me.wallets[].currency: every wallet, also those at 0 (BTC, USDT_TRC, PRDC, …)
+//   Pasino:  POST https://api.pasino.com/coin/get-balances {"token","language"} (needs the token)
+//            -> coins[].coin: every coin, also those at 0 (BTC, ETH, …, GEM)
 //   Stake:   no public list; the Options dialog collects the currencies from the
 //            UserBalances answer (fetched automatically once Site + API key are filled in)
 //            and merges them into this cache.
@@ -29,6 +31,7 @@
 #include "bot/LiveSettings.h"
 #include "bot/DuelTransport.h"
 #include "bot/ParadiceTransport.h"
+#include "bot/PasinoTransport.h"
 #include "bot/WolfbetTransport.h"
 
 #include <QCoreApplication>
@@ -64,7 +67,7 @@ inline QHash<int, QStringList> &memoryCache()
 inline bool hasSource(LiveSettings::Casino casino)
 {
     return casino == LiveSettings::Casino::Goated || casino == LiveSettings::Casino::Wolfbet
-           || casino == LiveSettings::Casino::Paradice;
+           || casino == LiveSettings::Casino::Paradice || casino == LiveSettings::Casino::Pasino;
 }
 
 // Casinos with a fixed currency list (in the site's own order).
@@ -155,6 +158,14 @@ inline QStringList parseParadice(const QByteArray &body)
     return out;
 }
 
+// Pasino: {"coins":[{"coin":"BTC","balance":"0.00000000"},…],"success":true}
+inline QStringList parsePasino(const QByteArray &body)
+{
+    QStringList out = PasinoTransport::parseCoins(QJsonDocument::fromJson(body).object()).keys();
+    std::sort(out.begin(), out.end());
+    return out;
+}
+
 inline QStringList parseGoated(const QByteArray &body)
 {
     const QJsonObject root = QJsonDocument::fromJson(body).object();
@@ -170,7 +181,7 @@ inline QStringList parseGoated(const QByteArray &body)
 
 // Fetches the casino's currency list. On success the list is cached and `done` runs with it
 // (only while `context` is alive); on failure nothing happens and the cached list stays.
-// `token`: the login token, for casinos whose list needs it (Wolfbet, Paradice). Returns false when
+// `token`: the login token, for casinos whose list needs it (Wolfbet, Paradice, Pasino). Returns false when
 // nothing was requested (no source, or the needed token is empty).
 inline bool fetch(LiveSettings::Casino casino, QObject *context,
                   std::function<void(const QStringList &)> done,
@@ -211,6 +222,17 @@ inline bool fetch(LiveSettings::Casino casino, QObject *context,
         body.insert(QStringLiteral("query"), ParadiceTransport::balancesQuery());
         postBody = QJsonDocument(body).toJson(QJsonDocument::Compact);
         parse = detail::parseParadice;
+    } else if (casino == LiveSettings::Casino::Pasino) {
+        const QString clean = PasinoTransport::cleanToken(token);
+        if (clean.isEmpty())
+            return false;
+        req.setUrl(QUrl(PasinoTransport::apiBase() + QLatin1Char('/') + PasinoTransport::balancesPath()));
+        req.setHeader(QNetworkRequest::ContentTypeHeader,
+                      QStringLiteral("application/x-www-form-urlencoded"));
+        req.setRawHeader("Origin", "https://pasino.com");
+        req.setRawHeader("Referer", "https://pasino.com/");
+        postBody = PasinoTransport::makeBody(clean);
+        parse = detail::parsePasino;
     }
     req.setRawHeader("Accept", "application/json, text/plain, */*");
     req.setHeader(QNetworkRequest::UserAgentHeader, detail::userAgent());

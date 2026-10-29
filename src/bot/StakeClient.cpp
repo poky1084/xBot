@@ -5,6 +5,7 @@
 #include "bot/DuelTransport.h"
 #include "bot/GoatedTransport.h"
 #include "bot/ParadiceTransport.h"
+#include "bot/PasinoTransport.h"
 #include "bot/ShuffleTransport.h"
 #include "bot/WolfbetTransport.h"
 
@@ -160,6 +161,13 @@ void StakeClient::setTransport(IStakeTransport *transport)
         m_shuffleConnections << connect(paradice, &ParadiceTransport::balancesFailed, this,
                                         &StakeClient::balancesFailed);
     }
+    if (auto *pasino = qobject_cast<PasinoTransport *>(transport)) {
+        // Pasino: balances are read over HTTPS; same signals as the other casinos.
+        m_shuffleConnections << connect(pasino, &PasinoTransport::balancesUpdated, this,
+                                        &StakeClient::balancesReady);
+        m_shuffleConnections << connect(pasino, &PasinoTransport::balancesFailed, this,
+                                        &StakeClient::balancesFailed);
+    }
     if (auto *duel = qobject_cast<DuelTransport *>(transport)) {
         // Duel: balances are read over HTTPS; same signals as the other casinos.
         m_shuffleConnections << connect(duel, &DuelTransport::balancesUpdated, this,
@@ -192,6 +200,11 @@ bool StakeClient::isDuel() const
 bool StakeClient::isParadice() const
 {
     return qobject_cast<ParadiceTransport *>(m_transport) != nullptr;
+}
+
+bool StakeClient::isPasino() const
+{
+    return qobject_cast<PasinoTransport *>(m_transport) != nullptr;
 }
 
 void StakeClient::setCurrency(const QString &currency)
@@ -243,6 +256,10 @@ void StakeClient::rotateSeedPair(const QString &clientSeed)
     }
     if (isParadice()) {
         rotateParadiceSeed(); // the client seed cannot be chosen on Paradice
+        return;
+    }
+    if (isPasino()) {
+        rotatePasinoSeed(clientSeed); // sent with every bet: nothing to call on the server
         return;
     }
 
@@ -423,6 +440,10 @@ void StakeClient::vaultDeposit(double amount)
         QTimer::singleShot(0, this, [this] { emit vaultFailed(tr("Paradice: vault deposits are not supported.")); });
         return;
     }
+    if (isPasino()) {
+        QTimer::singleShot(0, this, [this] { emit vaultFailed(tr("Pasino: vault deposits are not supported.")); });
+        return;
+    }
     if (!isShuffle()) {
         stakeVaultDeposit(amount);
         return;
@@ -584,6 +605,11 @@ void StakeClient::fetchBalances()
         paradice->requestBalances();
         return;
     }
+    // Pasino: POST /coin/get-balances; results arrive through the transport's signals.
+    if (auto *pasino = qobject_cast<PasinoTransport *>(m_transport)) {
+        pasino->requestBalances();
+        return;
+    }
 
     postBalanceQuery(m_transport, false);
 }
@@ -657,7 +683,7 @@ void StakeClient::postBalanceQuery(IStakeTransport *via, bool background)
 void StakeClient::lookupBetIid(const QString &betId, std::function<void(const QString &)> done)
 {
     QString why;
-    if (betId.isEmpty() || !m_transport || isShuffle() || isGoated() || isWolfbet() || isDuel() || isParadice() || !m_transport->isReady(&why)) {
+    if (betId.isEmpty() || !m_transport || isShuffle() || isGoated() || isWolfbet() || isDuel() || isParadice() || isPasino() || !m_transport->isReady(&why)) {
         QTimer::singleShot(0, this, [done] { done(QString()); });
         return;
     }
@@ -717,6 +743,10 @@ void StakeClient::placeDice(const DiceBetRequest &request)
         placeParadiceDice(request);
         return;
     }
+    if (isPasino()) {
+        placePasinoDice(request);
+        return;
+    }
 
     const double target = std::round(request.target * 100.0) / 100.0;
 
@@ -764,6 +794,10 @@ void StakeClient::placeLimbo(const LimboBetRequest &request)
     if (isParadice()) {
         const LiveBetResult r = failed(tr("Paradice: Limbo is not supported (dice only)."));
         QTimer::singleShot(0, this, [this, r] { emit diceFinished(r); });
+        return;
+    }
+    if (isPasino()) {
+        placePasinoLimbo(request);
         return;
     }
 
@@ -1488,6 +1522,198 @@ void StakeClient::placeParadiceDice(const DiceBetRequest &request)
         }
 
         r.betId = bet.value(QStringLiteral("id")).toString();
+        r.nonce = -1; // not part of the answer
+        emit diceFinished(r);
+    });
+}
+
+// The client seed Pasino gets with every bet (a random 64-character one until one is set).
+static void ensurePasinoSeed(QString &seed)
+{
+    if (!seed.isEmpty())
+        return;
+    static const char alphabet[] = "abcdefghijklmnopqrstuvwxyz0123456789";
+    for (int i = 0; i < 64; ++i)
+        seed += QLatin1Char(alphabet[QRandomGenerator::system()->bounded(36)]);
+}
+
+// Pasino: the client seed travels with every bet, so "rotating" only stores the new one here.
+// The server seed is not touched (no seed endpoint is used).
+void StakeClient::rotatePasinoSeed(const QString &clientSeed)
+{
+    const QString seed = clientSeed.trimmed();
+    if (seed.isEmpty()) {
+        QTimer::singleShot(0, this, [this] { emit seedRotateFailed(tr("Pasino: the client seed is empty.")); });
+        return;
+    }
+    m_pasinoClientSeed = seed;
+    QTimer::singleShot(0, this, [this, seed] { emit seedRotated(seed, 0, QString(), QString()); });
+}
+
+// Pasino dice: POST https://api.pasino.com/dice/play  (JSON sent as x-www-form-urlencoded)
+//   {"token","language":"en","bet_amt":"0.10000000","coin":"GEM","type":"2","payout":"1.88904",
+//    "client_seed":"<64 chars>"}
+// type: 1 = low (roll under), 2 = high (roll over). The game is chosen by the payout, with a
+// 5 % house edge: win chance = 95 / payout (2 decimals), payout = 95 / chance cut to 5 decimals
+// (50.29 % -> 1.88904). The app's target fixes the win chance (under 50.29 / over 49.71).
+// Answer: {"message":"","win":0|1,"payout":0,"roll_number":1790 (roll in hundredths: 17.90),
+//   "coin":"GEM","balance":"5198.81240700","profit":"-0.10000000","bet_id":"34126921394",
+//   "success":true}; errors: {"success":false,"message":"…"}.
+void StakeClient::placePasinoDice(const DiceBetRequest &request)
+{
+    const double target = std::round(request.target * 100.0) / 100.0;
+    const bool over = request.over;
+    const double chance = std::round((over ? 100.0 - target : target) * 100.0) / 100.0;
+    if (!(chance > 0.0) || chance >= 100.0) {
+        const LiveBetResult r = failed(tr("Pasino: invalid target %1.").arg(target));
+        QTimer::singleShot(0, this, [this, r] { emit diceFinished(r); });
+        return;
+    }
+    // Pasino's own formula (bcdiv(95, chance, 5)): cut, never rounded up.
+    const double payout = std::floor(95.0 / chance * 100000.0 + 1e-7) / 100000.0;
+
+    ensurePasinoSeed(m_pasinoClientSeed);
+
+    QJsonObject body;
+    body.insert(QStringLiteral("bet_amt"), QString::number(request.amount, 'f', 8));
+    body.insert(QStringLiteral("coin"), PasinoTransport::apiCurrency(m_currency));
+    body.insert(QStringLiteral("type"), over ? QStringLiteral("2") : QStringLiteral("1"));
+    body.insert(QStringLiteral("payout"), QString::number(payout, 'f', 5));
+    body.insert(QStringLiteral("client_seed"), m_pasinoClientSeed);
+
+    const double requestedAmount = request.amount;
+    m_transport->post(QStringLiteral("dice/play"), body,
+                      [this, requestedAmount, target, over, payout](const TransportReply &reply) {
+        if (!reply.ok) {
+            const bool isTimeout = (reply.status == 0);
+            const bool unknown = (reply.status >= 500);
+            if (reply.status == 0)
+                emit sessionLost(reply.error);
+            emit diceFinished(failed(reply.error, {}, isTimeout, unknown));
+            return;
+        }
+
+        const QJsonObject &json = reply.json;
+        const QString errText = PasinoTransport::errorText(json);
+        if (!errText.isEmpty()) {
+            // {"success":false,...}: the bet was not placed.
+            LiveBetResult r = failed(errText, {}, isRetryable({}, errText), false);
+            r.retryDelayMs = fastRetryDelayMs({}, errText);
+            emit diceFinished(r);
+            return;
+        }
+        if (!json.contains(QStringLiteral("roll_number"))) {
+            const QString raw = QString::fromUtf8(QJsonDocument(json).toJson(QJsonDocument::Compact)).left(400);
+            emit diceFinished(failed(tr("Unexpected Pasino bet response (no roll found): %1").arg(raw),
+                                     {}, false, true));
+            return;
+        }
+
+        LiveBetResult r;
+        r.ok = true;
+        r.amount = requestedAmount;
+        r.roll = numberOf(json.value(QStringLiteral("roll_number"))) / 100.0;
+        const QJsonValue win = json.value(QStringLiteral("win"));
+        if (win.isBool())
+            r.win = win.toBool();
+        else if (win.isDouble() || win.isString())
+            r.win = numberOf(win) > 0.0;
+        else
+            r.win = over ? r.roll > target : r.roll < target;
+
+        if (r.win) {
+            // "profit" is the server's net figure; the stake comes back on top of it.
+            if (json.contains(QStringLiteral("profit"))) {
+                r.payout = r.amount + numberOf(json.value(QStringLiteral("profit")));
+                r.multiplier = r.amount > 0.0 ? r.payout / r.amount : payout;
+            } else {
+                r.multiplier = payout;
+                r.payout = r.amount * payout;
+            }
+        }
+
+        const QJsonValue id = json.value(QStringLiteral("bet_id"));
+        r.betId = id.isString() ? id.toString() : QString::number(qint64(numberOf(id)));
+        r.nonce = -1; // not part of the answer
+        emit diceFinished(r);
+    });
+}
+
+// Pasino limbo: POST https://api.pasino.com/limbo/play  (JSON sent as x-www-form-urlencoded)
+//   {"token","language":"en","client_seed":"<64 chars>","bet_amt":"0.01000000","coin":"GEM",
+//    "target_payout":"2.00"}
+// Answer: {"message":"","win":0|1,"payout":0,"actual_payout":"1.48" (the multiplier rolled),
+//   "coin":"GEM","balance":"…","profit":"-0.01000000","bet_id":"34126988486","success":true};
+// errors: {"success":false,"message":"…"}. A win is actual_payout >= target_payout.
+void StakeClient::placePasinoLimbo(const LimboBetRequest &request)
+{
+    const double target = std::round(request.multiplierTarget * 100.0) / 100.0;
+    if (!(target > 1.0)) {
+        const LiveBetResult r = failed(tr("Pasino: invalid limbo target %1.").arg(target));
+        QTimer::singleShot(0, this, [this, r] { emit diceFinished(r); });
+        return;
+    }
+    ensurePasinoSeed(m_pasinoClientSeed);
+
+    QJsonObject body;
+    body.insert(QStringLiteral("client_seed"), m_pasinoClientSeed);
+    body.insert(QStringLiteral("bet_amt"), QString::number(request.amount, 'f', 8));
+    body.insert(QStringLiteral("coin"), PasinoTransport::apiCurrency(m_currency));
+    body.insert(QStringLiteral("target_payout"), QString::number(target, 'f', 2));
+
+    const double requestedAmount = request.amount;
+    m_transport->post(QStringLiteral("limbo/play"), body,
+                      [this, requestedAmount, target](const TransportReply &reply) {
+        if (!reply.ok) {
+            const bool isTimeout = (reply.status == 0);
+            const bool unknown = (reply.status >= 500);
+            if (reply.status == 0)
+                emit sessionLost(reply.error);
+            emit diceFinished(failed(reply.error, {}, isTimeout, unknown));
+            return;
+        }
+
+        const QJsonObject &json = reply.json;
+        const QString errText = PasinoTransport::errorText(json);
+        if (!errText.isEmpty()) {
+            // {"success":false,...}: the bet was not placed.
+            LiveBetResult r = failed(errText, {}, isRetryable({}, errText), false);
+            r.retryDelayMs = fastRetryDelayMs({}, errText);
+            emit diceFinished(r);
+            return;
+        }
+        if (!json.contains(QStringLiteral("actual_payout"))) {
+            const QString raw = QString::fromUtf8(QJsonDocument(json).toJson(QJsonDocument::Compact)).left(400);
+            emit diceFinished(failed(tr("Unexpected Pasino limbo response (no result found): %1").arg(raw),
+                                     {}, false, true));
+            return;
+        }
+
+        LiveBetResult r;
+        r.ok = true;
+        r.amount = requestedAmount;
+        r.roll = numberOf(json.value(QStringLiteral("actual_payout"))); // the multiplier rolled
+        const QJsonValue win = json.value(QStringLiteral("win"));
+        if (win.isBool())
+            r.win = win.toBool();
+        else if (win.isDouble() || win.isString())
+            r.win = numberOf(win) > 0.0;
+        else
+            r.win = r.roll >= target;
+
+        if (r.win) {
+            // "profit" is the server's net figure; the stake comes back on top of it.
+            if (json.contains(QStringLiteral("profit"))) {
+                r.payout = r.amount + numberOf(json.value(QStringLiteral("profit")));
+                r.multiplier = r.amount > 0.0 ? r.payout / r.amount : target;
+            } else {
+                r.multiplier = target;
+                r.payout = r.amount * target;
+            }
+        }
+
+        const QJsonValue id = json.value(QStringLiteral("bet_id"));
+        r.betId = id.isString() ? id.toString() : QString::number(qint64(numberOf(id)));
         r.nonce = -1; // not part of the answer
         emit diceFinished(r);
     });

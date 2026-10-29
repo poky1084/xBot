@@ -13,6 +13,7 @@
     "cookies"
   ],
   "host_permissions": [
+	"https://*.pasino.com/*",
 	"https://*.paradice.in/*",
     "https://*.stake.bet/*",
     "https://*.stake.com/*",
