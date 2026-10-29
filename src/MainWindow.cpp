@@ -849,11 +849,11 @@ void MainWindow::createMenus()
     QMenu *casinoMenu = menuBar()->addMenu(tr("&Casino"));
     m_casinoGroup = new QActionGroup(this);
     m_casinoGroup->setExclusive(true);
-    m_actCasinoStake = casinoMenu->addAction(tr("&Stake"));
-    m_actCasinoShuffle = casinoMenu->addAction(tr("S&huffle"));
-    m_actCasinoGoated = casinoMenu->addAction(tr("&Goated"));
-    m_actCasinoWolfbet = casinoMenu->addAction(tr("&Wolfbet"));
-    m_actCasinoDuel = casinoMenu->addAction(tr("&Duel"));
+    m_actCasinoStake = casinoMenu->addAction(tr("&Stake.com"));
+    m_actCasinoShuffle = casinoMenu->addAction(tr("&Shuffle.com"));
+    m_actCasinoGoated = casinoMenu->addAction(tr("&Goated.com"));
+    m_actCasinoWolfbet = casinoMenu->addAction(tr("&Wolfbet.com"));
+    m_actCasinoDuel = casinoMenu->addAction(tr("&Duel.com"));
     for (QAction *a : {m_actCasinoStake, m_actCasinoShuffle, m_actCasinoGoated, m_actCasinoWolfbet,
                        m_actCasinoDuel}) {
         a->setCheckable(true);

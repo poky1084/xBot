@@ -147,11 +147,11 @@ OptionsDialog::OptionsDialog(QWidget *parent)
     liveForm->addRow(m_liveEnable);
 
     m_casinoCombo = new QComboBox;
-    m_casinoCombo->addItem(tr("Stake"), int(LiveSettings::Casino::Stake));
-    m_casinoCombo->addItem(tr("Shuffle"), int(LiveSettings::Casino::Shuffle));
-    m_casinoCombo->addItem(tr("Goated"), int(LiveSettings::Casino::Goated));
-    m_casinoCombo->addItem(tr("Wolfbet"), int(LiveSettings::Casino::Wolfbet));
-    m_casinoCombo->addItem(tr("Duel"), int(LiveSettings::Casino::Duel));
+    m_casinoCombo->addItem(tr("Stake.com"), int(LiveSettings::Casino::Stake));
+    m_casinoCombo->addItem(tr("Shuffle.com"), int(LiveSettings::Casino::Shuffle));
+    m_casinoCombo->addItem(tr("Goated.com"), int(LiveSettings::Casino::Goated));
+    m_casinoCombo->addItem(tr("Wolfbet.com"), int(LiveSettings::Casino::Wolfbet));
+    m_casinoCombo->addItem(tr("Duel.com"), int(LiveSettings::Casino::Duel));
     m_casinoCombo->setToolTip(tr("Casino to bet on (same as the Casino menu)"));
     liveForm->addRow(tr("Casino:"), m_casinoCombo);
 
