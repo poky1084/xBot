@@ -37,5 +37,5 @@ echo Building...
 if errorlevel 1 exit /b 1
 
 echo.
-echo Done: build\Release\QDiceBot.exe
+echo Done: build\Release\xBot.exe
 endlocal
