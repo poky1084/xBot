@@ -6,6 +6,7 @@
 #include "ui/DuelLoginDialog.h"
 #include "ui/StakeLoginDialog.h"
 #include "ui/WolfbetLoginDialog.h"
+#include "ui/ParadiceLoginDialog.h"
 #include "bot/CasinoCurrencies.h"
 #include "bot/StakeTransport.h" // ExtensionTransport::bareHost / stakeHosts
 
@@ -241,6 +242,7 @@ OptionsDialog::OptionsDialog(QWidget *parent)
     m_casinoCombo->addItem(tr("Goated.com"), int(LiveSettings::Casino::Goated));
     m_casinoCombo->addItem(tr("Wolfbet.com"), int(LiveSettings::Casino::Wolfbet));
     m_casinoCombo->addItem(tr("Duel.com"), int(LiveSettings::Casino::Duel));
+    m_casinoCombo->addItem(tr("Paradice.in"), int(LiveSettings::Casino::Paradice));
     m_casinoCombo->setToolTip(tr("Casino to bet on (same as the Casino menu)"));
     liveForm->addRow(tr("Casino:"), m_casinoCombo);
 
@@ -295,6 +297,15 @@ OptionsDialog::OptionsDialog(QWidget *parent)
     m_wolfbetLoginBtn->setEnabled(WolfbetLoginDialog::isAvailable());
     liveForm->addRow(QString(), m_wolfbetLoginBtn);
     connect(m_wolfbetLoginBtn, &QPushButton::clicked, this, &OptionsDialog::onWolfbetLogin);
+
+    // Paradice only: opens the site, waits for the login, then fills the Token.
+    m_paradiceLoginBtn = new QPushButton(tr("Open Paradice && Log in - to autofill token"));
+    m_paradiceLoginBtn->setToolTip(
+        tr("Opens the site in a browser window. After you log in, the Token (localStorage "
+           "\"token\") is filled in automatically."));
+    m_paradiceLoginBtn->setEnabled(ParadiceLoginDialog::isAvailable());
+    liveForm->addRow(QString(), m_paradiceLoginBtn);
+    connect(m_paradiceLoginBtn, &QPushButton::clicked, this, &OptionsDialog::onParadiceLogin);
 
     // Duel only: UUID and cf_clearance (the Token is the "duel" cookie).
     m_duelUuidEdit = new QLineEdit;
@@ -412,9 +423,9 @@ OptionsDialog::OptionsDialog(QWidget *parent)
     }
     // The site / mirror is saved on every keystroke (see siteEdited()).
     connect(m_siteEdit, &QLineEdit::textEdited, this, &OptionsDialog::siteEdited);
-    // Wolfbet's currency list needs the token: fetch it once one is entered.
+    // Wolfbet's / Paradice's currency list needs the token: fetch it once one is entered.
     connect(m_apiKeyEdit, &QLineEdit::editingFinished, this, [this] {
-        if (m_wolfbet)
+        if (m_wolfbet || m_paradice)
             updateCurrencyList();
     });
 
@@ -584,11 +595,13 @@ void OptionsDialog::applyCasinoUi()
     const bool goated = m_goated;
     const bool wolfbet = m_wolfbet;
     const bool duel = m_duel;
-    const bool tokenOnly = goated || wolfbet;        // the token is the only input
+    const bool paradice = m_paradice;
+    const bool tokenOnly = goated || wolfbet || paradice; // the token is the only input
     const bool noSite = tokenOnly;                   // no "Site / mirror" input
     const bool direct = shuffle || noSite || duel; // all but Stake use "Direct mode"
 
-    m_liveBox->setTitle(duel ? tr("Live betting — Duel")
+    m_liveBox->setTitle(paradice ? tr("Live betting — Paradice")
+                        : duel ? tr("Live betting — Duel")
                         : wolfbet ? tr("Live betting — Wolfbet")
                                 : goated ? tr("Live betting — Goated")
                                          : shuffle ? tr("Live betting — Shuffle") : tr("Live betting"));
@@ -606,7 +619,8 @@ void OptionsDialog::applyCasinoUi()
     // "API key" is the "Token" on Shuffle, Goated and Wolfbet.
     if (auto *label = qobject_cast<QLabel *>(m_liveForm->labelForField(m_apiKeyEdit)))
         label->setText(direct ? tr("Token:") : tr("API key:"));
-    m_apiKeyEdit->setPlaceholderText(duel ? tr("\"duel\" cookie value")
+    m_apiKeyEdit->setPlaceholderText(paradice ? tr("localStorage \"token\" (JWT)")
+                                     : duel ? tr("\"duel\" cookie value")
                                      : wolfbet ? tr("\"token\" cookie (value / JWT)")
                                              : goated ? tr("g3_token (JWT)")
                                                       : shuffle ? tr("authorization token (JWT)")
@@ -622,6 +636,7 @@ void OptionsDialog::applyCasinoUi()
     setFormRowVisible(m_shuffleLoginBtn, shuffle);
     setFormRowVisible(m_goatedLoginBtn, goated);
     setFormRowVisible(m_wolfbetLoginBtn, wolfbet);
+    setFormRowVisible(m_paradiceLoginBtn, paradice);
     setFormRowVisible(m_duelUuidEdit, duel);
     setFormRowVisible(m_duelClearanceEdit, duel);
     setFormRowVisible(m_duelLoginBtn, duel);
@@ -636,7 +651,7 @@ void OptionsDialog::updateAuthFields()
     m_userAgentEdit->setEnabled(!ext);
     m_extStatus->setEnabled(ext);
     if (m_grabCookieBtn)
-        m_grabCookieBtn->setEnabled(!ext && !m_shuffle && !m_goated && !m_wolfbet && !m_duel
+        m_grabCookieBtn->setEnabled(!ext && !m_shuffle && !m_goated && !m_wolfbet && !m_duel && !m_paradice
                                     && CookieGrabberDialog::isAvailable());
     updateExtensionStatusText();
 }
@@ -646,7 +661,8 @@ LiveSettings OptionsDialog::liveSettings() const
     // Start from what we were given so the other casino's values are kept.
     LiveSettings s = m_base;
     s.enabled = m_liveEnable->isChecked();
-    s.casino = m_duel ? LiveSettings::Casino::Duel
+    s.casino = m_paradice ? LiveSettings::Casino::Paradice
+               : m_duel ? LiveSettings::Casino::Duel
                : m_wolfbet ? LiveSettings::Casino::Wolfbet
                : m_goated ? LiveSettings::Casino::Goated
                           : m_shuffle ? LiveSettings::Casino::Shuffle : LiveSettings::Casino::Stake;
@@ -655,6 +671,8 @@ LiveSettings OptionsDialog::liveSettings() const
         s.duelToken = m_apiKeyEdit->text().trimmed();
         s.duelUuid = m_duelUuidEdit->text().trimmed();
         s.duelClearance = m_duelClearanceEdit->text().trimmed();
+    } else if (m_paradice) {
+        s.paradiceToken = m_apiKeyEdit->text().trimmed();
     } else if (m_wolfbet) {
         s.wolfbetToken = m_apiKeyEdit->text().trimmed();
     } else if (m_goated) {
@@ -685,6 +703,7 @@ void OptionsDialog::setLiveSettings(const LiveSettings &s)
     m_goated = s.isGoated();
     m_wolfbet = s.isWolfbet();
     m_duel = s.isDuel();
+    m_paradice = s.isParadice();
     {
         const QSignalBlocker blocker(m_casinoCombo);
         m_casinoCombo->setCurrentIndex(qMax(0, m_casinoCombo->findData(int(s.casino))));
@@ -699,6 +718,9 @@ void OptionsDialog::setLiveSettings(const LiveSettings &s)
         m_apiKeyEdit->setText(s.duelToken);
         m_duelUuidEdit->setText(s.duelUuid);
         m_duelClearanceEdit->setText(s.duelClearance);
+    } else if (m_paradice) {
+        m_authCombo->setCurrentIndex(s.usesExtension(s.casino) ? 1 : 0); // Direct mode / extension
+        m_apiKeyEdit->setText(s.paradiceToken);
     } else if (m_wolfbet) {
         m_authCombo->setCurrentIndex(s.usesExtension(s.casino) ? 1 : 0); // Direct mode / extension
         m_apiKeyEdit->setText(s.wolfbetToken);
@@ -774,10 +796,11 @@ void OptionsDialog::setLiveCurrencies(const QStringList &codes, const QString &s
     // Never changes the chosen currency; the account's currencies are added to the list
     // (for casinos without a known list they are the list) and named in the tooltip.
     Q_UNUSED(selected);
-    // Wolfbet's balance answer lists every currency it supports (also those at 0): it is
-    // the same list the dropdown fetches, so keep it.
+    // Wolfbet's / Paradice's balance answer lists every currency it supports (also those at 0):
+    // it is the same list the dropdown fetches, so keep it.
     const auto casino = static_cast<LiveSettings::Casino>(m_casinoCombo->currentData().toInt());
-    if (casino == LiveSettings::Casino::Wolfbet && codes.size() > 1) {
+    if ((casino == LiveSettings::Casino::Wolfbet || casino == LiveSettings::Casino::Paradice)
+        && codes.size() > 1) {
         QStringList all;
         for (const QString &c : codes)
             all << c.trimmed().toLower();
@@ -882,7 +905,7 @@ QString OptionsDialog::missingLoginData() const
     // "Browser extension": every token / id / API key is read from the casino's tab.
     if (m_authCombo && m_authCombo->currentIndex() == 1)
         return QString();
-    if (m_goated || m_wolfbet)
+    if (m_goated || m_wolfbet || m_paradice)
         return empty(m_apiKeyEdit) ? tr("the token is empty.") : QString();
     if (m_duel) {
         if (empty(m_apiKeyEdit))
@@ -924,6 +947,8 @@ QString OptionsDialog::autoFetchKey() const
         parts << s.duelSite << s.duelToken << s.duelUuid << s.duelClearance;
     else if (s.isWolfbet())
         parts << s.wolfbetToken;
+    else if (s.isParadice())
+        parts << s.paradiceToken;
     else if (s.isGoated())
         parts << s.goatedToken;
     else if (s.isShuffle())
@@ -980,6 +1005,9 @@ void OptionsDialog::setGrabbedCredentials(const LiveSettings &grabbed)
         break;
     case LiveSettings::Casino::Wolfbet:
         m_apiKeyEdit->setText(grabbed.wolfbetToken);
+        break;
+    case LiveSettings::Casino::Paradice:
+        m_apiKeyEdit->setText(grabbed.paradiceToken);
         break;
     case LiveSettings::Casino::Duel:
         if (!grabbed.duelToken.isEmpty())
@@ -1102,6 +1130,20 @@ void OptionsDialog::onWolfbetLogin()
     setLoginStatus(tr("Wolfbet token captured."), true);
     updateCurrencyList(); // the currency list needs the token
     maybeAutoFetch();     // loads the account's currencies
+}
+
+void OptionsDialog::onParadiceLogin()
+{
+    const CursorRestorer restoreCursor; // WebView2 bug: the pointer may stay hidden after `dlg`
+    ParadiceLoginDialog dlg(this);
+    if (dlg.exec() != QDialog::Accepted)
+        return;
+
+    m_apiKeyEdit->setText(dlg.token());
+    setLoginStatus(tr("Paradice token captured."), true);
+    updateCurrencyList(); // the currency list needs the token
+    m_autoFetchedKey[int(LiveSettings::Casino::Paradice)].clear();
+    maybeAutoFetch();     // loads the account's balances / currencies
 }
 
 void OptionsDialog::onDuelLogin()

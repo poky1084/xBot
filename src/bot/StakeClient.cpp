@@ -4,6 +4,7 @@
 
 #include "bot/DuelTransport.h"
 #include "bot/GoatedTransport.h"
+#include "bot/ParadiceTransport.h"
 #include "bot/ShuffleTransport.h"
 #include "bot/WolfbetTransport.h"
 
@@ -57,7 +58,8 @@ bool isRetryable(const QString &type, const QString &msg)
     const bool parallel = (containsCI(type, "parallelCasinoBet") && !containsCI(type, "internalError"))
                           || containsCI(msg, "only one bet at a time")   // Wolfbet
                           || containsCI(msg, "concurrent requests");     // Goated
-    const bool rateLimit = containsCI(msg, "slow down") || msg.contains(QLatin1String("429"))
+    const bool rateLimit = containsCI(msg, "slow down") || containsCI(msg, "slowdown") // Paradice: "slowdown_please"
+                           || msg.contains(QLatin1String("429"))
                            || containsCI(msg, "too many attempts"); // Wolfbet / Laravel throttle
     const bool seedRotate = containsCI(msg, "new seed pair") || containsCI(msg, "choose a new seed")
                             || containsCI(msg, "seedRotate") || containsCI(type, "seedRotate")
@@ -69,7 +71,8 @@ bool isRetryable(const QString &type, const QString &msg)
 // engine's growing backoff there) and for everything else.
 int fastRetryDelayMs(const QString &type, const QString &msg)
 {
-    const bool rateLimit = containsCI(msg, "slow down") || msg.contains(QLatin1String("429"))
+    const bool rateLimit = containsCI(msg, "slow down") || containsCI(msg, "slowdown") // Paradice: "slowdown_please"
+                           || msg.contains(QLatin1String("429"))
                            || containsCI(msg, "too many attempts");
     if (rateLimit)
         return 0;
@@ -150,6 +153,13 @@ void StakeClient::setTransport(IStakeTransport *transport)
         m_shuffleConnections << connect(wolfbet, &WolfbetTransport::balancesFailed, this,
                                         &StakeClient::balancesFailed);
     }
+    if (auto *paradice = qobject_cast<ParadiceTransport *>(transport)) {
+        // Paradice: balances are read over HTTPS; same signals as the other casinos.
+        m_shuffleConnections << connect(paradice, &ParadiceTransport::balancesUpdated, this,
+                                        &StakeClient::balancesReady);
+        m_shuffleConnections << connect(paradice, &ParadiceTransport::balancesFailed, this,
+                                        &StakeClient::balancesFailed);
+    }
     if (auto *duel = qobject_cast<DuelTransport *>(transport)) {
         // Duel: balances are read over HTTPS; same signals as the other casinos.
         m_shuffleConnections << connect(duel, &DuelTransport::balancesUpdated, this,
@@ -177,6 +187,11 @@ bool StakeClient::isWolfbet() const
 bool StakeClient::isDuel() const
 {
     return qobject_cast<DuelTransport *>(m_transport) != nullptr;
+}
+
+bool StakeClient::isParadice() const
+{
+    return qobject_cast<ParadiceTransport *>(m_transport) != nullptr;
 }
 
 void StakeClient::setCurrency(const QString &currency)
@@ -224,6 +239,13 @@ void StakeClient::rotateSeedPair(const QString &clientSeed)
     }
     if (isDuel()) {
         rotateDuelSeed(clientSeed);
+        return;
+    }
+    if (isParadice()) {
+        // The seed-change request of Paradice has not been captured yet.
+        QTimer::singleShot(0, this, [this] {
+            emit seedRotateFailed(tr("Paradice: seed rotation is not supported yet."));
+        });
         return;
     }
 
@@ -400,6 +422,10 @@ void StakeClient::vaultDeposit(double amount)
         QTimer::singleShot(0, this, [this] { emit vaultFailed(tr("Duel: vault deposits are not supported.")); });
         return;
     }
+    if (isParadice()) {
+        QTimer::singleShot(0, this, [this] { emit vaultFailed(tr("Paradice: vault deposits are not supported.")); });
+        return;
+    }
     if (!isShuffle()) {
         stakeVaultDeposit(amount);
         return;
@@ -556,6 +582,11 @@ void StakeClient::fetchBalances()
         duel->requestBalances();
         return;
     }
+    // Paradice: GraphQL "me { wallets }"; results arrive through the transport's signals.
+    if (auto *paradice = qobject_cast<ParadiceTransport *>(m_transport)) {
+        paradice->requestBalances();
+        return;
+    }
 
     postBalanceQuery(m_transport, false);
 }
@@ -629,7 +660,7 @@ void StakeClient::postBalanceQuery(IStakeTransport *via, bool background)
 void StakeClient::lookupBetIid(const QString &betId, std::function<void(const QString &)> done)
 {
     QString why;
-    if (betId.isEmpty() || !m_transport || isShuffle() || isGoated() || isWolfbet() || isDuel() || !m_transport->isReady(&why)) {
+    if (betId.isEmpty() || !m_transport || isShuffle() || isGoated() || isWolfbet() || isDuel() || isParadice() || !m_transport->isReady(&why)) {
         QTimer::singleShot(0, this, [done] { done(QString()); });
         return;
     }
@@ -685,6 +716,10 @@ void StakeClient::placeDice(const DiceBetRequest &request)
         placeDuelDice(request);
         return;
     }
+    if (isParadice()) {
+        placeParadiceDice(request);
+        return;
+    }
 
     const double target = std::round(request.target * 100.0) / 100.0;
 
@@ -727,6 +762,11 @@ void StakeClient::placeLimbo(const LimboBetRequest &request)
     }
     if (isDuel()) {
         placeDuelLimbo(request);
+        return;
+    }
+    if (isParadice()) {
+        const LiveBetResult r = failed(tr("Paradice: Limbo is not supported (dice only)."));
+        QTimer::singleShot(0, this, [this, r] { emit diceFinished(r); });
         return;
     }
 
@@ -1303,6 +1343,113 @@ void StakeClient::rotateDuelSeed(const QString &clientSeed)
                                  ? qint64(numberOf(data.value(QStringLiteral("nonce")))) : 0;
         emit seedRotated(activeClient, nonce, hash,
                          data.value(QStringLiteral("next_server_seed_hash")).toString());
+    });
+}
+
+// Paradice dice: POST https://api.paradice.in/api.php (GraphQL)
+//   mutation rollDice($number: Float!, $betAmount: Float!, $side: RollSideEnum!, $currency: CurrencyEnum!)
+//   variables: {"betAmount":"0.00000001","number":"50.00","side":"ABOVE"|"BELOW","currency":"BTC"}
+// The roll runs 0.00 - 100.00; "ABOVE 50" wins with 50 % (same meaning as the app's target).
+// Answer: {"data":{"rollDice":{"id","number","roll" (string),"rollSide","win" (bool),"betAmount",
+//   "winAmount","currency","multiplier","chance",...}}}; errors come as {"errors":[{"message"}]}.
+void StakeClient::placeParadiceDice(const DiceBetRequest &request)
+{
+    const double target = std::round(request.target * 100.0) / 100.0;
+    const bool over = request.over;
+    const double chance = over ? 100.0 - target : target;
+    if (!(chance > 0.0) || chance >= 100.0) {
+        const LiveBetResult r = failed(tr("Paradice: invalid target %1.").arg(target));
+        QTimer::singleShot(0, this, [this, r] { emit diceFinished(r); });
+        return;
+    }
+
+    QJsonObject vars;
+    vars.insert(QStringLiteral("betAmount"), QString::number(request.amount, 'f', 8));
+    vars.insert(QStringLiteral("number"), QString::number(target, 'f', 2));
+    vars.insert(QStringLiteral("side"), over ? QStringLiteral("ABOVE") : QStringLiteral("BELOW"));
+    vars.insert(QStringLiteral("currency"), ParadiceTransport::apiCurrency(m_currency));
+
+    QJsonObject body;
+    body.insert(QStringLiteral("operationName"), QStringLiteral("rollDice"));
+    body.insert(QStringLiteral("variables"), vars);
+    body.insert(QStringLiteral("query"), QStringLiteral(
+        "mutation rollDice($number: Float!, $betAmount: Float!, $side: RollSideEnum!, "
+        "$currency: CurrencyEnum!) {\n"
+        "  rollDice(\n    number: $number\n    betAmount: $betAmount\n    side: $side\n"
+        "    currency: $currency\n  ) {\n"
+        "    id\n    number\n    roll\n    rollSide\n    win\n    betAmount\n    winAmount\n"
+        "    currency\n    multiplier\n    chance\n    game\n    __typename\n  }\n}\n"));
+
+    const double requestedAmount = request.amount;
+    m_transport->post(QString(), body,
+                      [this, requestedAmount, target, over, chance](const TransportReply &reply) {
+        if (!reply.ok) {
+            const bool isTimeout = (reply.status == 0);
+            const bool unknown = (reply.status >= 500);
+            if (reply.status == 0)
+                emit sessionLost(reply.error);
+            emit diceFinished(failed(reply.error, {}, isTimeout, unknown));
+            return;
+        }
+
+        const QJsonObject &json = reply.json;
+        const QJsonObject bet = json.value(QStringLiteral("data")).toObject()
+                                    .value(QStringLiteral("rollDice")).toObject();
+        if (bet.isEmpty()) {
+            // No bet in the answer: a GraphQL error (or rate limit notice) - the bet was not placed.
+            QString type;
+            QString errText = firstErrorText(json, &type);
+            if (errText.isEmpty())
+                errText = tr("Paradice bet rejected (HTTP %1).").arg(reply.status);
+            if (reply.status >= 400 || json.contains(QStringLiteral("errors")) || isRetryable(type, errText)) {
+                LiveBetResult r = failed(errText, type, isRetryable(type, errText), false);
+                r.retryDelayMs = fastRetryDelayMs(type, errText);
+                // "slowdown_please": the bet was not placed - keep betting without the 5 s wait.
+                r.retryNow = containsCI(errText, "slowdown");
+                emit diceFinished(r);
+                return;
+            }
+            const QString raw = QString::fromUtf8(QJsonDocument(json).toJson(QJsonDocument::Compact)).left(400);
+            emit diceFinished(failed(tr("Unexpected Paradice bet response (no bet found): %1").arg(raw),
+                                     {}, false, true));
+            return;
+        }
+        if (!bet.contains(QStringLiteral("roll"))) {
+            const QString raw = QString::fromUtf8(QJsonDocument(json).toJson(QJsonDocument::Compact)).left(400);
+            emit diceFinished(failed(tr("Unexpected Paradice bet response (no roll found): %1").arg(raw),
+                                     {}, false, true));
+            return;
+        }
+
+        LiveBetResult r;
+        r.ok = true;
+        r.amount = bet.contains(QStringLiteral("betAmount")) ? numberOf(bet.value(QStringLiteral("betAmount")))
+                                                             : requestedAmount;
+        r.roll = numberOf(bet.value(QStringLiteral("roll")));
+        if (bet.value(QStringLiteral("win")).isBool())
+            r.win = bet.value(QStringLiteral("win")).toBool();
+        else
+            r.win = over ? r.roll > target : r.roll < target;
+
+        double mult = numberOf(bet.value(QStringLiteral("multiplier")));
+        if (!(mult > 0.0))
+            mult = std::floor(99.0 / chance * 10000.0 + 1e-9) / 10000.0; // 1 % house edge
+        if (r.win) {
+            r.multiplier = mult;
+            r.payout = r.amount * mult;
+            // "winAmount" may be the payout (stake included) or the net profit: take whichever
+            // it is closer to, so the server's figure decides.
+            const double winAmount = numberOf(bet.value(QStringLiteral("winAmount")));
+            if (r.amount > 0.0 && winAmount > 0.0) {
+                const double profit = r.amount * (mult - 1.0);
+                r.payout = std::abs(winAmount - r.payout) <= std::abs(winAmount - profit)
+                               ? winAmount : r.amount + winAmount;
+            }
+        }
+
+        r.betId = bet.value(QStringLiteral("id")).toString();
+        r.nonce = -1; // not part of the answer
+        emit diceFinished(r);
     });
 }
 

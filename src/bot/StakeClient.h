@@ -40,6 +40,8 @@ struct LiveBetResult
     // Parallel-bet collisions and seed-rotation notices clear within milliseconds, so
     // they get a short delay instead of the rate-limit backoff.
     int retryDelayMs = 0;
+    // Resend at once instead of the engine's 5 s retry wait (Paradice "slowdown_please").
+    bool retryNow = false;
 
     // Success details
     double amount = 0.0;
@@ -63,13 +65,15 @@ public:
     // Shuffle's GraphQL API (dice and limbo; balances come from its websocket), a
     // GoatedTransport to Goated's REST API (dice and limbo; balances over HTTPS), a
     // WolfbetTransport to Wolfbet's REST API (dice only; balances over HTTPS), a DuelTransport
-    // to Duel's REST API (dice and limbo; balances over HTTPS).
+    // to Duel's REST API (dice and limbo; balances over HTTPS), a ParadiceTransport to Paradice's
+    // GraphQL API (dice only; balances over HTTPS).
     void setTransport(IStakeTransport *transport);
     IStakeTransport *transport() const { return m_transport; }
     bool isShuffle() const;
     bool isGoated() const;
     bool isWolfbet() const;
     bool isDuel() const;
+    bool isParadice() const;
 
     // API currency code, lowercase ("btc", "usdt", ...).
     void setCurrency(const QString &currency);
@@ -130,6 +134,7 @@ private:
     void placeWolfbetDice(const DiceBetRequest &request);
     void placeWolfbetLimbo(const LimboBetRequest &request);
     void rotateWolfbetSeed();
+    void placeParadiceDice(const DiceBetRequest &request);
     void placeDuelDice(const DiceBetRequest &request);
     void rotateDuelSeed(const QString &clientSeed);
     void placeDuelLimbo(const LimboBetRequest &request);

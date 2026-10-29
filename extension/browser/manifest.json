@@ -13,6 +13,7 @@
     "cookies"
   ],
   "host_permissions": [
+	"https://*.paradice.in/*",
     "https://*.stake.bet/*",
     "https://*.stake.com/*",
     "https://*.stake.pet/*",

@@ -40,6 +40,7 @@ class ManualBetPanel;
 class OptionsDialog;
 class GoatedTransport;
 class WolfbetTransport;
+class ParadiceTransport;
 class DuelTransport;
 class DuelBrowser;
 class ShuffleTransport;
@@ -170,6 +171,11 @@ private:
     QString wolfbetCurrency() const;                     // bet currency of Wolfbet (active or not)
     void refreshWolfbetBalanceVar();
     void applyWolfbetCredentials(const LiveSettings &s); // Wolfbet token for the direct transport (background reads)
+    // Paradice balance cache (plain HTTPS, same idea as Goated's)
+    void onParadiceBalancesUpdated(const QMap<QString, double> &balances);
+    QString paradiceCurrency() const;                    // bet currency of Paradice (active or not)
+    void refreshParadiceBalanceVar();
+    void applyParadiceCredentials(const LiveSettings &s); // Paradice token for the direct transport (background reads)
     // Duel balance cache (plain HTTPS, same idea as Goated's)
     void onDuelBalancesUpdated(const QMap<QString, double> &balances);
     QString duelCurrency() const;                        // bet currency of Duel (active or not)
@@ -239,14 +245,16 @@ private:
     ShuffleTransport *m_shuffle = nullptr;   // Shuffle "Direct mode" (no WebView2 / extension)
     GoatedTransport *m_goated = nullptr;     // Goated "Direct mode" (plain HTTPS, token only)
     WolfbetTransport *m_wolfbet = nullptr;   // Wolfbet "Direct mode" (plain HTTPS, token only)
+    ParadiceTransport *m_paradice = nullptr; // Paradice "Direct mode" (plain HTTPS GraphQL, token only)
     DuelTransport *m_duel = nullptr;         // Duel (requests run in the hidden Duel browser)
     DuelBrowser *m_duelBrowser = nullptr;    // hidden WebView2 on duel.com, created on first use
-    QActionGroup *m_casinoGroup = nullptr;   // Casino menu: Stake / Shuffle / Goated / Wolfbet / Duel
+    QActionGroup *m_casinoGroup = nullptr;   // Casino menu: Stake / Shuffle / Goated / Wolfbet / Duel / Paradice
     QAction *m_actCasinoStake = nullptr;
     QAction *m_actCasinoShuffle = nullptr;
     QAction *m_actCasinoGoated = nullptr;
     QAction *m_actCasinoWolfbet = nullptr;
     QAction *m_actCasinoDuel = nullptr;
+    QAction *m_actCasinoParadice = nullptr;
     // bet currency remembered per casino, indexed by int(LiveSettings::Casino)
     QString m_currencyByCasino[LiveSettings::kCasinoCount];
     QTimer *m_balanceTimer = nullptr;
@@ -378,6 +386,9 @@ private:
     QMap<QString, double> m_wolfbetBalances;
     double m_wolfbetBalance = 0.0;
     bool m_wolfbetBalanceKnown = false;
+    QMap<QString, double> m_paradiceBalances;
+    double m_paradiceBalance = 0.0;
+    bool m_paradiceBalanceKnown = false;
     QMap<QString, double> m_duelBalances;
     double m_duelBalance = 0.0;
     bool m_duelBalanceKnown = false;

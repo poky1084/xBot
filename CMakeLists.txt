@@ -45,6 +45,8 @@ set(SOURCES
 	src/bot/WolfbetTransport.h
 	src/bot/DuelTransport.cpp
 	src/bot/DuelTransport.h
+	src/bot/ParadiceTransport.cpp
+	src/bot/ParadiceTransport.h
 	src/bot/CasinoCurrencies.h
     src/ui/BetHistoryModel.cpp
     src/ui/BetHistoryModel.h
@@ -80,6 +82,8 @@ set(SOURCES
 	src/ui/WolfbetLoginDialog.h
 	src/ui/DuelLoginDialog.cpp
 	src/ui/DuelLoginDialog.h
+	src/ui/ParadiceLoginDialog.cpp
+	src/ui/ParadiceLoginDialog.h
 	src/ui/StakeLoginDialog.cpp
 	src/ui/StakeLoginDialog.h
 	src/ui/DuelBrowser.cpp

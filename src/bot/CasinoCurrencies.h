@@ -12,6 +12,8 @@
 //            -> data.crypto (USDC, ETH, USDT, …) then data.fiats (USD, EUR, …)
 //   Wolfbet: GET https://wolfbet.com/api/v2/user/balances (needs the login token)
 //            -> userBalances[].currency: every currency, also those at 0 ("free" included)
+//   Paradice: POST https://api.paradice.in/api.php, GraphQL "me { wallets }" (needs the token)
+//            -> data.me.wallets[].currency: every wallet, also those at 0 (BTC, USDT_TRC, PRDC, …)
 //   Stake:   no public list; the Options dialog collects the currencies from the
 //            UserBalances answer (fetched automatically once Site + API key are filled in)
 //            and merges them into this cache.
@@ -26,6 +28,7 @@
 
 #include "bot/LiveSettings.h"
 #include "bot/DuelTransport.h"
+#include "bot/ParadiceTransport.h"
 #include "bot/WolfbetTransport.h"
 
 #include <QCoreApplication>
@@ -60,7 +63,8 @@ inline QHash<int, QStringList> &memoryCache()
 // True when the casino's currency list can be fetched (more casinos are added over time).
 inline bool hasSource(LiveSettings::Casino casino)
 {
-    return casino == LiveSettings::Casino::Goated || casino == LiveSettings::Casino::Wolfbet;
+    return casino == LiveSettings::Casino::Goated || casino == LiveSettings::Casino::Wolfbet
+           || casino == LiveSettings::Casino::Paradice;
 }
 
 // Casinos with a fixed currency list (in the site's own order).
@@ -143,6 +147,14 @@ inline QStringList parseWolfbet(const QByteArray &body)
     return out;
 }
 
+// Paradice: {"data":{"me":{"wallets":[{"balance":0,"currency":"USDT_TRC"},…]}}}
+inline QStringList parseParadice(const QByteArray &body)
+{
+    QStringList out = ParadiceTransport::parseWallets(QJsonDocument::fromJson(body).object()).keys();
+    std::sort(out.begin(), out.end());
+    return out;
+}
+
 inline QStringList parseGoated(const QByteArray &body)
 {
     const QJsonObject root = QJsonDocument::fromJson(body).object();
@@ -158,7 +170,7 @@ inline QStringList parseGoated(const QByteArray &body)
 
 // Fetches the casino's currency list. On success the list is cached and `done` runs with it
 // (only while `context` is alive); on failure nothing happens and the cached list stays.
-// `token`: the login token, for casinos whose list needs it (Wolfbet). Returns false when
+// `token`: the login token, for casinos whose list needs it (Wolfbet, Paradice). Returns false when
 // nothing was requested (no source, or the needed token is empty).
 inline bool fetch(LiveSettings::Casino casino, QObject *context,
                   std::function<void(const QStringList &)> done,
@@ -168,6 +180,7 @@ inline bool fetch(LiveSettings::Casino casino, QObject *context,
         return false;
 
     QNetworkRequest req;
+    QByteArray postBody; // non-empty: sent as a POST
     std::function<QStringList(const QByteArray &)> parse;
     if (casino == LiveSettings::Casino::Goated) {
         req.setUrl(QUrl(QStringLiteral("https://apis.goated.com/main/exchange-rates")));
@@ -184,12 +197,27 @@ inline bool fetch(LiveSettings::Casino casino, QObject *context,
         req.setRawHeader("x-client-type", "Web-Application");
         req.setRawHeader("x-requested-with", "XMLHttpRequest");
         parse = detail::parseWolfbet;
+    } else if (casino == LiveSettings::Casino::Paradice) {
+        const QString clean = ParadiceTransport::cleanToken(token);
+        if (clean.isEmpty())
+            return false;
+        req.setUrl(QUrl(ParadiceTransport::apiUrl()));
+        req.setHeader(QNetworkRequest::ContentTypeHeader, QStringLiteral("application/json"));
+        req.setRawHeader("x-access-token", clean.toUtf8());
+        req.setRawHeader("Origin", "https://paradice.in");
+        req.setRawHeader("Referer", "https://paradice.in/");
+        QJsonObject body;
+        body.insert(QStringLiteral("variables"), QJsonObject());
+        body.insert(QStringLiteral("query"), ParadiceTransport::balancesQuery());
+        postBody = QJsonDocument(body).toJson(QJsonDocument::Compact);
+        parse = detail::parseParadice;
     }
     req.setRawHeader("Accept", "application/json, text/plain, */*");
     req.setHeader(QNetworkRequest::UserAgentHeader, detail::userAgent());
     req.setTransferTimeout(15000);
 
-    QNetworkReply *reply = detail::nam()->get(req);
+    QNetworkReply *reply = postBody.isEmpty() ? detail::nam()->get(req)
+                                              : detail::nam()->post(req, postBody);
     QObject::connect(reply, &QNetworkReply::finished, reply, &QObject::deleteLater);
     QObject::connect(reply, &QNetworkReply::finished, context, [reply, casino, parse, done] {
         if (reply->error() != QNetworkReply::NoError)

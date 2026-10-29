@@ -144,7 +144,9 @@ void BotEngine::onLiveFinished(const LiveBetResult &r)
     const QString betCasino = m_inFlightCasino; // read before any switch below can matter
 
     if (!r.ok) {
-        emit logMessage(tr("Bet failed: %1").arg(r.error), true);
+        // Paradice "slowdown_please" during an auto-bet is retried at once: not logged each time.
+        if (!(r.retryNow && r.retryable && !manual && m_running))
+            emit logMessage(tr("Bet failed: %1").arg(r.error), true);
         flushPauseLog(); // no bet was recorded: the numbers are final
         if (manual || !m_running) {
             flushStopLog();
@@ -155,6 +157,13 @@ void BotEngine::onLiveFinished(const LiveBetResult &r)
         if (r.retryable && ++m_retryStreak <= kMaxRetryStreak) {
             // The server refused this bet without placing it (rate limit,
             // parallel bet, seed rotation) -> same bet again after a short backoff.
+            if (r.retryNow) {
+                // Paradice "slowdown_please": resend at once (the normal bet delay still
+                // applies), without logging every refusal.
+                if (!m_paused)
+                    m_timer.start(std::max(0, m_betDelayMs));
+                return;
+            }
             emit logMessage(tr("Retrying (%1/%2)…").arg(m_retryStreak).arg(kMaxRetryStreak), false);
             if (!m_paused) {
                 m_timer.start(5000); // every retry waits 5 s, whatever the error

@@ -5,7 +5,7 @@
 #include <QtGlobal>
 
 // ---- Casino selection in code ---------------------------------------------------
-// Default casino ("stake", "shuffle", "goated", "wolfbet" or "duel") used on the first launch only. After that the
+// Default casino ("stake", "shuffle", "goated", "wolfbet", "duel" or "paradice") used on the first launch only. After that the
 // casino last selected (Casino menu / script) is saved on exit and restored at startup.
 namespace AppConfig {
 inline const QString casino = QStringLiteral("stake");
@@ -14,10 +14,10 @@ inline const QString casino = QStringLiteral("stake");
 // Connection settings for live (real-money) betting.
 struct LiveSettings
 {
-    enum class Casino { Stake, Shuffle, Goated, Wolfbet, Duel };
-    static constexpr int kCasinoCount = 5; // size of per-casino arrays indexed by int(Casino)
+    enum class Casino { Stake, Shuffle, Goated, Wolfbet, Duel, Paradice };
+    static constexpr int kCasinoCount = 6; // size of per-casino arrays indexed by int(Casino)
 
-    // "shuffle" / "goated" / "wolfbet" / "duel" (any case) -> that casino, anything else -> Stake.
+    // "shuffle" / "goated" / "wolfbet" / "duel" / "paradice" (any case) -> that casino, anything else -> Stake.
     static Casino fromName(const QString &name)
     {
         if (name.compare(QLatin1String("shuffle"), Qt::CaseInsensitive) == 0)
@@ -28,6 +28,8 @@ struct LiveSettings
             return Casino::Wolfbet;
         if (name.compare(QLatin1String("duel"), Qt::CaseInsensitive) == 0)
             return Casino::Duel;
+        if (name.compare(QLatin1String("paradice"), Qt::CaseInsensitive) == 0)
+            return Casino::Paradice;
         return Casino::Stake;
     }
 
@@ -39,6 +41,7 @@ struct LiveSettings
         case Casino::Goated:  return QStringLiteral("goated");
         case Casino::Wolfbet: return QStringLiteral("wolfbet");
         case Casino::Duel:    return QStringLiteral("duel");
+        case Casino::Paradice: return QStringLiteral("paradice");
         default:              return QStringLiteral("stake");
         }
     }
@@ -65,6 +68,9 @@ struct LiveSettings
     // ---- Wolfbet (Direct mode only: plain HTTPS). Only a token is needed.
     QString wolfbetToken;          // "value" inside the "token" cookie (sent as "Authorization: Bearer <token>")
 
+    // ---- Paradice (Direct mode: plain HTTPS GraphQL). Only a token is needed.
+    QString paradiceToken;         // localStorage "token" (sent as "x-access-token: <token>")
+
     // ---- Duel (Direct mode only: plain HTTPS). Bets also need a security token, which the
     // transport fetches by itself (and again every ~10 minutes).
     QString duelSite = QStringLiteral("duel.com"); // "Site / mirror" in Options
@@ -79,6 +85,7 @@ struct LiveSettings
     bool goatedExtension = false;
     bool wolfbetExtension = false;
     bool duelExtension = false;    // replaces the hidden WebView2 browser
+    bool paradiceExtension = false;
 
     QString currency;              // lowercase API currency code ("btc", "usdt", ...) of the active casino
     quint16 extensionPort = 4444;  // local WebSocket port the extension connects to
@@ -87,6 +94,7 @@ struct LiveSettings
     bool isGoated() const { return casino == Casino::Goated; }
     bool isWolfbet() const { return casino == Casino::Wolfbet; }
     bool isDuel() const { return casino == Casino::Duel; }
+    bool isParadice() const { return casino == Casino::Paradice; }
     // Casinos reached with plain HTTPS from the app ("Direct mode"), i.e. everything but Stake.
     bool isDirect() const { return casino != Casino::Stake; }
     QString casinoName() const { return nameOf(casino); }
@@ -98,6 +106,7 @@ struct LiveSettings
         case Casino::Goated:  return goatedExtension;
         case Casino::Wolfbet: return wolfbetExtension;
         case Casino::Duel:    return duelExtension;
+        case Casino::Paradice: return paradiceExtension;
         default:              return extensionMode;
         }
     }
@@ -108,6 +117,7 @@ struct LiveSettings
         case Casino::Goated:  goatedExtension = on; break;
         case Casino::Wolfbet: wolfbetExtension = on; break;
         case Casino::Duel:    duelExtension = on; break;
+        case Casino::Paradice: paradiceExtension = on; break;
         default:              extensionMode = on; break;
         }
     }
@@ -124,6 +134,7 @@ struct LiveSettings
             break;
         case Casino::Goated:  goatedToken = from.goatedToken; break;
         case Casino::Wolfbet: wolfbetToken = from.wolfbetToken; break;
+        case Casino::Paradice: paradiceToken = from.paradiceToken; break;
         case Casino::Duel:
             duelToken = from.duelToken;
             duelUuid = from.duelUuid;
@@ -143,6 +154,7 @@ struct LiveSettings
                    && browserId == o.browserId;
         case Casino::Goated:  return goatedToken == o.goatedToken;
         case Casino::Wolfbet: return wolfbetToken == o.wolfbetToken;
+        case Casino::Paradice: return paradiceToken == o.paradiceToken;
         case Casino::Duel:
             return duelToken == o.duelToken && duelUuid == o.duelUuid
                    && duelClearance == o.duelClearance;
@@ -151,7 +163,8 @@ struct LiveSettings
     }
     bool anyUsesExtension() const
     {
-        return extensionMode || shuffleExtension || goatedExtension || wolfbetExtension || duelExtension;
+        return extensionMode || shuffleExtension || goatedExtension || wolfbetExtension || duelExtension
+               || paradiceExtension;
     }
     // Sites of the browser tab the extension uses for casino `c` (compared without "www.").
     QStringList extensionHosts(Casino c) const
@@ -161,6 +174,7 @@ struct LiveSettings
         case Casino::Goated:  return {QStringLiteral("goated.com")};
         case Casino::Wolfbet: return {QStringLiteral("wolfbet.com")};
         case Casino::Duel:    return {duelSite};
+        case Casino::Paradice: return {QStringLiteral("paradice.in")};
         default:              return {hostOf(site, QStringLiteral("stake.com"))};
         }
     }
@@ -196,6 +210,8 @@ struct LiveSettings
             return QStringLiteral("wolfbet.com");
         if (isDuel())
             return duelSite;
+        if (isParadice())
+            return QStringLiteral("paradice.in");
         return isShuffle() ? shuffleSite : site;
     }
 };
