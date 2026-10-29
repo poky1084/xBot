@@ -627,13 +627,8 @@ MainWindow::MainWindow(int slot, bool freshWebSession, QWidget *parent)
         onLogMessage(tr("Vault deposit failed: %1").arg(error), true);
     });
     connect(m_ext, &IStakeTransport::readyChanged, this, &MainWindow::onExtensionReadyChanged);
-    connect(m_ext, &ExtensionTransport::originRejected, this, [this](const QString &origin) {
-        onLogMessage(tr("Rejected a connection to the extension port from origin \"%1\". Allowed: "
-                        "browser extensions, the casino sites and the mirrors set in Options — set "
-                        "Site/mirror in Options if your casino tab runs on another domain.")
-                         .arg(origin),
-                     true);
-    });
+    // Rejected extension-port connections (tabs of other casinos / unknown origins) are not
+    // logged: they repeat every few seconds and only flood the log.
 
     createActions();
     createMenus();

@@ -90,7 +90,8 @@ private:
     void onCasinoChanged(int index);
     // Adapts the "Live betting" box to the casino chosen in the Casino selector / menu
     // (Shuffle: Token, Direct mode only, USER_ID, BROWSER_ID;
-    // Goated, Wolfbet: just the Token; Duel: Token, UUID, cf_clearance).
+    // Goated, Wolfbet: just the Token; Duel: Token, UUID, cf_clearance;
+    // Stake: API key, cf_clearance and the "Open Stake & Login" button).
     void applyCasinoUi();
     // The bet currency was typed / changed: fetch the balance for it (0 if the account
     // does not hold it), when the login data is complete.
@@ -112,6 +113,7 @@ private:
     void onGoatedLogin();
     void onWolfbetLogin();
     void onDuelLogin();
+    void onStakeLogin();
     QComboBox *m_themeCombo = nullptr;
     QComboBox *m_currencyCombo = nullptr;
     QDoubleSpinBox *m_startBalanceSpin = nullptr;
@@ -153,6 +155,7 @@ private:
     QPushButton *m_goatedLoginBtn = nullptr;
     QPushButton *m_wolfbetLoginBtn = nullptr;
     QPushButton *m_duelLoginBtn = nullptr;
+    QPushButton *m_stakeLoginBtn = nullptr;
     QLabel *m_loginStatus = nullptr;
     quint16 m_extensionPort = 4444;
     bool m_extConnected = false;      // the shown casino's tab is connected

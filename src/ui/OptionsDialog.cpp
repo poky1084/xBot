@@ -4,6 +4,7 @@
 #include "ui/OptionsDialog.h"
 #include "ui/ShuffleLoginDialog.h"
 #include "ui/DuelLoginDialog.h"
+#include "ui/StakeLoginDialog.h"
 #include "ui/WolfbetLoginDialog.h"
 #include "bot/CasinoCurrencies.h"
 #include "bot/StakeTransport.h" // ExtensionTransport::bareHost / stakeHosts
@@ -324,6 +325,15 @@ OptionsDialog::OptionsDialog(QWidget *parent)
         addRevealButton(edit);
     liveForm->addRow(tr("cf_clearance:"), m_clearanceEdit); // Stake only (Duel has its own)
 
+    // Stake only: opens the site, waits for the login, then fills API key / cf_clearance.
+    m_stakeLoginBtn = new QPushButton(tr("Open Stake && Login to autofill data"));
+    m_stakeLoginBtn->setToolTip(
+        tr("Opens the site (or the mirror above) in a browser window. After you log in, the "
+           "API key (x-access-token) and cf_clearance are filled in automatically."));
+    m_stakeLoginBtn->setEnabled(StakeLoginDialog::isAvailable());
+    liveForm->addRow(QString(), m_stakeLoginBtn);
+    connect(m_stakeLoginBtn, &QPushButton::clicked, this, &OptionsDialog::onStakeLogin);
+
 	m_grabCookieBtn = new QPushButton(tr("Open site && grab cf_clearance…"));
 	m_grabCookieBtn->setEnabled(CookieGrabberDialog::isAvailable());
 	//liveForm->addRow({}, m_grabCookieBtn);
@@ -615,6 +625,7 @@ void OptionsDialog::applyCasinoUi()
     setFormRowVisible(m_duelUuidEdit, duel);
     setFormRowVisible(m_duelClearanceEdit, duel);
     setFormRowVisible(m_duelLoginBtn, duel);
+    setFormRowVisible(m_stakeLoginBtn, !direct);   // Stake only
     setFormRowVisible(m_extStatus, true); // every casino can use the extension
 }
 
@@ -1115,4 +1126,28 @@ void OptionsDialog::onDuelLogin()
     // currencies are merged into the list from that answer.
     m_autoFetchedKey[int(LiveSettings::Casino::Duel)].clear();
     maybeAutoFetch();
+}
+
+void OptionsDialog::onStakeLogin()
+{
+    const CursorRestorer restoreCursor; // WebView2 bug: the pointer may stay hidden after `dlg`
+    StakeLoginDialog dlg(LiveSettings::hostOf(m_siteEdit->text(), QStringLiteral("stake.com")), this);
+    if (dlg.exec() != QDialog::Accepted)
+        return;
+
+    m_apiKeyEdit->setText(dlg.apiKey());
+    if (!dlg.clearance().isEmpty())
+        m_clearanceEdit->setText(dlg.clearance());
+    // cf_clearance only works with the User-Agent of the browser that got it (hidden input,
+    // saved with the settings and used by the Stake transport).
+    if (!dlg.userAgent().isEmpty())
+        m_userAgentEdit->setText(dlg.userAgent());
+
+    const QString who = dlg.userName().isEmpty() ? QString() : tr(" (%1)").arg(dlg.userName());
+    setLoginStatus(dlg.clearance().isEmpty()
+                       ? tr("Stake API key captured%1 (no cf_clearance cookie was set).").arg(who)
+                       : tr("Stake API key and cf_clearance captured%1.").arg(who),
+                   true);
+    m_autoFetchedKey[int(LiveSettings::Casino::Stake)].clear();
+    maybeAutoFetch(); // loads the account's balances / currencies
 }

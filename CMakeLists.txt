@@ -80,6 +80,8 @@ set(SOURCES
 	src/ui/WolfbetLoginDialog.h
 	src/ui/DuelLoginDialog.cpp
 	src/ui/DuelLoginDialog.h
+	src/ui/StakeLoginDialog.cpp
+	src/ui/StakeLoginDialog.h
 	src/ui/DuelBrowser.cpp
 	src/ui/DuelBrowser.h
 	src/ui/WindowSettings.h
