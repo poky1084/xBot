@@ -22,6 +22,7 @@ Source code and exe: <https://bitbucket.org/poky1084/xbot>
 8. [Manual bet](#manual-bet)
 9. [Auto bet](#auto-bet)
 10. [Condition Builder](#condition-builder)
+    - [Importing Stake strategies (export-strategy extension)](#importing-stake-strategies-export-strategy-extension)
 11. [Code mode — Lua and JavaScript strategies](#code-mode--lua-and-javascript-strategies)
 12. [Provably fair / simulation](#provably-fair--simulation)
 13. [Multiple windows](#multiple-windows)
@@ -268,9 +269,62 @@ Open it from **Tools → Condition builder**. You build a list of **"When … Th
 
 **Then (actions):** `increaseByPercentage`, `decreaseByPercentage`, `addToAmount`, `subtractFromAmount`, `setAmount`, `resetAmount`, `increaseWinChanceBy` (%), `decreaseWinChanceBy` (%), `addToWinChance`, `subtractFromWinChance`, `setWinChance`, `resetWinChance`, `switchOverUnder` (dice only), `stop`.
 
-Strategies have names and can be saved, loaded, deleted, **exported** (the selected one or all of them, as JSON) and **imported** (one strategy or a whole collection). They're stored in `strategies.json` next to the exe, with one file per window (`strategies_2.json`, …).
+Strategies have names and can be saved, loaded, deleted, **exported** (the selected one or all of them, as JSON) and **imported** (one strategy or a whole collection). The file format is the same as Stake's, so strategies can be moved to and from Stake with the [export-strategy extension](#importing-stake-strategies-export-strategy-extension). They're stored in `strategies.json` next to the exe, with one file per window (`strategies_2.json`, …).
 
 Example: *Bets · everyStreakOf 1 · lose → increaseByPercentage 100* plus *Bets · every 1 · win → resetAmount* is a classic Martingale.
+
+### Importing Stake strategies (export-strategy extension)
+
+Stake saves its *Advanced* auto-bet strategies only in your browser, under the localStorage key `strategies_saved`, and doesn't offer an export button. The **export-strategy** browser extension (`stake-strategy`) adds **Import**, **Export Selected** and **Export All** buttons to the game sidebar on Stake. Its files use the same JSON format as xBot's Condition Builder, so you can move strategies **from Stake into xBot** and **from xBot back to Stake**.
+
+#### Install the export-strategy extension
+
+1. Unzip `export-strategy.zip` somewhere permanent. You get a folder `export-strategy/` with `manifest.json`, `index.js` and `icon.png`.
+2. Open `chrome://extensions` (Chrome / Brave) or `edge://extensions` (Edge).
+3. Turn on **Developer mode**.
+4. Click **Load unpacked** and select the `export-strategy` folder.
+5. Open or reload a Stake game page, e.g. `https://stake.com/casino/games/dice`. The three buttons appear at the bottom of the game sidebar.
+
+The extension runs on `stake.com`, `stake.bet`, `stake.us`, `stake.games`, `stake.pet`, `stake.kim`, `stake.mba`, `stake.ac`, `stake.jp`, `stake.bz`, `stake.ceo`, `stake.krd`, `staketr.com`, `primedice.com`, `stake1067.com` and `stake3075.com`.
+
+#### Stake → xBot
+
+1. On Stake, open the **Auto** tab and switch on **Advanced** (strategy) mode. Select the strategy you want in the strategy dropdown.
+2. Click **Export Selected** to download that strategy, or **Export All** to download every saved strategy. You get a file such as `strategy_<name>_<time>.json` or `strategies_all_<time>.json`.
+3. In xBot, open **Tools → Condition builder → Import** and choose the file.
+   - If the file has one strategy, it's loaded directly.
+   - If the file has several, choose **Load Selected** for one, or **Import All**.
+4. Press **Save** and **OK**. Then tick **Use Condition Builder** on the Auto Bet tab and press **Start** (F5).
+
+#### xBot → Stake
+
+1. In xBot, open **Condition builder → Export**, then choose **EXPORT SELECTED** or **EXPORT ALL**.
+2. On Stake, click **Import** and pick one or more `.json` files.
+3. A message shows how many strategies were imported. Strategies whose name already exists on Stake are **skipped**, not overwritten. Reload the page if the new strategy doesn't show up in the dropdown straight away.
+
+#### File format (shared by both)
+
+```json
+[
+  {
+    "label": "Martingale",
+    "blocks": [
+      { "id": "a1", "type": "bets",
+        "on": { "type": "everyStreakOf", "value": 1, "betType": "lose", "profitType": "profit" },
+        "do": { "type": "increaseByPercentage", "value": 100 } },
+      { "id": "a2", "type": "bets",
+        "on": { "type": "every", "value": 1, "betType": "win", "profitType": "profit" },
+        "do": { "type": "resetAmount", "value": 0 } }
+    ]
+  }
+]
+```
+
+The extension's Import also accepts Stake's own share format (`{ "name": …, "options": { "conditions": { "blocks": [ … ] } } }`) and converts it.
+
+For safety, the extension rejects any strategy that contains an action outside the Condition Builder list. That list is: `stop`, `addToAmount`, `subtractFromAmount`, `setAmount`, `resetAmount`, `increaseByPercentage`, `decreaseByPercentage`, `increaseWinChanceBy`, `decreaseWinChanceBy`, `addToWinChance`, `subtractFromWinChance`, `setWinChance`, `resetWinChance`, `switchOverUnder`. It also rejects a `profitType` other than `profit`, `loss` or `balance`.
+
+A Stake strategy only holds the blocks. The base bet, win chance, side and stop limits come from xBot's **Auto Bet** tab.
 
 ---
 
