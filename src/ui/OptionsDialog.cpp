@@ -8,7 +8,13 @@
 #include "bot/CasinoCurrencies.h"
 #include "bot/StakeTransport.h" // ExtensionTransport::bareHost / stakeHosts
 
+#include <QAction>
 #include <QCheckBox>
+#include <QEvent>
+#include <QIcon>
+#include <QPainter>
+#include <QPainterPath>
+#include <QPixmap>
 #include <QComboBox>
 #include <QCoreApplication>
 #include <QMessageBox>
@@ -39,6 +45,86 @@
 #endif
 #endif
 
+
+namespace
+{
+// Eye icon drawn in code (no resource needed), in the line edit's text colour so it fits the
+// light and dark theme. `slashed` = the "hide" variant.
+QIcon eyeIcon(const QColor &color, bool slashed)
+{
+    QIcon icon;
+    for (const int size : {16, 24, 32}) {
+        QPixmap pm(size, size);
+        pm.fill(Qt::transparent);
+        QPainter p(&pm);
+        p.setRenderHint(QPainter::Antialiasing);
+        p.scale(size / 16.0, size / 16.0);
+        p.setPen(QPen(color, 1.3, Qt::SolidLine, Qt::RoundCap, Qt::RoundJoin));
+        p.setBrush(Qt::NoBrush);
+        QPainterPath outline;
+        outline.moveTo(1.5, 8.0);
+        outline.quadTo(8.0, 1.8, 14.5, 8.0);
+        outline.quadTo(8.0, 14.2, 1.5, 8.0);
+        p.drawPath(outline);
+        p.setBrush(color);
+        p.drawEllipse(QPointF(8.0, 8.0), 2.2, 2.2);
+        if (slashed) {
+            p.setPen(QPen(color, 1.5, Qt::SolidLine, Qt::RoundCap));
+            p.drawLine(QPointF(2.5, 13.5), QPointF(13.5, 2.5));
+        }
+        p.end();
+        icon.addPixmap(pm);
+    }
+    return icon;
+}
+
+// Keeps the eye's colour in step with the input: the theme (style sheet / palette) is applied
+// after the dialog is built, so an icon drawn in the constructor would use the wrong colour
+// (e.g. black on the dark theme) and look invisible until clicked.
+class EyeUpdater final : public QObject
+{
+public:
+    EyeUpdater(QLineEdit *edit, QAction *act)
+        : QObject(edit), m_edit(edit), m_act(act)
+    {
+        edit->installEventFilter(this);
+    }
+
+    void update()
+    {
+        const bool shown = m_edit->echoMode() == QLineEdit::Normal;
+        m_act->setIcon(eyeIcon(m_edit->palette().color(QPalette::Text), shown));
+        m_act->setToolTip(shown ? OptionsDialog::tr("Hide") : OptionsDialog::tr("Show"));
+    }
+
+protected:
+    bool eventFilter(QObject *obj, QEvent *event) override
+    {
+        if (obj == m_edit
+            && (event->type() == QEvent::Show || event->type() == QEvent::PaletteChange
+                || event->type() == QEvent::StyleChange))
+            update();
+        return QObject::eventFilter(obj, event);
+    }
+
+private:
+    QLineEdit *m_edit;
+    QAction *m_act;
+};
+
+// Adds a show / hide eye at the right end of a password-style input.
+void addRevealButton(QLineEdit *edit)
+{
+    QAction *act = edit->addAction(QIcon(), QLineEdit::TrailingPosition);
+    act->setCheckable(true);
+    auto *updater = new EyeUpdater(edit, act);
+    updater->update();
+    QObject::connect(act, &QAction::toggled, edit, [edit, updater](bool shown) {
+        edit->setEchoMode(shown ? QLineEdit::Normal : QLineEdit::Password);
+        updater->update();
+    });
+}
+} // namespace
 
 OptionsDialog::OptionsDialog(QWidget *parent)
     : QDialog(parent)
@@ -232,6 +318,10 @@ OptionsDialog::OptionsDialog(QWidget *parent)
     m_clearanceEdit = new QLineEdit;
     m_clearanceEdit->setEchoMode(QLineEdit::Password);
     m_clearanceEdit->setPlaceholderText(tr("cf_clearance cookie value"));
+    // Show / hide eye on every input with hidden text.
+    for (QLineEdit *edit : {m_apiKeyEdit, m_correlationEdit, m_browserIdEdit, m_duelUuidEdit,
+                            m_duelClearanceEdit, m_clearanceEdit})
+        addRevealButton(edit);
     liveForm->addRow(tr("cf_clearance:"), m_clearanceEdit); // Stake only (Duel has its own)
 
 	m_grabCookieBtn = new QPushButton(tr("Open site && grab cf_clearance…"));
