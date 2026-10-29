@@ -292,7 +292,7 @@ OptionsDialog::OptionsDialog(QWidget *parent)
             return;
         }
         setLoginStatus(tr("Logging in…"), true);
-        m_loginBtn->setEnabled(false);
+        m_loginBusy = true;
         m_fetchedCurrency = liveSettings().currency;
         const LiveSettings cur = liveSettings();
         m_autoFetchedKey[int(cur.casino)] = autoFetchKey(); // no extra auto fetch for these inputs
@@ -659,7 +659,7 @@ void OptionsDialog::setLoginStatus(const QString &text, bool ok)
     m_loginStatus->setText(text);
     m_loginStatus->setStyleSheet(ok ? QStringLiteral("color:#2e9e46;")
                                     : QStringLiteral("color:#c9372a;"));
-    m_loginBtn->setEnabled(true);
+    m_loginBusy = false;
 }
 
 void OptionsDialog::setLiveCurrencies(const QStringList &codes, const QString &selected)
@@ -764,8 +764,8 @@ void OptionsDialog::onCurrencyEdited()
         setLoginStatus(tr("Not logged in — %1").arg(missing), false);
         return;
     }
-    m_loginBtn->setEnabled(false);
     setLoginStatus(tr("Loading the %1 balance…").arg(cur.toUpper()), true);
+    m_loginBusy = true;
     emit loginRequested(); // same as "Log in": applies the inputs and fetches the balances
 }
 
@@ -836,7 +836,7 @@ void OptionsDialog::maybeAutoFetch()
         return;
     if (!missingLoginData().isEmpty())
         return; // not every input is filled in yet
-    if (!m_loginBtn->isEnabled())
+    if (m_loginBusy)
         return; // a login / balance fetch is already running
     const LiveSettings s = liveSettings();
     const QString key = autoFetchKey();
@@ -846,7 +846,7 @@ void OptionsDialog::maybeAutoFetch()
     done = key;
 
     setLoginStatus(tr("Loading the currencies…"), true);
-    m_loginBtn->setEnabled(false);
+    m_loginBusy = true;
     m_fetchedCurrency = s.currency;
     emit loginRequested(); // same as "Log in": applies the inputs and fetches the balances
 }

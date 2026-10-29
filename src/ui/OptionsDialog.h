@@ -139,7 +139,8 @@ private:
     QStringList m_accountCurrencies;          // what the account holds (last login)
     bool m_currencyListFetched[LiveSettings::kCasinoCount] = {}; // fetched while open
     QString m_fetchedCurrency;               // currency the last balance fetch was made for
-    QPushButton *m_loginBtn = nullptr;
+    QPushButton *m_loginBtn = nullptr; // always enabled
+    bool m_loginBusy = false; // a login / balance fetch is running (blocks auto fetch)
 	QPushButton *m_grabCookieBtn = nullptr;
     QPushButton *m_shuffleLoginBtn = nullptr;
     QPushButton *m_goatedLoginBtn = nullptr;
