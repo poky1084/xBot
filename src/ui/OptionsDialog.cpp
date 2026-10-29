@@ -1,4 +1,5 @@
 #include "ui/CookieGrabberDialog.h"
+#include "ui/CursorRestore.h"
 #include "ui/GoatedLoginDialog.h"
 #include "ui/OptionsDialog.h"
 #include "ui/ShuffleLoginDialog.h"
@@ -883,6 +884,7 @@ void OptionsDialog::onGrabCookie()
 
     const QString currentUA = m_userAgentEdit->text().trimmed();
     
+    const CursorRestorer restoreCursor; // WebView2 bug: the pointer may stay hidden after `dlg`
     CookieGrabberDialog dlg(site, currentUA, this);
     if (dlg.exec() == QDialog::Accepted) {
         if (!dlg.clearance().isEmpty())
@@ -895,6 +897,7 @@ void OptionsDialog::onGrabCookie()
 }
 void OptionsDialog::onShuffleLogin()
 {
+    const CursorRestorer restoreCursor; // WebView2 bug: the pointer may stay hidden after `dlg`
     ShuffleLoginDialog dlg(m_siteEdit->text().trimmed(), this);
     if (dlg.exec() != QDialog::Accepted)
         return;
@@ -908,6 +911,7 @@ void OptionsDialog::onShuffleLogin()
 
 void OptionsDialog::onGoatedLogin()
 {
+    const CursorRestorer restoreCursor; // WebView2 bug: the pointer may stay hidden after `dlg`
     GoatedLoginDialog dlg(this);
     if (dlg.exec() != QDialog::Accepted)
         return;
@@ -919,6 +923,7 @@ void OptionsDialog::onGoatedLogin()
 
 void OptionsDialog::onWolfbetLogin()
 {
+    const CursorRestorer restoreCursor; // WebView2 bug: the pointer may stay hidden after `dlg`
     WolfbetLoginDialog dlg(this);
     if (dlg.exec() != QDialog::Accepted)
         return;
@@ -931,6 +936,7 @@ void OptionsDialog::onWolfbetLogin()
 
 void OptionsDialog::onDuelLogin()
 {
+    const CursorRestorer restoreCursor; // WebView2 bug: the pointer may stay hidden after `dlg`
     DuelLoginDialog dlg(LiveSettings::hostOf(m_siteEdit->text(), QStringLiteral("duel.com")), this);
     if (dlg.exec() != QDialog::Accepted)
         return;

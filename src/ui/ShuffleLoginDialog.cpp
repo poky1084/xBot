@@ -85,6 +85,7 @@ ShuffleLoginDialog::~ShuffleLoginDialog()
     if (m_pollTimer)
         m_pollTimer->stop();
     if (m_controller) {
+        m_controller->put_IsVisible(FALSE); // hidden first: it lets go of the mouse cursor
         m_controller->Close();
         m_controller->Release();
     }

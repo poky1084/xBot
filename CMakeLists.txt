@@ -83,6 +83,7 @@ set(SOURCES
 	src/ui/DuelBrowser.cpp
 	src/ui/DuelBrowser.h
 	src/ui/WindowSettings.h
+	src/ui/CursorRestore.h
     resources/resources.qrc
 	resources/app.rc
 )
