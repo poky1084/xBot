@@ -156,7 +156,7 @@ private:
     void keepLogHeight();
     void scheduleKeepLogHeight();
     void setupFloatingDocks();
-    void detachFloatingDock(QDockWidget *dock);
+    void detachFloatingDock(QDockWidget *dock, bool bringToFront = false);
     static QString casinoDisplayName(LiveSettings::Casino casino);
     QAction *casinoAction(LiveSettings::Casino casino) const;
     void closeHiddenBrowser();
@@ -344,6 +344,8 @@ private:
     int m_panelHeight = 0;                // the bottom panel's content height
     int m_logHeight = -1;                 // the Log height the user chose (kept, see keepLogHeight)
     bool m_separatorDrag = false;         // mouse held on the main window: a separator drag
+    int m_pressCentralH = -1;             // central height when that drag started
+    bool m_panelUserSized = false;        // bottom panel height set by hand (until a tab click)
 
     // Tabs
     QTabWidget *m_tabs = nullptr;

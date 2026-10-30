@@ -2191,9 +2191,12 @@ void MainWindow::onTabChanged(int index)
 {
     if (!m_tabs->widget(index))
         return;
-    // Size the panel to the new tab's content (again once the layout has settled), and
-    // make room for all of it if a dock had been dragged over the panel.
+    m_panelUserSized = false; // back to automatic sizing (see fitBetList())
+    // Size the panel to the new tab's content and make room for all of it, in one go, right
+    // away (before the window repaints: no flashing of in-between sizes). A second pass once
+    // the layout has settled catches late size hints; it changes nothing when they are final.
     updateCentralHeight();
+    fitBetList(true);
     QTimer::singleShot(0, this, [this] {
         updateCentralHeight();
         fitBetList(true);
@@ -2245,6 +2248,10 @@ void MainWindow::updateCentralHeight()
 // keeps at least a small strip. Nothing happens during a separator drag.
 void MainWindow::fitBetList(bool growPanel)
 {
+    if (growPanel)
+        m_panelUserSized = false; // a tab was clicked: back to automatic sizing
+    else if (m_panelUserSized)
+        return; // the user sized the panel by hand: leave it
     if (!betListStacked() || m_separatorDrag || !m_centralArea)
         return;
     const int diff = m_centralArea->height() - m_panelHeight; // > 0: empty, < 0: clipped
@@ -2291,7 +2298,11 @@ void MainWindow::positionBottomPanel()
         return;
     QWidget *holder = m_tabs->parentWidget();
     const int areaH = m_centralArea->height();
-    const int h = std::min(areaH, m_panelHeight);
+    // Between the bet list and the Log, a panel sized by hand (or being dragged) fills the
+    // whole central area, whatever its height. Otherwise it is its content height at the
+    // bottom, right on the Log, so it moves with the Log's separator (spare height above).
+    const bool fill = (m_panelUserSized || m_separatorDrag) && betListStacked();
+    const int h = fill ? areaH : std::min(areaH, m_panelHeight);
     const QRect r(0, areaH - h, m_centralArea->width(), h);
     if (holder->geometry() != r)
         holder->setGeometry(r);
@@ -2306,7 +2317,7 @@ void MainWindow::setupFloatingDocks()
     for (QDockWidget *dock : findChildren<QDockWidget *>()) {
         connect(dock, &QDockWidget::topLevelChanged, this, [this, dock](bool floating) {
             if (floating)
-                detachFloatingDock(dock);
+                detachFloatingDock(dock, true); // just popped out: bring it to the front
         });
         // Docks appearing / moving / floating change what can take the spare height.
         const auto refit = [this] {
@@ -2319,18 +2330,18 @@ void MainWindow::setupFloatingDocks()
     }
 }
 
-void MainWindow::detachFloatingDock(QDockWidget *dock)
+void MainWindow::detachFloatingDock(QDockWidget *dock, bool bringToFront)
 {
 #ifdef Q_OS_WIN
     QPointer<QDockWidget> guard(dock);
-    QTimer::singleShot(0, this, [this, guard] {
+    QTimer::singleShot(0, this, [this, guard, bringToFront] {
         if (!guard || !guard->isFloating() || !guard->isVisible())
             return;
         // Still being dragged (it may yet be docked again): try once the mouse is released.
         if (QGuiApplication::mouseButtons() != Qt::NoButton) {
-            QTimer::singleShot(150, this, [this, guard] {
+            QTimer::singleShot(150, this, [this, guard, bringToFront] {
                 if (guard)
-                    detachFloatingDock(guard);
+                    detachFloatingDock(guard, bringToFront);
             });
             return;
         }
@@ -2349,15 +2360,19 @@ void MainWindow::detachFloatingDock(QDockWidget *dock)
                              | SWP_FRAMECHANGED);
             ShowWindow(hwnd, SW_SHOW);
         }
-        // Without an owner Windows may leave it under the main window (the mouse click that
-        // dropped it): bring it to the front and focus it. It stays there until the main
-        // window is clicked.
-        SetWindowPos(hwnd, HWND_TOP, 0, 0, 0, 0, SWP_NOMOVE | SWP_NOSIZE);
-        guard->raise();
-        guard->activateWindow();
+        // Just popped out: without an owner Windows may leave it under the main window (the
+        // mouse click that dropped it), so bring it to the front once and focus it. It stays
+        // there until the main window is clicked. Never done again later, so it does not
+        // take the focus back from the main window.
+        if (bringToFront) {
+            SetWindowPos(hwnd, HWND_TOP, 0, 0, 0, 0, SWP_NOMOVE | SWP_NOSIZE);
+            guard->raise();
+            guard->activateWindow();
+        }
     });
 #else
     Q_UNUSED(dock);
+    Q_UNUSED(bringToFront);
 #endif
 }
 
@@ -2366,6 +2381,10 @@ void MainWindow::detachFloatingDock(QDockWidget *dock)
 bool MainWindow::betListStacked() const
 {
     if (!m_betListDock || m_betListDock->isHidden() || m_betListDock->isFloating())
+        return false;
+    // Tabbed together with another panel (e.g. the Log): resizing it would resize that panel
+    // too, so it does not share the height with the bottom panel.
+    if (!tabifiedDockWidgets(m_betListDock).isEmpty())
         return false;
     const Qt::DockWidgetArea area = dockWidgetArea(m_betListDock);
     return area == Qt::TopDockWidgetArea || area == Qt::BottomDockWidgetArea;
@@ -4453,12 +4472,15 @@ bool MainWindow::eventFilter(QObject *watched, QEvent *event)
     if (watched == this) {
         if (event->type() == QEvent::MouseButtonPress) {
             m_separatorDrag = true;
+            m_pressCentralH = m_centralArea ? m_centralArea->height() : -1;
         } else if (event->type() == QEvent::MouseButtonRelease) {
             m_separatorDrag = false;
-            QTimer::singleShot(0, this, [this] {
-                rememberLogHeight();
-                fitBetList(false); // e.g. the Log was dragged smaller: the bet list fills up
-            });
+            // The bottom panel's height was dragged by hand: keep exactly that size (any
+            // height) until a tab is clicked - no automatic fitting in between.
+            if (m_centralArea && m_pressCentralH >= 0 && m_centralArea->height() != m_pressCentralH)
+                m_panelUserSized = true;
+            positionBottomPanel();
+            QTimer::singleShot(0, this, &MainWindow::rememberLogHeight);
         }
     }
     // A floating panel shown again (View menu, restored layout): Qt gives it back its
