@@ -384,14 +384,14 @@ void WinnaTransport::requestBalances()
     });
 }
 
-void WinnaTransport::ensureGameToken(std::function<void(const QString &)> then)
+void WinnaTransport::ensureGameToken(const QString &game, std::function<void(const QString &)> then)
 {
     const QString coin = m_coin;
     if (coin.isEmpty()) {
         then(tr("Winna: no currency selected."));
         return;
     }
-    const bool fresh = !m_gameToken.isEmpty() && m_gameCoin == coin
+    const bool fresh = !m_gameToken.isEmpty() && m_gameCoin == coin && m_gameName == game
                        && (!m_gameExpiry.isValid()
                            || QDateTime::currentDateTimeUtc().secsTo(m_gameExpiry) > kTokenMarginSecs);
     if (fresh) {
@@ -416,7 +416,7 @@ void WinnaTransport::ensureGameToken(std::function<void(const QString &)> then)
     QJsonObject coinBody;
     coinBody.insert(QStringLiteral("coin"), apiCurrency(coin));
     sendApi("POST", QStringLiteral("v1/user/change-wallet-coin"), coinBody,
-            [this, generation, coin, finish](int status, const QByteArray &data, const QString &netError) {
+            [this, generation, coin, game, finish](int status, const QByteArray &data, const QString &netError) {
         if (generation != m_generation)
             return finish(tr("Winna: the login changed - try again."));
         if (status < 200 || status >= 300) {
@@ -425,19 +425,19 @@ void WinnaTransport::ensureGameToken(std::function<void(const QString &)> then)
                 msg = netError.isEmpty() ? tr("Network error.") : netError;
             return finish(tr("Winna: could not switch the wallet to %1 (%2).").arg(coin.toUpper(), msg));
         }
-        // 2. a game session for dice with that wallet
+        // 2. a game session for the game with that wallet
         QJsonObject startBody;
-        startBody.insert(QStringLiteral("game"), QStringLiteral("dice"));
+        startBody.insert(QStringLiteral("game"), game);
         startBody.insert(QStringLiteral("platform"), QStringLiteral("GPL_DESKTOP"));
         sendApi("POST", QStringLiteral("v1/games/our-game/start"), startBody,
-                [this, generation, coin, finish](int status2, const QByteArray &data2, const QString &netError2) {
+                [this, generation, coin, game, finish](int status2, const QByteArray &data2, const QString &netError2) {
             if (generation != m_generation)
                 return finish(tr("Winna: the login changed - try again."));
             if (status2 < 200 || status2 >= 300) {
                 QString msg = errorText(status2, data2);
                 if (msg.isEmpty())
                     msg = netError2.isEmpty() ? tr("Network error.") : netError2;
-                return finish(tr("Winna: could not start the dice game (%1).").arg(msg));
+                return finish(tr("Winna: could not start the %1 game (%2).").arg(game, msg));
             }
             const QJsonObject result = QJsonDocument::fromJson(data2).object()
                                            .value(QStringLiteral("response")).toObject()
@@ -455,10 +455,11 @@ void WinnaTransport::ensureGameToken(std::function<void(const QString &)> then)
                                   .arg(tokenCoin.toUpper(), coin.toUpper()));
             m_gameToken = jwt;
             m_gameCoin = coin;
+            m_gameName = game;
             const qint64 exp = qint64(numberOf(payload.value(QStringLiteral("exp"))));
             m_gameExpiry = exp > 0 ? QDateTime::fromSecsSinceEpoch(exp).toUTC() : QDateTime();
             m_sid = QUuid::createUuid().toString(QUuid::WithoutBraces);
-            emit notice(tr("Winna: dice session started (%1).").arg(coin.toUpper()));
+            emit notice(tr("Winna: %1 session started (%2).").arg(game, coin.toUpper()));
             finish(QString());
         });
     });
@@ -505,7 +506,14 @@ void WinnaTransport::post(const QString &path, const QJsonObject &body, Transpor
 void WinnaTransport::sendGame(const QString &path, const QJsonObject &body, TransportCallback cb,
                               bool retried)
 {
-    ensureGameToken([this, path, body, cb, retried](const QString &error) {
+    // "limbo/play" -> "limbo": the game session is started for that game.
+    QString game = path.trimmed();
+    while (game.startsWith(QLatin1Char('/')))
+        game.remove(0, 1);
+    game = game.section(QLatin1Char('/'), 0, 0).toLower();
+    if (game.isEmpty())
+        game = QStringLiteral("dice");
+    ensureGameToken(game, [this, path, body, cb, retried](const QString &error) {
         if (!error.isEmpty()) {
             // No game session: nothing was sent, so the bet was not placed.
             TransportReply r;

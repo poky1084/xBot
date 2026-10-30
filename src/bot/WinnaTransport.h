@@ -34,9 +34,9 @@ struct WinnaCredentials
 //  * POST /v1/games/our-game/start {"game":"dice","platform":"GPL_DESKTOP"}
 //      -> {"response":{"result":{"jwt":"<game token>","token":"87344-USDC-USDC-<name>",…}}}
 // Game API (https://originals.winna.com, header "token: <game jwt>" + "sid: <uuid>"):
-//  * post("dice/play", body) -> see StakeClient::placeWinnaDice().
-// The game token belongs to one coin: gameRequest() switches the wallet coin and starts a new
-// game session when the bet currency changes or the token is about to expire.
+//  * post("dice/play" | "limbo/play", body) -> see StakeClient::placeWinnaDice() / placeWinnaLimbo().
+// The game token belongs to one coin and game: post() switches the wallet coin and starts a new
+// game session when the bet currency or the game changes or the token is about to expire.
 class WinnaTransport final : public IStakeTransport
 {
     Q_OBJECT
@@ -103,7 +103,8 @@ private:
     using RawDone = std::function<void(int status, const QByteArray &data, const QString &netError)>;
     void sendApi(const QByteArray &method, const QString &path, const QJsonObject &body, RawDone done);
     // Makes sure a game token for m_coin exists, then calls `then(error)` ("" = ready).
-    void ensureGameToken(std::function<void(const QString &error)> then);
+    // `game`: the originals game the session is started for ("dice", "limbo").
+    void ensureGameToken(const QString &game, std::function<void(const QString &error)> then);
     void sendGame(const QString &path, const QJsonObject &body, TransportCallback cb, bool retried);
     TransportReply interpret(int status, const QByteArray &data, const QString &netError) const;
 
@@ -115,6 +116,7 @@ private:
     QString m_coin;           // wanted game coin (lowercase)
     QString m_gameToken;      // game jwt
     QString m_gameCoin;       // coin the game jwt was made for (lowercase)
+    QString m_gameName;       // game the jwt was made for ("dice", "limbo")
     QDateTime m_gameExpiry;   // jwt "exp"
     QString m_sid;            // game session id ("sid" header)
     bool m_tokenBusy = false;

@@ -890,8 +890,7 @@ void StakeClient::placeLimbo(const LimboBetRequest &request)
         return;
     }
     if (isWinna()) {
-        const LiveBetResult r = failed(tr("Winna: Limbo is not supported yet (dice only)."));
-        QTimer::singleShot(0, this, [this, r] { emit diceFinished(r); });
+        placeWinnaLimbo(request);
         return;
     }
 
@@ -2119,6 +2118,96 @@ void StakeClient::sendWinnaDice(double amount, double target, bool over, int ove
                 const double chance = over ? 100.0 - target : target;
                 mult = chance > 0.0 ? 99.0 / chance : 0.0;
             }
+            r.multiplier = mult;
+            r.payout = r.amount * mult; // "profit" is the amount paid back (0.02 for 0.01 at 2x)
+        }
+
+        const QJsonValue id = json.value(QStringLiteral("id"));
+        r.betId = id.isString() ? id.toString() : QString::number(qint64(numberOf(id)));
+        if (r.betId.isEmpty() || r.betId == QLatin1String("0"))
+            r.betId = json.value(QStringLiteral("betUuid")).toString();
+        r.nonce = -1;
+        emit diceFinished(r);
+    });
+}
+
+// Winna limbo: POST https://originals.winna.com/limbo/play  (headers "token: <game jwt>", "sid")
+//   {"bet":"0.01","turbo":false,"data":{"target":2}}   (target = the multiplier to reach)
+// Answer: {"coin":"USDC","status":"win","id":1540217560,"multiplier":2,"wager":0.01,
+//   "profit":0.02 (the amount paid back),"balance":3.70,"data":{"target":2,"number":2.75 (the
+//   multiplier rolled)},"betUuid",…}. Limbo pays the target exactly: no house-edge conversion.
+void StakeClient::placeWinnaLimbo(const LimboBetRequest &request)
+{
+    const double target = std::round(request.multiplierTarget * 100.0) / 100.0;
+    if (!(target > 1.0)) {
+        const LiveBetResult r = failed(tr("Winna: invalid limbo target %1.").arg(target));
+        QTimer::singleShot(0, this, [this, r] { emit diceFinished(r); });
+        return;
+    }
+    if (auto *winna = qobject_cast<WinnaTransport *>(m_transport))
+        winna->setCoin(m_currency);
+
+    // Amount as a plain decimal without trailing zeros ("0.01"), like the site.
+    QString betText = QString::number(std::max(0.0, request.amount), 'f', 8);
+    while (betText.contains(QLatin1Char('.')) && betText.endsWith(QLatin1Char('0')))
+        betText.chop(1);
+    if (betText.endsWith(QLatin1Char('.')))
+        betText.chop(1);
+
+    QJsonObject data;
+    data.insert(QStringLiteral("target"), target);
+    QJsonObject body;
+    body.insert(QStringLiteral("bet"), betText);
+    body.insert(QStringLiteral("turbo"), false);
+    body.insert(QStringLiteral("data"), data);
+
+    const double amount = request.amount;
+    m_transport->post(QStringLiteral("limbo/play"), body, [this, amount, target](const TransportReply &reply) {
+        if (!reply.ok) {
+            const bool isTimeout = (reply.status == 0);
+            const bool unknown = (reply.status >= 500 && reply.status != 503);
+            if (reply.status == 0)
+                emit sessionLost(reply.error);
+            emit diceFinished(failed(reply.error, {}, isTimeout, unknown));
+            return;
+        }
+
+        const QJsonObject &json = reply.json;
+        if (reply.status >= 400 || reply.status == 0 || json.contains(QStringLiteral("errors"))) {
+            // Refused (no game session, validation, balance, rate limit): the bet was not placed.
+            QString errText = firstErrorText(json, nullptr);
+            if (errText.isEmpty())
+                errText = tr("Winna limbo bet rejected (HTTP %1).").arg(reply.status);
+            LiveBetResult r = failed(errText, {}, isRetryable({}, errText), false);
+            r.retryDelayMs = fastRetryDelayMs({}, errText);
+            emit diceFinished(r);
+            return;
+        }
+        const QJsonObject d = json.value(QStringLiteral("data")).toObject();
+        if (!d.contains(QStringLiteral("number"))) {
+            const QString raw = QString::fromUtf8(QJsonDocument(json).toJson(QJsonDocument::Compact)).left(400);
+            emit diceFinished(failed(tr("Unexpected Winna limbo response (no result found): %1").arg(raw),
+                                     {}, false, true));
+            return;
+        }
+
+        LiveBetResult r;
+        r.ok = true;
+        r.amount = json.contains(QStringLiteral("wager")) ? numberOf(json.value(QStringLiteral("wager")))
+                                                          : amount;
+        r.roll = numberOf(d.value(QStringLiteral("number"))); // the multiplier rolled
+        if (d.value(QStringLiteral("win")).isBool())
+            r.win = d.value(QStringLiteral("win")).toBool();
+        else if (json.value(QStringLiteral("status")).isString())
+            r.win = json.value(QStringLiteral("status")).toString().compare(QLatin1String("win"),
+                                                                            Qt::CaseInsensitive) == 0;
+        else
+            r.win = r.roll >= target;
+
+        if (r.win) {
+            double mult = numberOf(json.value(QStringLiteral("multiplier")));
+            if (!(mult > 0.0))
+                mult = target;
             r.multiplier = mult;
             r.payout = r.amount * mult; // "profit" is the amount paid back (0.02 for 0.01 at 2x)
         }

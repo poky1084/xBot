@@ -72,7 +72,7 @@ public:
     // GraphQL API (dice only; balances over HTTPS), a PasinoTransport to Pasino's REST API
     // (dice and limbo; balances over HTTPS), a TowerTransport to Tower.bet's REST API (dice and limbo;
     // balances over HTTPS, cf_clearance in Direct mode), a WinnaTransport to Winna.com's
-    // originals API (dice only; balances over HTTPS, cf_clearance in Direct mode).
+    // originals API (dice and limbo; balances over HTTPS, cf_clearance in Direct mode).
     void setTransport(IStakeTransport *transport);
     IStakeTransport *transport() const { return m_transport; }
     bool isShuffle() const;
@@ -152,6 +152,7 @@ private:
     void placeWinnaDice(const DiceBetRequest &request);
     // `overWord`: index into the words tried for "over" (the site's word was not captured yet).
     void sendWinnaDice(double amount, double target, bool over, int overWord);
+    void placeWinnaLimbo(const LimboBetRequest &request);
     void rotatePasinoSeed(const QString &clientSeed);
     void placeDuelDice(const DiceBetRequest &request);
     void rotateDuelSeed(const QString &clientSeed);
