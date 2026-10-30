@@ -180,6 +180,10 @@ void BotEngine::onLiveFinished(const LiveBetResult &r)
     }
 
     m_retryStreak = 0;
+    // The casino reported the balance after this bet (Tower "newBalance", Pasino "balance"):
+    // start from the figure that, with this bet's profit added, lands exactly on it.
+    if (r.balanceAfter >= 0.0 && liveMode())
+        m_stats.balance = r.balanceAfter - (r.payout - r.amount);
     const BetRecord rec = recordBet(cfg, r.amount, r.roll, r.win, r.multiplier, r.payout,
                                     r.nonce, r.betId, betCasino);
     flushPauseLog(); // a pause that came while this bet was in flight: now the numbers are final

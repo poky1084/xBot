@@ -8,6 +8,7 @@
 #include "ui/WolfbetLoginDialog.h"
 #include "ui/ParadiceLoginDialog.h"
 #include "ui/PasinoLoginDialog.h"
+#include "ui/TowerLoginDialog.h"
 #include "bot/CasinoCurrencies.h"
 #include "bot/StakeTransport.h" // ExtensionTransport::bareHost / stakeHosts
 
@@ -245,6 +246,7 @@ OptionsDialog::OptionsDialog(QWidget *parent)
     m_casinoCombo->addItem(tr("Duel.com"), int(LiveSettings::Casino::Duel));
     m_casinoCombo->addItem(tr("Paradice.in"), int(LiveSettings::Casino::Paradice));
     m_casinoCombo->addItem(tr("Pasino.com"), int(LiveSettings::Casino::Pasino));
+    m_casinoCombo->addItem(tr("Tower.bet"), int(LiveSettings::Casino::Tower));
     m_casinoCombo->setToolTip(tr("Casino to bet on (same as the Casino menu)"));
     liveForm->addRow(tr("Casino:"), m_casinoCombo);
 
@@ -318,6 +320,32 @@ OptionsDialog::OptionsDialog(QWidget *parent)
     liveForm->addRow(QString(), m_pasinoLoginBtn);
     connect(m_pasinoLoginBtn, &QPushButton::clicked, this, &OptionsDialog::onPasinoLogin);
 
+    // Tower only: cf_clearance and the User-Agent it belongs to (the Token is the "__tt" cookie).
+    m_towerClearanceEdit = new QLineEdit;
+    m_towerClearanceEdit->setEchoMode(QLineEdit::Password);
+    m_towerClearanceEdit->setPlaceholderText(tr("cf_clearance cookie value"));
+    m_towerClearanceEdit->setToolTip(
+        tr("Cloudflare cookie of tower.bet (httpOnly: DevTools → Application → Cookies). Only "
+           "works with the User-Agent of the browser that got it. Not needed with the browser "
+           "extension."));
+    liveForm->addRow(tr("cf_clearance:"), m_towerClearanceEdit);
+
+    m_towerUserAgentEdit = new QLineEdit;
+    m_towerUserAgentEdit->setPlaceholderText(tr("User-Agent of the browser that got cf_clearance"));
+    m_towerUserAgentEdit->setToolTip(
+        tr("navigator.userAgent of the browser the cf_clearance cookie comes from (empty = a "
+           "default Chrome User-Agent)."));
+    liveForm->addRow(tr("User-Agent:"), m_towerUserAgentEdit);
+
+    // Tower only: opens the site, waits for the login, then fills Token / cf_clearance / User-Agent.
+    m_towerLoginBtn = new QPushButton(tr("Open Tower && Log in - to autofill token"));
+    m_towerLoginBtn->setToolTip(
+        tr("Opens tower.bet in a browser window. After you log in, the Token (\"__tt\" cookie), "
+           "cf_clearance and the User-Agent are filled in automatically."));
+    m_towerLoginBtn->setEnabled(TowerLoginDialog::isAvailable());
+    liveForm->addRow(QString(), m_towerLoginBtn);
+    connect(m_towerLoginBtn, &QPushButton::clicked, this, &OptionsDialog::onTowerLogin);
+
     // Duel only: UUID and cf_clearance (the Token is the "duel" cookie).
     m_duelUuidEdit = new QLineEdit;
     m_duelUuidEdit->setEchoMode(QLineEdit::Password);
@@ -343,7 +371,7 @@ OptionsDialog::OptionsDialog(QWidget *parent)
     m_clearanceEdit->setPlaceholderText(tr("cf_clearance cookie value"));
     // Show / hide eye on every input with hidden text.
     for (QLineEdit *edit : {m_apiKeyEdit, m_correlationEdit, m_browserIdEdit, m_duelUuidEdit,
-                            m_duelClearanceEdit, m_clearanceEdit})
+                            m_duelClearanceEdit, m_clearanceEdit, m_towerClearanceEdit})
         addRevealButton(edit);
     liveForm->addRow(tr("cf_clearance:"), m_clearanceEdit); // Stake only (Duel has its own)
 
@@ -425,7 +453,8 @@ OptionsDialog::OptionsDialog(QWidget *parent)
 
     // A login result belongs to the inputs it was made with: editing them clears it.
     for (QLineEdit *edit : {m_siteEdit, m_apiKeyEdit, m_clearanceEdit, m_correlationEdit,
-                            m_browserIdEdit, m_duelUuidEdit, m_duelClearanceEdit}) {
+                            m_browserIdEdit, m_duelUuidEdit, m_duelClearanceEdit,
+                            m_towerClearanceEdit, m_towerUserAgentEdit}) {
         if (!edit)
             continue;
         connect(edit, &QLineEdit::textEdited, m_loginStatus, &QLabel::clear);
@@ -436,7 +465,7 @@ OptionsDialog::OptionsDialog(QWidget *parent)
     connect(m_siteEdit, &QLineEdit::textEdited, this, &OptionsDialog::siteEdited);
     // Wolfbet's / Paradice's / Pasino's currency list needs the token: fetch it once one is entered.
     connect(m_apiKeyEdit, &QLineEdit::editingFinished, this, [this] {
-        if (m_wolfbet || m_paradice || m_pasino)
+        if (m_wolfbet || m_paradice || m_pasino || m_tower)
             updateCurrencyList();
     });
 
@@ -608,11 +637,13 @@ void OptionsDialog::applyCasinoUi()
     const bool duel = m_duel;
     const bool paradice = m_paradice;
     const bool pasino = m_pasino;
+    const bool tower = m_tower;
     const bool tokenOnly = goated || wolfbet || paradice || pasino; // the token is the only input
-    const bool noSite = tokenOnly;                   // no "Site / mirror" input
+    const bool noSite = tokenOnly || tower;          // no "Site / mirror" input
     const bool direct = shuffle || noSite || duel; // all but Stake use "Direct mode"
 
-    m_liveBox->setTitle(pasino ? tr("Live betting — Pasino")
+    m_liveBox->setTitle(tower ? tr("Live betting — Tower")
+                        : pasino ? tr("Live betting — Pasino")
                         : paradice ? tr("Live betting — Paradice")
                         : duel ? tr("Live betting — Duel")
                         : wolfbet ? tr("Live betting — Wolfbet")
@@ -632,7 +663,8 @@ void OptionsDialog::applyCasinoUi()
     // "API key" is the "Token" on Shuffle, Goated and Wolfbet.
     if (auto *label = qobject_cast<QLabel *>(m_liveForm->labelForField(m_apiKeyEdit)))
         label->setText(direct ? tr("Token:") : tr("API key:"));
-    m_apiKeyEdit->setPlaceholderText(pasino ? tr("localStorage \"token\" (64 hex characters)")
+    m_apiKeyEdit->setPlaceholderText(tower ? tr("\"__tt\" cookie value (Bearer token)")
+                                     : pasino ? tr("localStorage \"token\" (64 hex characters)")
                                      : paradice ? tr("localStorage \"token\" (JWT)")
                                      : duel ? tr("\"duel\" cookie value")
                                      : wolfbet ? tr("\"token\" cookie (value / JWT)")
@@ -652,6 +684,9 @@ void OptionsDialog::applyCasinoUi()
     setFormRowVisible(m_wolfbetLoginBtn, wolfbet);
     setFormRowVisible(m_paradiceLoginBtn, paradice);
     setFormRowVisible(m_pasinoLoginBtn, pasino);
+    setFormRowVisible(m_towerClearanceEdit, tower);
+    setFormRowVisible(m_towerUserAgentEdit, tower);
+    setFormRowVisible(m_towerLoginBtn, tower);
     setFormRowVisible(m_duelUuidEdit, duel);
     setFormRowVisible(m_duelClearanceEdit, duel);
     setFormRowVisible(m_duelLoginBtn, duel);
@@ -666,7 +701,7 @@ void OptionsDialog::updateAuthFields()
     m_userAgentEdit->setEnabled(!ext);
     m_extStatus->setEnabled(ext);
     if (m_grabCookieBtn)
-        m_grabCookieBtn->setEnabled(!ext && !m_shuffle && !m_goated && !m_wolfbet && !m_duel && !m_paradice && !m_pasino
+        m_grabCookieBtn->setEnabled(!ext && !m_shuffle && !m_goated && !m_wolfbet && !m_duel && !m_paradice && !m_pasino && !m_tower
                                     && CookieGrabberDialog::isAvailable());
     updateExtensionStatusText();
 }
@@ -676,7 +711,8 @@ LiveSettings OptionsDialog::liveSettings() const
     // Start from what we were given so the other casino's values are kept.
     LiveSettings s = m_base;
     s.enabled = m_liveEnable->isChecked();
-    s.casino = m_pasino ? LiveSettings::Casino::Pasino
+    s.casino = m_tower ? LiveSettings::Casino::Tower
+               : m_pasino ? LiveSettings::Casino::Pasino
                : m_paradice ? LiveSettings::Casino::Paradice
                : m_duel ? LiveSettings::Casino::Duel
                : m_wolfbet ? LiveSettings::Casino::Wolfbet
@@ -687,6 +723,10 @@ LiveSettings OptionsDialog::liveSettings() const
         s.duelToken = m_apiKeyEdit->text().trimmed();
         s.duelUuid = m_duelUuidEdit->text().trimmed();
         s.duelClearance = m_duelClearanceEdit->text().trimmed();
+    } else if (m_tower) {
+        s.towerToken = m_apiKeyEdit->text().trimmed();
+        s.towerClearance = m_towerClearanceEdit->text().trimmed();
+        s.towerUserAgent = m_towerUserAgentEdit->text().trimmed();
     } else if (m_pasino) {
         s.pasinoToken = m_apiKeyEdit->text().trimmed();
     } else if (m_paradice) {
@@ -723,6 +763,7 @@ void OptionsDialog::setLiveSettings(const LiveSettings &s)
     m_duel = s.isDuel();
     m_paradice = s.isParadice();
     m_pasino = s.isPasino();
+    m_tower = s.isTower();
     {
         const QSignalBlocker blocker(m_casinoCombo);
         m_casinoCombo->setCurrentIndex(qMax(0, m_casinoCombo->findData(int(s.casino))));
@@ -737,6 +778,11 @@ void OptionsDialog::setLiveSettings(const LiveSettings &s)
         m_apiKeyEdit->setText(s.duelToken);
         m_duelUuidEdit->setText(s.duelUuid);
         m_duelClearanceEdit->setText(s.duelClearance);
+    } else if (m_tower) {
+        m_authCombo->setCurrentIndex(s.usesExtension(s.casino) ? 1 : 0); // Direct mode / extension
+        m_apiKeyEdit->setText(s.towerToken);
+        m_towerClearanceEdit->setText(s.towerClearance);
+        m_towerUserAgentEdit->setText(s.towerUserAgent);
     } else if (m_pasino) {
         m_authCombo->setCurrentIndex(s.usesExtension(s.casino) ? 1 : 0); // Direct mode / extension
         m_apiKeyEdit->setText(s.pasinoToken);
@@ -831,8 +877,9 @@ void OptionsDialog::setLiveCurrencies(const QStringList &codes, const QString &s
         std::sort(all.begin(), all.end());
         CasinoCurrencies::store(casino, all);
     }
-    // Duel: the account's currencies (user.balances) are merged into the wallet list.
-    if (casino == LiveSettings::Casino::Duel && !codes.isEmpty()) {
+    // Duel / Tower: the account's currencies are merged into the currency list.
+    if ((casino == LiveSettings::Casino::Duel || casino == LiveSettings::Casino::Tower)
+        && !codes.isEmpty()) {
         QStringList all = CasinoCurrencies::cached(casino);
         for (const QString &c : codes) {
             const QString code = c.trimmed().toLower();
@@ -892,13 +939,16 @@ void OptionsDialog::updateCurrencyList()
     // Wolfbet's list needs the token: it is fetched once one is filled in.
     if (CasinoCurrencies::hasSource(casino) && !m_currencyListFetched[int(casino)]) {
         const QString token = m_apiKeyEdit ? m_apiKeyEdit->text().trimmed() : QString();
+        const bool tower = casino == LiveSettings::Casino::Tower;
         m_currencyListFetched[int(casino)] = CasinoCurrencies::fetch(
             casino, this,
             [this, casino](const QStringList &) {
                 if (int(casino) == m_casinoCombo->currentData().toInt())
                     updateCurrencyList();
             },
-            token);
+            token,
+            tower ? m_towerClearanceEdit->text().trimmed() : QString(),
+            tower ? m_towerUserAgentEdit->text().trimmed() : QString());
     }
 }
 
@@ -928,6 +978,8 @@ QString OptionsDialog::missingLoginData() const
     // "Browser extension": every token / id / API key is read from the casino's tab.
     if (m_authCombo && m_authCombo->currentIndex() == 1)
         return QString();
+    if (m_tower) // cf_clearance is optional (only needed when Cloudflare challenges)
+        return empty(m_apiKeyEdit) ? tr("the token (\"__tt\" cookie) is empty.") : QString();
     if (m_goated || m_wolfbet || m_paradice || m_pasino)
         return empty(m_apiKeyEdit) ? tr("the token is empty.") : QString();
     if (m_duel) {
@@ -974,6 +1026,8 @@ QString OptionsDialog::autoFetchKey() const
         parts << s.paradiceToken;
     else if (s.isPasino())
         parts << s.pasinoToken;
+    else if (s.isTower())
+        parts << s.towerToken << s.towerClearance << s.towerUserAgent;
     else if (s.isGoated())
         parts << s.goatedToken;
     else if (s.isShuffle())
@@ -1036,6 +1090,11 @@ void OptionsDialog::setGrabbedCredentials(const LiveSettings &grabbed)
         break;
     case LiveSettings::Casino::Pasino:
         m_apiKeyEdit->setText(grabbed.pasinoToken);
+        break;
+    case LiveSettings::Casino::Tower:
+        m_apiKeyEdit->setText(grabbed.towerToken);
+        if (!grabbed.towerClearance.isEmpty())
+            m_towerClearanceEdit->setText(grabbed.towerClearance);
         break;
     case LiveSettings::Casino::Duel:
         if (!grabbed.duelToken.isEmpty())
@@ -1186,6 +1245,28 @@ void OptionsDialog::onPasinoLogin()
     updateCurrencyList(); // the currency list needs the token
     m_autoFetchedKey[int(LiveSettings::Casino::Pasino)].clear();
     maybeAutoFetch();     // loads the account's balances / currencies
+}
+
+void OptionsDialog::onTowerLogin()
+{
+    const CursorRestorer restoreCursor; // WebView2 bug: the pointer may stay hidden after `dlg`
+    TowerLoginDialog dlg(this);
+    if (dlg.exec() != QDialog::Accepted)
+        return;
+
+    m_apiKeyEdit->setText(dlg.token());
+    m_towerClearanceEdit->setText(dlg.clearance());
+    // cf_clearance only works with the User-Agent of the browser that got it.
+    if (!dlg.userAgent().isEmpty())
+        m_towerUserAgentEdit->setText(dlg.userAgent());
+    setLoginStatus(dlg.clearance().isEmpty()
+                       ? tr("Tower token captured (no cf_clearance cookie was set).")
+                       : tr("Tower token and cf_clearance captured."),
+                   true);
+    m_currencyListFetched[int(LiveSettings::Casino::Tower)] = false;
+    updateCurrencyList(); // the currency list needs the token (and cf_clearance)
+    m_autoFetchedKey[int(LiveSettings::Casino::Tower)].clear();
+    maybeAutoFetch();     // loads the account's balances
 }
 
 void OptionsDialog::onDuelLogin()

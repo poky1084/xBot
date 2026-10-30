@@ -7,7 +7,7 @@ const targetSites = [
   "stake.mba", "stake.ac", "stake.jp", "stake.bz", "stake.krd", "stake.ceo",
   "staketr.com", "primedice.com", "primedice.games", "stake1021.com", "stake1067.com", "stake3075.com",
   // Shuffle, Goated, Wolfbet, Duel
-  "shuffle.com", "shuffle.game", "goated.com", "wolfbet.com", "duel.com", "duel.net", "paradice.in", "pasino.com"
+  "shuffle.com", "shuffle.game", "goated.com", "wolfbet.com", "duel.com", "duel.net", "paradice.in", "pasino.com", "tower.bet"
 ];
 
 function inject(tabId) {
@@ -79,6 +79,9 @@ async function findCookie(url, name) {
   // 4. any partition (Chrome 119+: an empty partitionKey returns all of them)
   if (!found)
     found = (await getAll({ name: name, partitionKey: {} })).find((c) => cookieMatchesHost(c, bare));
+  // 5. by domain (host-only and ".domain" cookies of this site, any path)
+  if (!found)
+    found = (await getAll({ domain: bare, name: name })).find((c) => cookieMatchesHost(c, bare));
   return found ? found.value : null;
 }
 

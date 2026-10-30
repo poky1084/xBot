@@ -5,7 +5,7 @@
 #include <QtGlobal>
 
 // ---- Casino selection in code ---------------------------------------------------
-// Default casino ("stake", "shuffle", "goated", "wolfbet", "duel", "paradice" or "pasino") used on the first launch only. After that the
+// Default casino ("stake", "shuffle", "goated", "wolfbet", "duel", "paradice", "pasino" or "tower") used on the first launch only. After that the
 // casino last selected (Casino menu / script) is saved on exit and restored at startup.
 namespace AppConfig {
 inline const QString casino = QStringLiteral("stake");
@@ -14,10 +14,10 @@ inline const QString casino = QStringLiteral("stake");
 // Connection settings for live (real-money) betting.
 struct LiveSettings
 {
-    enum class Casino { Stake, Shuffle, Goated, Wolfbet, Duel, Paradice, Pasino };
-    static constexpr int kCasinoCount = 7; // size of per-casino arrays indexed by int(Casino)
+    enum class Casino { Stake, Shuffle, Goated, Wolfbet, Duel, Paradice, Pasino, Tower };
+    static constexpr int kCasinoCount = 8; // size of per-casino arrays indexed by int(Casino)
 
-    // "shuffle" / "goated" / "wolfbet" / "duel" / "paradice" / "pasino" (any case) -> that casino, anything else -> Stake.
+    // "shuffle" / "goated" / "wolfbet" / "duel" / "paradice" / "pasino" / "tower" (any case) -> that casino, anything else -> Stake.
     static Casino fromName(const QString &name)
     {
         if (name.compare(QLatin1String("shuffle"), Qt::CaseInsensitive) == 0)
@@ -32,6 +32,9 @@ struct LiveSettings
             return Casino::Paradice;
         if (name.compare(QLatin1String("pasino"), Qt::CaseInsensitive) == 0)
             return Casino::Pasino;
+        if (name.compare(QLatin1String("tower"), Qt::CaseInsensitive) == 0
+            || name.compare(QLatin1String("tower.bet"), Qt::CaseInsensitive) == 0)
+            return Casino::Tower;
         return Casino::Stake;
     }
 
@@ -45,6 +48,7 @@ struct LiveSettings
         case Casino::Duel:    return QStringLiteral("duel");
         case Casino::Paradice: return QStringLiteral("paradice");
         case Casino::Pasino:  return QStringLiteral("pasino");
+        case Casino::Tower:   return QStringLiteral("tower");
         default:              return QStringLiteral("stake");
         }
     }
@@ -77,6 +81,11 @@ struct LiveSettings
     // ---- Pasino (Direct mode: plain HTTPS). Only a token is needed.
     QString pasinoToken;           // localStorage "token" (sent as "token" in every request body)
 
+    // ---- Tower.bet (Direct mode: plain HTTPS behind Cloudflare).
+    QString towerToken;            // "__tt" cookie (sent as "Authorization: Bearer <token>")
+    QString towerClearance;        // "cf_clearance" cookie (Direct mode only)
+    QString towerUserAgent;        // User-Agent of the browser that got cf_clearance
+
     // ---- Duel (Direct mode only: plain HTTPS). Bets also need a security token, which the
     // transport fetches by itself (and again every ~10 minutes).
     QString duelSite = QStringLiteral("duel.com"); // "Site / mirror" in Options
@@ -93,6 +102,7 @@ struct LiveSettings
     bool duelExtension = false;    // replaces the hidden WebView2 browser
     bool paradiceExtension = false;
     bool pasinoExtension = false;
+    bool towerExtension = false;
 
     QString currency;              // lowercase API currency code ("btc", "usdt", ...) of the active casino
     quint16 extensionPort = 4444;  // local WebSocket port the extension connects to
@@ -103,6 +113,7 @@ struct LiveSettings
     bool isDuel() const { return casino == Casino::Duel; }
     bool isParadice() const { return casino == Casino::Paradice; }
     bool isPasino() const { return casino == Casino::Pasino; }
+    bool isTower() const { return casino == Casino::Tower; }
     // Casinos reached with plain HTTPS from the app ("Direct mode"), i.e. everything but Stake.
     bool isDirect() const { return casino != Casino::Stake; }
     QString casinoName() const { return nameOf(casino); }
@@ -116,6 +127,7 @@ struct LiveSettings
         case Casino::Duel:    return duelExtension;
         case Casino::Paradice: return paradiceExtension;
         case Casino::Pasino:  return pasinoExtension;
+        case Casino::Tower:   return towerExtension;
         default:              return extensionMode;
         }
     }
@@ -128,6 +140,7 @@ struct LiveSettings
         case Casino::Duel:    duelExtension = on; break;
         case Casino::Paradice: paradiceExtension = on; break;
         case Casino::Pasino:  pasinoExtension = on; break;
+        case Casino::Tower:   towerExtension = on; break;
         default:              extensionMode = on; break;
         }
     }
@@ -146,6 +159,12 @@ struct LiveSettings
         case Casino::Wolfbet: wolfbetToken = from.wolfbetToken; break;
         case Casino::Paradice: paradiceToken = from.paradiceToken; break;
         case Casino::Pasino:  pasinoToken = from.pasinoToken; break;
+        case Casino::Tower:
+            towerToken = from.towerToken;
+            towerClearance = from.towerClearance;
+            if (!from.towerUserAgent.isEmpty())
+                towerUserAgent = from.towerUserAgent;
+            break;
         case Casino::Duel:
             duelToken = from.duelToken;
             duelUuid = from.duelUuid;
@@ -167,6 +186,9 @@ struct LiveSettings
         case Casino::Wolfbet: return wolfbetToken == o.wolfbetToken;
         case Casino::Paradice: return paradiceToken == o.paradiceToken;
         case Casino::Pasino:  return pasinoToken == o.pasinoToken;
+        case Casino::Tower:
+            return towerToken == o.towerToken && towerClearance == o.towerClearance
+                   && towerUserAgent == o.towerUserAgent;
         case Casino::Duel:
             return duelToken == o.duelToken && duelUuid == o.duelUuid
                    && duelClearance == o.duelClearance;
@@ -176,7 +198,7 @@ struct LiveSettings
     bool anyUsesExtension() const
     {
         return extensionMode || shuffleExtension || goatedExtension || wolfbetExtension || duelExtension
-               || paradiceExtension || pasinoExtension;
+               || paradiceExtension || pasinoExtension || towerExtension;
     }
     // Sites of the browser tab the extension uses for casino `c` (compared without "www.").
     QStringList extensionHosts(Casino c) const
@@ -188,6 +210,7 @@ struct LiveSettings
         case Casino::Duel:    return {duelSite};
         case Casino::Paradice: return {QStringLiteral("paradice.in")};
         case Casino::Pasino:  return {QStringLiteral("pasino.com")};
+        case Casino::Tower:   return {QStringLiteral("tower.bet")};
         default:              return {hostOf(site, QStringLiteral("stake.com"))};
         }
     }
@@ -227,6 +250,8 @@ struct LiveSettings
             return QStringLiteral("paradice.in");
         if (isPasino())
             return QStringLiteral("pasino.com");
+        if (isTower())
+            return QStringLiteral("tower.bet");
         return isShuffle() ? shuffleSite : site;
     }
 };

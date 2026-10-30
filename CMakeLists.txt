@@ -49,6 +49,8 @@ set(SOURCES
 	src/bot/ParadiceTransport.h
 	src/bot/PasinoTransport.cpp
 	src/bot/PasinoTransport.h
+	src/bot/TowerTransport.cpp
+	src/bot/TowerTransport.h
 	src/bot/CasinoCurrencies.h
     src/ui/BetHistoryModel.cpp
     src/ui/BetHistoryModel.h
@@ -88,6 +90,8 @@ set(SOURCES
 	src/ui/ParadiceLoginDialog.h
 	src/ui/PasinoLoginDialog.cpp
 	src/ui/PasinoLoginDialog.h
+	src/ui/TowerLoginDialog.cpp
+	src/ui/TowerLoginDialog.h
 	src/ui/StakeLoginDialog.cpp
 	src/ui/StakeLoginDialog.h
 	src/ui/DuelBrowser.cpp

@@ -90,7 +90,7 @@ private:
     void onCasinoChanged(int index);
     // Adapts the "Live betting" box to the casino chosen in the Casino selector / menu
     // (Shuffle: Token, Direct mode only, USER_ID, BROWSER_ID;
-    // Goated, Wolfbet, Paradice, Pasino: just the Token; Duel: Token, UUID, cf_clearance;
+    // Goated, Wolfbet, Paradice, Pasino: just the Token; Tower: Token, cf_clearance, User-Agent; Duel: Token, UUID, cf_clearance;
     // Stake: API key, cf_clearance and the "Open Stake & Login" button).
     void applyCasinoUi();
     // The bet currency was typed / changed: fetch the balance for it (0 if the account
@@ -114,6 +114,7 @@ private:
     void onWolfbetLogin();
     void onParadiceLogin();
     void onPasinoLogin();
+    void onTowerLogin();
     void onDuelLogin();
     void onStakeLogin();
     QComboBox *m_themeCombo = nullptr;
@@ -130,6 +131,7 @@ private:
     bool m_wolfbet = false;
     bool m_paradice = false;
     bool m_pasino = false;
+    bool m_tower = false;
     bool m_duel = false;
     QGroupBox *m_liveBox = nullptr;
     QFormLayout *m_liveForm = nullptr;
@@ -137,6 +139,8 @@ private:
     QLineEdit *m_browserIdEdit = nullptr;
     QLineEdit *m_duelUuidEdit = nullptr;       // Duel only
     QLineEdit *m_duelClearanceEdit = nullptr;  // Duel only
+    QLineEdit *m_towerClearanceEdit = nullptr; // Tower only
+    QLineEdit *m_towerUserAgentEdit = nullptr; // Tower only
 
     QCheckBox *m_liveEnable = nullptr;
     QComboBox *m_casinoCombo = nullptr;
@@ -160,6 +164,7 @@ private:
     QPushButton *m_wolfbetLoginBtn = nullptr;
     QPushButton *m_paradiceLoginBtn = nullptr;
     QPushButton *m_pasinoLoginBtn = nullptr;
+    QPushButton *m_towerLoginBtn = nullptr;
     QPushButton *m_duelLoginBtn = nullptr;
     QPushButton *m_stakeLoginBtn = nullptr;
     QLabel *m_loginStatus = nullptr;

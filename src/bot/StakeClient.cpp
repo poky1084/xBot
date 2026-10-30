@@ -6,6 +6,7 @@
 #include "bot/GoatedTransport.h"
 #include "bot/ParadiceTransport.h"
 #include "bot/PasinoTransport.h"
+#include "bot/TowerTransport.h"
 #include "bot/ShuffleTransport.h"
 #include "bot/WolfbetTransport.h"
 
@@ -105,6 +106,23 @@ QJsonObject findBetObject(const QJsonObject &json)
     return {};
 }
 
+// The app's multiplier is 99 / win chance (1 % house edge). A casino whose dice pays
+// `rtp` / chance (Duel 99.9, Tower 98, Pasino 95) gets the chance that pays the same multiplier:
+// appChance * rtp / 99, rounded to the casino's target precision (`decimals`).
+// Example: 2x = 49.50 % in the app -> Tower 49.000 %, Pasino 47.50 %, Duel 49.95 %.
+double chanceForRtp(double appChance, double rtp, int decimals)
+{
+    const double scale = std::pow(10.0, decimals);
+    return std::round(appChance * rtp / 99.0 * scale) / scale;
+}
+
+// The app's chance for a dice request (target rounded to 2 decimals like the panels show it).
+double appChanceOf(const DiceBetRequest &request)
+{
+    const double target = std::round(request.target * 100.0) / 100.0;
+    return request.over ? 100.0 - target : target;
+}
+
 LiveBetResult failed(const QString &error, const QString &type = {},
                      bool retryable = false, bool unknown = false)
 {
@@ -168,6 +186,13 @@ void StakeClient::setTransport(IStakeTransport *transport)
         m_shuffleConnections << connect(pasino, &PasinoTransport::balancesFailed, this,
                                         &StakeClient::balancesFailed);
     }
+    if (auto *tower = qobject_cast<TowerTransport *>(transport)) {
+        // Tower: balances are read over HTTPS; same signals as the other casinos.
+        m_shuffleConnections << connect(tower, &TowerTransport::balancesUpdated, this,
+                                        &StakeClient::balancesReady);
+        m_shuffleConnections << connect(tower, &TowerTransport::balancesFailed, this,
+                                        &StakeClient::balancesFailed);
+    }
     if (auto *duel = qobject_cast<DuelTransport *>(transport)) {
         // Duel: balances are read over HTTPS; same signals as the other casinos.
         m_shuffleConnections << connect(duel, &DuelTransport::balancesUpdated, this,
@@ -205,6 +230,11 @@ bool StakeClient::isParadice() const
 bool StakeClient::isPasino() const
 {
     return qobject_cast<PasinoTransport *>(m_transport) != nullptr;
+}
+
+bool StakeClient::isTower() const
+{
+    return qobject_cast<TowerTransport *>(m_transport) != nullptr;
 }
 
 void StakeClient::setCurrency(const QString &currency)
@@ -260,6 +290,12 @@ void StakeClient::rotateSeedPair(const QString &clientSeed)
     }
     if (isPasino()) {
         rotatePasinoSeed(clientSeed); // sent with every bet: nothing to call on the server
+        return;
+    }
+    if (isTower()) {
+        QTimer::singleShot(0, this, [this] {
+            emit seedRotateFailed(tr("Tower: seed rotation is not supported yet (change the seed on the site)."));
+        });
         return;
     }
 
@@ -444,6 +480,10 @@ void StakeClient::vaultDeposit(double amount)
         QTimer::singleShot(0, this, [this] { emit vaultFailed(tr("Pasino: vault deposits are not supported.")); });
         return;
     }
+    if (isTower()) {
+        QTimer::singleShot(0, this, [this] { emit vaultFailed(tr("Tower: vault deposits are not supported.")); });
+        return;
+    }
     if (!isShuffle()) {
         stakeVaultDeposit(amount);
         return;
@@ -610,6 +650,11 @@ void StakeClient::fetchBalances()
         pasino->requestBalances();
         return;
     }
+    // Tower: GET /api/accounts; results arrive through the transport's signals.
+    if (auto *tower = qobject_cast<TowerTransport *>(m_transport)) {
+        tower->requestBalances();
+        return;
+    }
 
     postBalanceQuery(m_transport, false);
 }
@@ -683,7 +728,7 @@ void StakeClient::postBalanceQuery(IStakeTransport *via, bool background)
 void StakeClient::lookupBetIid(const QString &betId, std::function<void(const QString &)> done)
 {
     QString why;
-    if (betId.isEmpty() || !m_transport || isShuffle() || isGoated() || isWolfbet() || isDuel() || isParadice() || isPasino() || !m_transport->isReady(&why)) {
+    if (betId.isEmpty() || !m_transport || isShuffle() || isGoated() || isWolfbet() || isDuel() || isParadice() || isPasino() || isTower() || !m_transport->isReady(&why)) {
         QTimer::singleShot(0, this, [done] { done(QString()); });
         return;
     }
@@ -747,6 +792,10 @@ void StakeClient::placeDice(const DiceBetRequest &request)
         placePasinoDice(request);
         return;
     }
+    if (isTower()) {
+        placeTowerDice(request);
+        return;
+    }
 
     const double target = std::round(request.target * 100.0) / 100.0;
 
@@ -798,6 +847,10 @@ void StakeClient::placeLimbo(const LimboBetRequest &request)
     }
     if (isPasino()) {
         placePasinoLimbo(request);
+        return;
+    }
+    if (isTower()) {
+        placeTowerLimbo(request);
         return;
     }
 
@@ -1555,17 +1608,19 @@ void StakeClient::rotatePasinoSeed(const QString &clientSeed)
 //    "client_seed":"<64 chars>"}
 // type: 1 = low (roll under), 2 = high (roll over). The game is chosen by the payout, with a
 // 5 % house edge: win chance = 95 / payout (2 decimals), payout = 95 / chance cut to 5 decimals
-// (50.29 % -> 1.88904). The app's target fixes the win chance (under 50.29 / over 49.71).
+// (50.29 % -> 1.88904). The app's chance (1 % edge) is converted first, see chanceForRtp().
 // Answer: {"message":"","win":0|1,"payout":0,"roll_number":1790 (roll in hundredths: 17.90),
 //   "coin":"GEM","balance":"5198.81240700","profit":"-0.10000000","bet_id":"34126921394",
 //   "success":true}; errors: {"success":false,"message":"…"}.
 void StakeClient::placePasinoDice(const DiceBetRequest &request)
 {
-    const double target = std::round(request.target * 100.0) / 100.0;
+    // Pasino's dice has a 5 % house edge (payout = 95 / chance): the chance is converted so the
+    // multiplier set in the app is paid (2x: 49.50 % in the app -> 47.50 % on Pasino).
     const bool over = request.over;
-    const double chance = std::round((over ? 100.0 - target : target) * 100.0) / 100.0;
+    const double chance = chanceForRtp(appChanceOf(request), 95.0, 2);
+    const double target = over ? 100.0 - chance : chance;
     if (!(chance > 0.0) || chance >= 100.0) {
-        const LiveBetResult r = failed(tr("Pasino: invalid target %1.").arg(target));
+        const LiveBetResult r = failed(tr("Pasino: invalid target %1.").arg(request.target, 0, 'f', 2));
         QTimer::singleShot(0, this, [this, r] { emit diceFinished(r); });
         return;
     }
@@ -1635,6 +1690,8 @@ void StakeClient::placePasinoDice(const DiceBetRequest &request)
         const QJsonValue id = json.value(QStringLiteral("bet_id"));
         r.betId = id.isString() ? id.toString() : QString::number(qint64(numberOf(id)));
         r.nonce = -1; // not part of the answer
+        if (json.contains(QStringLiteral("balance"))) // the account balance after this bet
+            r.balanceAfter = numberOf(json.value(QStringLiteral("balance")));
         emit diceFinished(r);
     });
 }
@@ -1715,6 +1772,201 @@ void StakeClient::placePasinoLimbo(const LimboBetRequest &request)
         const QJsonValue id = json.value(QStringLiteral("bet_id"));
         r.betId = id.isString() ? id.toString() : QString::number(qint64(numberOf(id)));
         r.nonce = -1; // not part of the answer
+        if (json.contains(QStringLiteral("balance"))) // the account balance after this bet
+            r.balanceAfter = numberOf(json.value(QStringLiteral("balance")));
+        emit diceFinished(r);
+    });
+}
+
+// Tower.bet dice: POST https://tower.bet/api/dice/bet  (Bearer token; cf_clearance in Direct mode)
+//   {"symbol":"USDC","isHigh":true,"number":50000,"amount":"0.01000404"}
+// The roll runs 0 - 99999 (shown as 0.000 - 99.999), so the target is sent in thousandths:
+// "over 51.000" -> isHigh true, number 51000 (choice ">51000"). The chance is converted from the
+// app's 1 % edge to Tower's 2 % one first (see below), so the multiplier set in the app is paid.
+// Answer (HTTP 201): {"hash" (bet id),"game":"dice","number":38492 (the roll),"isWin":false,
+//   "choice":">50000","symbol","betAmount","payout" (multiplier, "0" on a loss),"winAmount",
+//   "profit":"-0.01000404","nonce":1,"userSeed":{"serverSeedHash","clientSeed","nonce"},
+//   "account":{"hash","newBalance":"0.47999192"}}; errors: Laravel {"message",...} with HTTP 4xx.
+void StakeClient::placeTowerDice(const DiceBetRequest &request)
+{
+    // Tower's dice has a 2 % house edge (payout = 98 / chance: 49.50 % pays 1.98x), the app's
+    // targets a 1 % one (multiplier = 99 / chance). Keep the multiplier the user set: the
+    // chance sent to Tower is scaled by 98 / 99, so 2x (49.50 % in the app) becomes 49.000 %,
+    // i.e. "over 51.000" / "under 49.000". The site takes the target in thousandths.
+    constexpr double kTowerRtp = 98.0;
+    const double appTarget = std::round(request.target * 100.0) / 100.0;
+    const bool over = request.over;
+    const double appChance = appChanceOf(request);
+    const double chance = chanceForRtp(appChance, kTowerRtp, 3);
+    const double target = over ? 100.0 - chance : chance;
+    const qint64 number = qint64(std::llround(target * 1000.0));
+    if (!(appChance > 0.0) || number <= 0 || number >= 100000) {
+        const LiveBetResult r = failed(tr("Tower: invalid target %1.").arg(appTarget));
+        QTimer::singleShot(0, this, [this, r] { emit diceFinished(r); });
+        return;
+    }
+
+    QJsonObject body;
+    body.insert(QStringLiteral("symbol"), TowerTransport::apiCurrency(m_currency));
+    body.insert(QStringLiteral("isHigh"), over);
+    body.insert(QStringLiteral("number"), number);
+    body.insert(QStringLiteral("amount"), QString::number(request.amount, 'f', 8));
+
+    const double requestedAmount = request.amount;
+    m_transport->post(QStringLiteral("dice/bet"), body,
+                      [this, requestedAmount, target, over](const TransportReply &reply) {
+        if (!reply.ok) {
+            const bool isTimeout = (reply.status == 0);
+            const bool unknown = (reply.status >= 500 && reply.status != 503);
+            if (reply.status == 0)
+                emit sessionLost(reply.error);
+            emit diceFinished(failed(reply.error, {}, isTimeout, unknown));
+            return;
+        }
+
+        const QJsonObject &json = reply.json;
+        if (reply.status >= 400 || json.contains(QStringLiteral("errors"))) {
+            // Refused by the server (validation, balance, rate limit): the bet was not placed.
+            QString errText = firstErrorText(json, nullptr);
+            if (errText.isEmpty())
+                errText = json.value(QStringLiteral("message")).toString();
+            if (errText.isEmpty())
+                errText = tr("Tower bet rejected (HTTP %1).").arg(reply.status);
+            LiveBetResult r = failed(errText, {}, isRetryable({}, errText), false);
+            r.retryDelayMs = fastRetryDelayMs({}, errText);
+            emit diceFinished(r);
+            return;
+        }
+        if (!json.contains(QStringLiteral("number"))) {
+            const QString raw = QString::fromUtf8(QJsonDocument(json).toJson(QJsonDocument::Compact)).left(400);
+            emit diceFinished(failed(tr("Unexpected Tower bet response (no roll found): %1").arg(raw),
+                                     {}, false, true));
+            return;
+        }
+
+        LiveBetResult r;
+        r.ok = true;
+        r.amount = json.contains(QStringLiteral("betAmount"))
+                       ? numberOf(json.value(QStringLiteral("betAmount"))) : requestedAmount;
+        r.roll = numberOf(json.value(QStringLiteral("number"))) / 1000.0;
+        const QJsonValue win = json.value(QStringLiteral("isWin"));
+        if (win.isBool())
+            r.win = win.toBool();
+        else
+            r.win = over ? r.roll > target : r.roll < target;
+
+        if (r.win) {
+            // "profit" is the server's net figure; the stake comes back on top of it.
+            const double mult = numberOf(json.value(QStringLiteral("payout")));
+            if (json.contains(QStringLiteral("profit"))) {
+                r.payout = r.amount + numberOf(json.value(QStringLiteral("profit")));
+                r.multiplier = r.amount > 0.0 ? r.payout / r.amount : mult;
+            } else {
+                r.payout = numberOf(json.value(QStringLiteral("winAmount")));
+                r.multiplier = mult;
+            }
+            if (!(r.multiplier > 0.0))
+                r.multiplier = mult;
+        }
+
+        r.betId = json.value(QStringLiteral("hash")).toString();
+        r.nonce = json.contains(QStringLiteral("nonce"))
+                      ? qint64(numberOf(json.value(QStringLiteral("nonce")))) : -1;
+        // "account.newBalance": the account balance right after this bet.
+        const QJsonObject account = json.value(QStringLiteral("account")).toObject();
+        if (account.contains(QStringLiteral("newBalance")))
+            r.balanceAfter = numberOf(account.value(QStringLiteral("newBalance")));
+        emit diceFinished(r);
+    });
+}
+
+// Tower.bet limbo: POST https://tower.bet/api/limbo/bet  (Bearer token; cf_clearance in Direct mode)
+//   {"symbol":"USDC","amount":"0.01000404","choice":"2"}   (choice = the target multiplier)
+// Answer (HTTP 201): {"hash" (bet id),"game":"limbo","number":539368,"result":"2.03" (the
+//   multiplier rolled),"isWin":true,"choice":"2","betAmount","payout":"2" (multiplier paid, "0" on
+//   a loss),"winAmount","profit","nonce":86,"userSeed":{…},"account":{"hash","newBalance"}}.
+// Limbo pays exactly the target multiplier, so no house-edge conversion is needed.
+void StakeClient::placeTowerLimbo(const LimboBetRequest &request)
+{
+    const double target = std::round(request.multiplierTarget * 100.0) / 100.0;
+    if (!(target > 1.0)) {
+        const LiveBetResult r = failed(tr("Tower: invalid limbo target %1.").arg(target));
+        QTimer::singleShot(0, this, [this, r] { emit diceFinished(r); });
+        return;
+    }
+    // Like the site: "2", "2.5", "1.01" (no trailing zeros).
+    QString choice = QString::number(target, 'f', 2);
+    while (choice.endsWith(QLatin1Char('0')))
+        choice.chop(1);
+    if (choice.endsWith(QLatin1Char('.')))
+        choice.chop(1);
+
+    QJsonObject body;
+    body.insert(QStringLiteral("symbol"), TowerTransport::apiCurrency(m_currency));
+    body.insert(QStringLiteral("amount"), QString::number(request.amount, 'f', 8));
+    body.insert(QStringLiteral("choice"), choice);
+
+    const double requestedAmount = request.amount;
+    m_transport->post(QStringLiteral("limbo/bet"), body,
+                      [this, requestedAmount, target](const TransportReply &reply) {
+        if (!reply.ok) {
+            const bool isTimeout = (reply.status == 0);
+            const bool unknown = (reply.status >= 500 && reply.status != 503);
+            if (reply.status == 0)
+                emit sessionLost(reply.error);
+            emit diceFinished(failed(reply.error, {}, isTimeout, unknown));
+            return;
+        }
+
+        const QJsonObject &json = reply.json;
+        if (reply.status >= 400 || json.contains(QStringLiteral("errors"))) {
+            // Refused by the server (validation, balance, rate limit): the bet was not placed.
+            QString errText = firstErrorText(json, nullptr);
+            if (errText.isEmpty())
+                errText = json.value(QStringLiteral("message")).toString();
+            if (errText.isEmpty())
+                errText = tr("Tower limbo bet rejected (HTTP %1).").arg(reply.status);
+            LiveBetResult r = failed(errText, {}, isRetryable({}, errText), false);
+            r.retryDelayMs = fastRetryDelayMs({}, errText);
+            emit diceFinished(r);
+            return;
+        }
+        if (!json.contains(QStringLiteral("result"))) {
+            const QString raw = QString::fromUtf8(QJsonDocument(json).toJson(QJsonDocument::Compact)).left(400);
+            emit diceFinished(failed(tr("Unexpected Tower limbo response (no result found): %1").arg(raw),
+                                     {}, false, true));
+            return;
+        }
+
+        LiveBetResult r;
+        r.ok = true;
+        r.amount = json.contains(QStringLiteral("betAmount"))
+                       ? numberOf(json.value(QStringLiteral("betAmount"))) : requestedAmount;
+        r.roll = numberOf(json.value(QStringLiteral("result"))); // the multiplier rolled
+        const QJsonValue win = json.value(QStringLiteral("isWin"));
+        r.win = win.isBool() ? win.toBool() : r.roll >= target;
+
+        if (r.win) {
+            // "profit" is the server's net figure; the stake comes back on top of it.
+            const double mult = numberOf(json.value(QStringLiteral("payout")));
+            if (json.contains(QStringLiteral("profit"))) {
+                r.payout = r.amount + numberOf(json.value(QStringLiteral("profit")));
+                r.multiplier = r.amount > 0.0 ? r.payout / r.amount : mult;
+            } else {
+                r.payout = numberOf(json.value(QStringLiteral("winAmount")));
+                r.multiplier = mult;
+            }
+            if (!(r.multiplier > 0.0))
+                r.multiplier = mult > 0.0 ? mult : target;
+        }
+
+        r.betId = json.value(QStringLiteral("hash")).toString();
+        r.nonce = json.contains(QStringLiteral("nonce"))
+                      ? qint64(numberOf(json.value(QStringLiteral("nonce")))) : -1;
+        // "account.newBalance": the account balance right after this bet.
+        const QJsonObject account = json.value(QStringLiteral("account")).toObject();
+        if (account.contains(QStringLiteral("newBalance")))
+            r.balanceAfter = numberOf(account.value(QStringLiteral("newBalance")));
         emit diceFinished(r);
     });
 }
@@ -1739,8 +1991,11 @@ void StakeClient::placeDuelDice(const DiceBetRequest &request)
         return;
     }
 
-    const qint64 target = qint64(std::llround(request.target * 100.0));
-    if (target <= 0 || target >= 10000) {
+    // Duel's dice has a 0.1 % house edge (payout = 99.9 / chance): the chance is converted so
+    // the multiplier set in the app is paid (2x: 49.50 % in the app -> 49.95 % on Duel).
+    const double chance = chanceForRtp(appChanceOf(request), 99.9, 2);
+    const qint64 target = qint64(std::llround((request.over ? 100.0 - chance : chance) * 100.0));
+    if (!(chance > 0.0) || target <= 0 || target >= 10000) {
         const LiveBetResult r = failed(tr("Duel: invalid target %1.").arg(request.target, 0, 'f', 2));
         QTimer::singleShot(0, this, [this, r] { emit diceFinished(r); });
         return;

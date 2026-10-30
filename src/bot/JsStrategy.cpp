@@ -359,7 +359,7 @@ bool JsStrategy::readOutputs(double &nextBet, BotConfig &runCfg)
         return false;
     }
 
-    // ---- casino (optional): "stake", "shuffle", "goated", "wolfbet", "duel", "paradice" or "pasino"
+    // ---- casino (optional): "stake", "shuffle", "goated", "wolfbet", "duel", "paradice", "pasino" or "tower"
     const QJSValue casino = readGlobal("casino");
     if (casino.isUndefined() || casino.isNull()) {
         // keep the current casino
@@ -367,14 +367,15 @@ bool JsStrategy::readOutputs(double &nextBet, BotConfig &runCfg)
         const QString k = casino.toString().trimmed().toLower();
         if (k == QLatin1String("stake") || k == QLatin1String("shuffle") || k == QLatin1String("goated")
             || k == QLatin1String("wolfbet") || k == QLatin1String("duel")
-            || k == QLatin1String("paradice") || k == QLatin1String("pasino")) {
+            || k == QLatin1String("paradice") || k == QLatin1String("pasino")
+            || k == QLatin1String("tower")) {
             runCfg.casino = k;
         } else if (!k.isEmpty()) {
-            m_error = QStringLiteral("casino must be \"stake\", \"shuffle\", \"goated\", \"wolfbet\", \"duel\", \"paradice\" or \"pasino\" (got \"%1\")").arg(k);
+            m_error = QStringLiteral("casino must be \"stake\", \"shuffle\", \"goated\", \"wolfbet\", \"duel\", \"paradice\", \"pasino\" or \"tower\" (got \"%1\")").arg(k);
             return false;
         }
     } else {
-        m_error = QStringLiteral("casino must be the string \"stake\", \"shuffle\", \"goated\", \"wolfbet\", \"duel\", \"paradice\" or \"pasino\"");
+        m_error = QStringLiteral("casino must be the string \"stake\", \"shuffle\", \"goated\", \"wolfbet\", \"duel\", \"paradice\", \"pasino\" or \"tower\"");
         return false;
     }
 

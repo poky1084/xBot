@@ -19,13 +19,33 @@
     return; // already running in this page
   window.__xbotRequestProxy = true;
 
-  const VERSION = '2.1.1';
+  const VERSION = '2.2.0';
   const URL_WS = 'ws://localhost:4444';
   const RECONNECT_MS = 5000;
   const STANDBY_MS = 15000;      // another tab of this site is connected already
   const CLOSE_DUPLICATE = 4001;  // sent by xBot for that case
 
   let ws;
+
+  // Value of a cookie visible to this page (document.cookie), or null.
+  function readPageCookie(name) {
+    try {
+      for (const part of document.cookie.split(';')) {
+        const eq = part.indexOf('=');
+        if (eq < 0)
+          continue;
+        if (part.slice(0, eq).trim() === name) {
+          const raw = part.slice(eq + 1).trim();
+          try {
+            return decodeURIComponent(raw);
+          } catch (e) {
+            return raw;
+          }
+        }
+      }
+    } catch (e) {}
+    return null;
+  }
 
   function send(obj) {
     if (ws && ws.readyState === WebSocket.OPEN)
@@ -60,13 +80,19 @@
       }
       if (payload.raw && payload.op === 'cookie') { // a cookie of this site (also httpOnly ones)
         let reply;
+        // A cookie the page can see itself (not httpOnly, e.g. Tower's "__tt"): document.cookie.
+        const pageValue = readPageCookie(String(payload.key));
         try {
           const r = await chrome.runtime.sendMessage({ type: 'xbot-cookie', name: String(payload.key) });
-          reply = (r && r.error) ? { status: 0, error: r.error }
-                                 : { status: 200, body: JSON.stringify({ value: r ? r.value : null }) };
+          const value = (r && r.value != null && r.value !== '') ? r.value : pageValue;
+          reply = (r && r.error && value == null) ? { status: 0, error: r.error }
+                                                  : { status: 200, body: JSON.stringify({ value: value }) };
         } catch (e) {
-          // e.g. "Extension context invalidated" after reloading the extension: refresh the tab
-          reply = { status: 0, error: String((e && e.message) || e) + ' (refresh the casino tab)' };
+          // e.g. "Extension context invalidated" after reloading the extension: the page's own
+          // cookie still works; httpOnly ones need the tab to be refreshed.
+          reply = pageValue != null
+            ? { status: 200, body: JSON.stringify({ value: pageValue }) }
+            : { status: 0, error: String((e && e.message) || e) + ' (refresh the casino tab)' };
         }
         send(Object.assign({ id: message.id }, reply));
         return;

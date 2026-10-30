@@ -16,6 +16,9 @@
 //            -> data.me.wallets[].currency: every wallet, also those at 0 (BTC, USDT_TRC, PRDC, …)
 //   Pasino:  POST https://api.pasino.com/coin/get-balances {"token","language"} (needs the token)
 //            -> coins[].coin: every coin, also those at 0 (BTC, ETH, …, GEM)
+//   Tower:   GET https://tower.bet/api/currencies (Bearer token; cf_clearance + User-Agent in
+//            Direct mode) -> [].symbol in the site's "order"; until the first fetch the site's
+//            list as of this writing (TowerTransport::defaultCurrencies()).
 //   Stake:   no public list; the Options dialog collects the currencies from the
 //            UserBalances answer (fetched automatically once Site + API key are filled in)
 //            and merges them into this cache.
@@ -32,6 +35,7 @@
 #include "bot/DuelTransport.h"
 #include "bot/ParadiceTransport.h"
 #include "bot/PasinoTransport.h"
+#include "bot/TowerTransport.h"
 #include "bot/WolfbetTransport.h"
 
 #include <QCoreApplication>
@@ -67,7 +71,8 @@ inline QHash<int, QStringList> &memoryCache()
 inline bool hasSource(LiveSettings::Casino casino)
 {
     return casino == LiveSettings::Casino::Goated || casino == LiveSettings::Casino::Wolfbet
-           || casino == LiveSettings::Casino::Paradice || casino == LiveSettings::Casino::Pasino;
+           || casino == LiveSettings::Casino::Paradice || casino == LiveSettings::Casino::Pasino
+           || casino == LiveSettings::Casino::Tower;
 }
 
 // Casinos with a fixed currency list (in the site's own order).
@@ -98,6 +103,9 @@ inline QStringList cached(LiveSettings::Casino casino)
     // Duel: the site's wallet list until the first fetch.
     if (casino == LiveSettings::Casino::Duel && mem.value(int(casino)).isEmpty())
         return DuelTransport::allCurrencyCodes();
+    // Tower: the site's list until the first fetch.
+    if (casino == LiveSettings::Casino::Tower && mem.value(int(casino)).isEmpty())
+        return TowerTransport::defaultCurrencies();
     return mem.value(int(casino));
 }
 
@@ -181,11 +189,14 @@ inline QStringList parseGoated(const QByteArray &body)
 
 // Fetches the casino's currency list. On success the list is cached and `done` runs with it
 // (only while `context` is alive); on failure nothing happens and the cached list stays.
-// `token`: the login token, for casinos whose list needs it (Wolfbet, Paradice, Pasino). Returns false when
+// `token`: the login token, for casinos whose list needs it (Wolfbet, Paradice, Pasino, Tower);
+// `clearance` / `userAgent`: Tower's cf_clearance cookie and its browser's User-Agent. Returns false when
 // nothing was requested (no source, or the needed token is empty).
 inline bool fetch(LiveSettings::Casino casino, QObject *context,
                   std::function<void(const QStringList &)> done,
-                  const QString &token = QString())
+                  const QString &token = QString(),
+                  const QString &clearance = QString(),
+                  const QString &userAgent = QString())
 {
     if (!hasSource(casino))
         return false;
@@ -233,9 +244,19 @@ inline bool fetch(LiveSettings::Casino casino, QObject *context,
         req.setRawHeader("Referer", "https://pasino.com/");
         postBody = PasinoTransport::makeBody(clean);
         parse = detail::parsePasino;
+    } else if (casino == LiveSettings::Casino::Tower) {
+        const QString clean = TowerTransport::cleanToken(token);
+        if (clean.isEmpty())
+            return false;
+        // Already has the site's headers, cookies and User-Agent (cf_clearance is bound to it).
+        req = TowerTransport::buildRequest(QStringLiteral("currencies"), clean,
+                                           TowerTransport::cleanClearance(clearance), userAgent);
+        parse = TowerTransport::parseCurrencies;
     }
-    req.setRawHeader("Accept", "application/json, text/plain, */*");
-    req.setHeader(QNetworkRequest::UserAgentHeader, detail::userAgent());
+    if (casino != LiveSettings::Casino::Tower) {
+        req.setRawHeader("Accept", "application/json, text/plain, */*");
+        req.setHeader(QNetworkRequest::UserAgentHeader, detail::userAgent());
+    }
     req.setTransferTimeout(15000);
 
     QNetworkReply *reply = postBody.isEmpty() ? detail::nam()->get(req)

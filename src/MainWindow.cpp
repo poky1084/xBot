@@ -19,6 +19,7 @@
 #include "bot/WolfbetTransport.h"
 #include "bot/ParadiceTransport.h"
 #include "bot/PasinoTransport.h"
+#include "bot/TowerTransport.h"
 #include "bot/ShuffleTransport.h"
 #include "bot/StakeClient.h"
 #include "bot/StakeTransport.h"
@@ -558,6 +559,7 @@ MainWindow::MainWindow(int slot, bool freshWebSession, QWidget *parent)
     m_wolfbet = new WolfbetTransport(this);
     m_paradice = new ParadiceTransport(this);
     m_pasino = new PasinoTransport(this);
+    m_tower = new TowerTransport(this);
     m_duel = new DuelTransport(this);
     m_stake = new StakeClient(this);
     m_stake->setTransport(m_cookie);
@@ -581,6 +583,8 @@ MainWindow::MainWindow(int slot, bool freshWebSession, QWidget *parent)
             &MainWindow::onParadiceBalancesUpdated);
     connect(m_pasino, &PasinoTransport::balancesUpdated, this,
             &MainWindow::onPasinoBalancesUpdated);
+    connect(m_tower, &TowerTransport::balancesUpdated, this,
+            &MainWindow::onTowerBalancesUpdated);
     connect(m_duel, &DuelTransport::balancesUpdated, this, &MainWindow::onDuelBalancesUpdated);
     connect(m_duel, &DuelTransport::notice, this,
             [this](const QString &message) { onLogMessage(message, true); });
@@ -860,8 +864,9 @@ void MainWindow::createMenus()
     m_actCasinoDuel = casinoMenu->addAction(tr("&Duel.com"));
     m_actCasinoParadice = casinoMenu->addAction(tr("&Paradice.in"));
     m_actCasinoPasino = casinoMenu->addAction(tr("Pas&ino.com"));
+    m_actCasinoTower = casinoMenu->addAction(tr("&Tower.bet"));
     for (QAction *a : {m_actCasinoStake, m_actCasinoShuffle, m_actCasinoGoated, m_actCasinoWolfbet,
-                       m_actCasinoDuel, m_actCasinoParadice, m_actCasinoPasino}) {
+                       m_actCasinoDuel, m_actCasinoParadice, m_actCasinoPasino, m_actCasinoTower}) {
         a->setCheckable(true);
         m_casinoGroup->addAction(a);
     }
@@ -880,6 +885,8 @@ void MainWindow::createMenus()
             [this] { onCasinoSelected(LiveSettings::Casino::Paradice); });
     connect(m_actCasinoPasino, &QAction::triggered, this,
             [this] { onCasinoSelected(LiveSettings::Casino::Pasino); });
+    connect(m_actCasinoTower, &QAction::triggered, this,
+            [this] { onCasinoSelected(LiveSettings::Casino::Tower); });
 
     QMenu *gameMenu = menuBar()->addMenu(tr("&Game"));
     m_gameGroup = new QActionGroup(this);
@@ -1431,6 +1438,7 @@ QString MainWindow::casinoDisplayName(LiveSettings::Casino casino)
     case LiveSettings::Casino::Duel:    return tr("Duel");
     case LiveSettings::Casino::Paradice: return tr("Paradice");
     case LiveSettings::Casino::Pasino:  return tr("Pasino");
+    case LiveSettings::Casino::Tower:   return tr("Tower");
     default:                            return tr("Stake");
     }
 }
@@ -1444,6 +1452,7 @@ QAction *MainWindow::casinoAction(LiveSettings::Casino casino) const
     case LiveSettings::Casino::Duel:    return m_actCasinoDuel;
     case LiveSettings::Casino::Paradice: return m_actCasinoParadice;
     case LiveSettings::Casino::Pasino:  return m_actCasinoPasino;
+    case LiveSettings::Casino::Tower:   return m_actCasinoTower;
     default:                            return m_actCasinoStake;
     }
 }
@@ -1451,7 +1460,8 @@ QAction *MainWindow::casinoAction(LiveSettings::Casino casino) const
 void MainWindow::updateCasinoMenu()
 {
     if (!m_actCasinoStake || !m_actCasinoShuffle || !m_actCasinoGoated || !m_actCasinoWolfbet
-        || !m_actCasinoDuel || !m_actCasinoParadice || !m_actCasinoPasino)
+        || !m_actCasinoDuel || !m_actCasinoParadice || !m_actCasinoPasino
+        || !m_actCasinoTower)
         return;
     const QSignalBlocker blocker(m_casinoGroup);
     casinoAction(m_live.casino)->setChecked(true);
@@ -1536,6 +1546,15 @@ void MainWindow::applyClientSeed(const std::function<void()> &then)
         m_clientSeedPending = false;
         onLogMessage(tr("Paradice: the client seed cannot be set - betting with the current "
                         "seed pair (use Rotate seed to renew the server seed)."), false);
+        then();
+        return;
+    }
+    if (m_engine->liveMode() && m_live.isTower()) {
+        // Tower's client seed is not changed from the app (no seed endpoint is used yet):
+        // do not rotate before every bet, just bet on with the current seed pair.
+        m_clientSeedPending = false;
+        onLogMessage(tr("Tower: the client seed cannot be set from the app - betting with the "
+                        "current seed pair (change it on the site if needed)."), false);
         then();
         return;
     }
@@ -1905,8 +1924,9 @@ void MainWindow::onBetTableClicked(const QModelIndex &index)
         || clickedCasino.compare(QLatin1String("wolfbet"), Qt::CaseInsensitive) == 0
         || clickedCasino.compare(QLatin1String("duel"), Qt::CaseInsensitive) == 0
         || clickedCasino.compare(QLatin1String("paradice"), Qt::CaseInsensitive) == 0
-        || clickedCasino.compare(QLatin1String("pasino"), Qt::CaseInsensitive) == 0)
-        return;                      // Shuffle / Goated / Wolfbet / Duel / Paradice / Pasino ids are used as they are
+        || clickedCasino.compare(QLatin1String("pasino"), Qt::CaseInsensitive) == 0
+        || clickedCasino.compare(QLatin1String("tower"), Qt::CaseInsensitive) == 0)
+        return;                      // Shuffle / Goated / Wolfbet / Duel / Paradice / Pasino / Tower ids are used as they are
     resolveBetIid(betId);
 }
 
@@ -1938,8 +1958,10 @@ void MainWindow::onBetTableContextMenu(const QPoint &pos)
                                                  : rowCasino == QLatin1String("paradice");
     const bool pasinoRow = rowCasino.isEmpty() ? m_live.isPasino()
                                                : rowCasino == QLatin1String("pasino");
-    // Duel / Paradice / Pasino: copy the round id (no public bet page is known).
-    if (duelRow || paradiceRow || pasinoRow) {
+    const bool towerRow = rowCasino.isEmpty() ? m_live.isTower()
+                                              : rowCasino == QLatin1String("tower");
+    // Duel / Paradice / Pasino / Tower: copy the round id (no public bet page is known).
+    if (duelRow || paradiceRow || pasinoRow || towerRow) {
         QMenu menu;
         QAction *copyAct = menu.addAction(tr("Copy Bet id:  %1").arg(betId));
         if (menu.exec(globalPos) == copyAct)
@@ -2511,6 +2533,22 @@ void MainWindow::grabExtensionCredentials(LiveSettings::Casino c, const LiveSett
         });
         return;
 
+    case LiveSettings::Casino::Tower:
+        // "__tt" cookie (the Bearer token). cf_clearance is not needed: the tab sends its own.
+        m_ext->readCookie(hosts, QStringLiteral("__tt"),
+                          [self, out, done, notLoggedIn](bool ok, const QString &v, const QString &err) {
+            if (!self)
+                return;
+            if (!ok)
+                return done(*out, err);
+            const QString token = TowerTransport::cleanToken(QUrl::fromPercentEncoding(v.toUtf8()));
+            if (token.isEmpty())
+                return done(*out, notLoggedIn(QStringLiteral("the \"__tt\" cookie")));
+            out->towerToken = token;
+            done(*out, QString());
+        });
+        return;
+
     case LiveSettings::Casino::Duel:
         // localStorage "security:uuid" + the "duel" and "cf_clearance" cookies (httpOnly; shown
         // in Options only: in extension mode the tab sends them by itself)
@@ -2659,6 +2697,10 @@ void MainWindow::refreshExtensionLogin(LiveSettings::Casino c)
             if (self->m_pasino->isReady())
                 self->m_pasino->requestBalances();
             break;
+        case LiveSettings::Casino::Tower:
+            if (self->m_tower->isReady())
+                self->m_tower->requestBalances();
+            break;
         case LiveSettings::Casino::Duel:
             if (self->m_duel->isReady())
                 self->m_duel->requestBalances();
@@ -2744,6 +2786,15 @@ void MainWindow::applyPasinoCredentials(const LiveSettings &s)
     PasinoCredentials pc;
     pc.token = s.pasinoToken;
     m_pasino->setCredentials(pc);
+}
+
+void MainWindow::applyTowerCredentials(const LiveSettings &s)
+{
+    TowerCredentials tc;
+    tc.token = s.towerToken;
+    tc.clearance = s.towerClearance;
+    tc.userAgent = s.towerUserAgent;
+    m_tower->setCredentials(tc);
 }
 
 void MainWindow::applyDuelCredentials(const LiveSettings &s)
@@ -2846,6 +2897,8 @@ void MainWindow::refreshBackgroundBalances()
         m_paradice->requestBalances();
     if (!m_live.isPasino() && m_pasino->isReady())
         m_pasino->requestBalances();
+    if (!m_live.isTower() && m_tower->isReady())
+        m_tower->requestBalances();
     if (!m_live.isDuel() && m_duel->isReady())
         m_duel->requestBalances();
     requestStakeBackgroundBalance();
@@ -2876,6 +2929,7 @@ bool MainWindow::updateExtensionServer(const LiveSettings &s, QString *errorOut)
     m_wolfbet->setExtension(s.wolfbetExtension ? m_ext : nullptr);
     m_paradice->setExtension(s.paradiceExtension ? m_ext : nullptr);
     m_pasino->setExtension(s.pasinoExtension ? m_ext : nullptr);
+    m_tower->setExtension(s.towerExtension ? m_ext : nullptr);
     m_duel->setExtension(s.duelExtension ? m_ext : nullptr);
 
     if (!s.anyUsesExtension()) {
@@ -2912,10 +2966,35 @@ bool MainWindow::configureConnection(const LiveSettings &s, QString *errorOut)
 
 bool MainWindow::configureTransports(const LiveSettings &s, QString *errorOut)
 {
+    if (s.isTower()) {
+        // Direct mode: plain HTTPS straight from the app (token + cf_clearance + its User-Agent).
+        // The Stake browser / extension are left as they are for a quick switch back.
+        applyTowerCredentials(s);
+        applyPasinoCredentials(s);   // so Pasino's balance can be read in the background
+        applyParadiceCredentials(s); // so Paradice's balance can be read in the background
+        applyGoatedCredentials(s);   // so Goated's balance can be read in the background
+        applyWolfbetCredentials(s);  // so Wolfbet's balance can be read in the background
+        applyDuelCredentials(s);     // so Duel's balance can be read in the background
+
+        // Shuffle's balance socket keeps running in the background like it does for Stake.
+        ShuffleCredentials sc;
+        sc.site = s.shuffleSite;
+        sc.token = s.shuffleToken;
+        sc.correlationUserId = s.correlationUserId;
+        sc.browserId = s.browserId;
+        m_shuffle->setCredentials(sc);
+        updateShuffleBackground(s, false);
+        keepStakeSessionAlive(s);
+
+        m_stake->setTransport(m_tower);
+        m_stake->setCurrency(s.currency);
+        return true;
+    }
     if (s.isPasino()) {
         // Direct mode: plain HTTPS straight from the app, only the token is needed. The
         // Stake browser / extension are left as they are for a quick switch back.
         applyPasinoCredentials(s);
+        applyTowerCredentials(s);    // so Tower's balance can be read in the background
         applyParadiceCredentials(s); // so Paradice's balance can be read in the background
         applyGoatedCredentials(s);   // so Goated's balance can be read in the background
         applyWolfbetCredentials(s);  // so Wolfbet's balance can be read in the background
@@ -2940,6 +3019,7 @@ bool MainWindow::configureTransports(const LiveSettings &s, QString *errorOut)
         // Stake browser / extension are left as they are for a quick switch back.
         applyParadiceCredentials(s);
         applyPasinoCredentials(s);  // so Pasino's balance can be read in the background
+        applyTowerCredentials(s);   // so Tower's balance can be read in the background
         applyGoatedCredentials(s);  // so Goated's balance can be read in the background
         applyWolfbetCredentials(s); // so Wolfbet's balance can be read in the background
         applyDuelCredentials(s);    // so Duel's balance can be read in the background
@@ -2966,6 +3046,7 @@ bool MainWindow::configureTransports(const LiveSettings &s, QString *errorOut)
         applyWolfbetCredentials(s); // so Wolfbet's balance can be read in the background
         applyParadiceCredentials(s); // so Paradice's balance can be read in the background
         applyPasinoCredentials(s);   // so Pasino's balance can be read in the background
+        applyTowerCredentials(s);   // so Tower's balance can be read in the background
 
         ShuffleCredentials sc;
         sc.site = s.shuffleSite;
@@ -2986,6 +3067,7 @@ bool MainWindow::configureTransports(const LiveSettings &s, QString *errorOut)
         applyWolfbetCredentials(s);
         applyParadiceCredentials(s); // so Paradice's balance can be read in the background
         applyPasinoCredentials(s);   // so Pasino's balance can be read in the background
+        applyTowerCredentials(s);   // so Tower's balance can be read in the background
         applyGoatedCredentials(s); // so Goated's balance can be read in the background
         applyDuelCredentials(s);   // so Duel's balance can be read in the background
 
@@ -3012,6 +3094,7 @@ bool MainWindow::configureTransports(const LiveSettings &s, QString *errorOut)
         applyWolfbetCredentials(s); // so Wolfbet's balance can be read in the background
         applyParadiceCredentials(s); // so Paradice's balance can be read in the background
         applyPasinoCredentials(s);   // so Pasino's balance can be read in the background
+        applyTowerCredentials(s);   // so Tower's balance can be read in the background
         applyDuelCredentials(s);    // so Duel's balance can be read in the background
 
         // Shuffle's balance socket keeps running in the background like it does for Stake.
@@ -3046,6 +3129,7 @@ bool MainWindow::configureTransports(const LiveSettings &s, QString *errorOut)
         applyWolfbetCredentials(s); // so Wolfbet's balance can be read in the background
         applyParadiceCredentials(s); // so Paradice's balance can be read in the background
         applyPasinoCredentials(s);   // so Pasino's balance can be read in the background
+        applyTowerCredentials(s);   // so Tower's balance can be read in the background
         applyDuelCredentials(s);    // so Duel's balance can be read in the background
         m_stake->setTransport(m_shuffle);
         m_stake->setCurrency(s.currency);
@@ -3067,6 +3151,7 @@ bool MainWindow::configureTransports(const LiveSettings &s, QString *errorOut)
     applyWolfbetCredentials(s); // so Wolfbet's balance can be read in the background
     applyParadiceCredentials(s); // so Paradice's balance can be read in the background
     applyPasinoCredentials(s);   // so Pasino's balance can be read in the background
+    applyTowerCredentials(s);   // so Tower's balance can be read in the background
     applyDuelCredentials(s);    // so Duel's balance can be read in the background
 
     StakeCredentials cred;
@@ -3107,6 +3192,8 @@ void MainWindow::applyLiveSettings(const LiveSettings &requested)
         m_paradiceBalances.clear();
     if (!next.enabled || m_live.pasinoToken != next.pasinoToken)
         m_pasinoBalances.clear();
+    if (!next.enabled || m_live.towerToken != next.towerToken)
+        m_towerBalances.clear();
     if (!next.enabled || m_live.duelToken != next.duelToken || m_live.duelUuid != next.duelUuid
         || m_live.duelSite != next.duelSite)
         m_duelBalances.clear();
@@ -3135,6 +3222,7 @@ void MainWindow::applyLiveSettings(const LiveSettings &requested)
     refreshWolfbetBalanceVar();
     refreshParadiceBalanceVar();
     refreshPasinoBalanceVar();
+    refreshTowerBalanceVar();
     refreshDuelBalanceVar();
     refreshStakeBalanceVar();
     // Switching to Shuffle: its balance has been tracked in the background, so load it into
@@ -3196,6 +3284,7 @@ void MainWindow::onBalancesReady(const QMap<QString, double> &reported)
                                       : m_stake->isDuel()    ? LiveSettings::Casino::Duel
                                       : m_stake->isParadice() ? LiveSettings::Casino::Paradice
                                       : m_stake->isPasino()  ? LiveSettings::Casino::Pasino
+                                      : m_stake->isTower()   ? LiveSettings::Casino::Tower
                                                              : LiveSettings::Casino::Stake;
     // The dialog only takes answers for the casino it is showing; the main window only for
     // the active casino (a login test for another casino must not change its balance).
@@ -3476,6 +3565,34 @@ void MainWindow::onPasinoBalancesUpdated(const QMap<QString, double> &balances)
     refreshPasinoBalanceVar();
 }
 
+QString MainWindow::towerCurrency() const
+{
+    return (m_live.isTower() ? m_live.currency : m_currencyByCasino[int(LiveSettings::Casino::Tower)])
+        .trimmed().toLower();
+}
+
+// Recompute m_towerBalance (the Tower bet currency's balance) from the cache.
+void MainWindow::refreshTowerBalanceVar()
+{
+    const QString cur = towerCurrency();
+    // A read happened but the currency is not in it: zero balance.
+    m_towerBalanceKnown = !cur.isEmpty()
+        && (m_towerBalances.contains(cur) || !m_towerBalances.isEmpty());
+    m_towerBalance = m_towerBalanceKnown ? m_towerBalances.value(cur) : 0.0;
+}
+
+// Every Tower balance read (the active casino's fetches and the background reads while
+// another casino is active) lands here.
+void MainWindow::onTowerBalancesUpdated(const QMap<QString, double> &balances)
+{
+    // Ignore a read made with other credentials (e.g. a login test in the Options dialog).
+    if (!m_live.enabled
+        || m_tower->credentials().token != TowerTransport::cleanToken(m_live.towerToken))
+        return;
+    m_towerBalances = balances;
+    refreshTowerBalanceVar();
+}
+
 // Every Wolfbet balance read (the active casino's fetches and the background reads while
 // another casino is active) lands here.
 void MainWindow::onWolfbetBalancesUpdated(const QMap<QString, double> &balances)
@@ -3530,6 +3647,8 @@ void MainWindow::snapshotLeavingCasinoBalance()
         m_paradiceBalances.insert(cur, balance);
     else if (m_live.isPasino())
         m_pasinoBalances.insert(cur, balance);
+    else if (m_live.isTower())
+        m_towerBalances.insert(cur, balance);
     else
         m_stakeBalances.insert(cur, balance);
 }
@@ -3547,6 +3666,7 @@ bool MainWindow::loadCachedCasinoBalance()
                                          : m_live.isDuel()    ? m_duelBalances
                                          : m_live.isParadice() ? m_paradiceBalances
                                          : m_live.isPasino()  ? m_pasinoBalances
+                                         : m_live.isTower()   ? m_towerBalances
                                                               : m_stakeBalances;
     const QString cur = m_live.currency.trimmed().toLower();
     // Nothing read yet = unknown; read, but the currency is not in it = zero balance.
@@ -3648,6 +3768,11 @@ void MainWindow::onBalanceTimer()
         refreshExtensionLogin(m_live.casino); // fetches the balances when it is read
         return;
     }
+    // Options is open and the active casino has no usable login yet (e.g. the token is still
+    // being read from the extension tab): the dialog handles the login, so do not retry here -
+    // the retry's "token is empty" would overwrite the dialog's status.
+    if (m_optionsDialog && m_stake->transport() && !m_stake->transport()->isReady())
+        return;
     fetchActiveBalance(1500);
     // Until the login went through, retry every 2 s so betting can start as early as possible.
     m_balanceTimer->setInterval(m_isLoggedIn ? 10000 : 2000);
@@ -3710,6 +3835,7 @@ bool MainWindow::switchCurrencyFromScript(const QString &currency, double &balan
     refreshWolfbetBalanceVar();
     refreshParadiceBalanceVar();
     refreshPasinoBalanceVar();
+    refreshTowerBalanceVar();
     refreshDuelBalanceVar();
     refreshStakeBalanceVar();
     balance = m_balances.value(cur);
@@ -4144,6 +4270,7 @@ void MainWindow::loadSettings()
     m_live.duelExtension = settings.value(QStringLiteral("duelExtension"), false).toBool();
     m_live.paradiceExtension = settings.value(QStringLiteral("paradiceExtension"), false).toBool();
     m_live.pasinoExtension = settings.value(QStringLiteral("pasinoExtension"), false).toBool();
+    m_live.towerExtension = settings.value(QStringLiteral("towerExtension"), false).toBool();
     m_currencyByCasino[0] = settings.value(QStringLiteral("currency")).toString();
     m_currencyByCasino[1] = settings.value(QStringLiteral("shuffleCurrency")).toString();
     m_currencyByCasino[2] = settings.value(QStringLiteral("goatedCurrency")).toString();
@@ -4151,6 +4278,7 @@ void MainWindow::loadSettings()
     m_currencyByCasino[4] = settings.value(QStringLiteral("duelCurrency")).toString();
     m_currencyByCasino[5] = settings.value(QStringLiteral("paradiceCurrency")).toString();
     m_currencyByCasino[6] = settings.value(QStringLiteral("pasinoCurrency")).toString();
+    m_currencyByCasino[7] = settings.value(QStringLiteral("towerCurrency")).toString();
     m_live.currency = m_currencyByCasino[int(m_live.casino)];
 	m_live.enabled = settings.value(QStringLiteral("enabled"), false).toBool();
 	
@@ -4163,6 +4291,9 @@ void MainWindow::loadSettings()
     m_live.wolfbetToken = settings.value(QStringLiteral("wolfbetToken")).toString();
     m_live.paradiceToken = settings.value(QStringLiteral("paradiceToken")).toString();
     m_live.pasinoToken = settings.value(QStringLiteral("pasinoToken")).toString();
+    m_live.towerToken = settings.value(QStringLiteral("towerToken")).toString();
+    m_live.towerClearance = settings.value(QStringLiteral("towerClearance")).toString();
+    m_live.towerUserAgent = settings.value(QStringLiteral("towerUserAgent")).toString();
     m_live.duelSite = LiveSettings::hostOf(
         settings.value(QStringLiteral("duelSite"), m_live.duelSite).toString(), QStringLiteral("duel.com"));
     m_live.duelToken = settings.value(QStringLiteral("duelToken")).toString();
@@ -4243,6 +4374,7 @@ void MainWindow::saveOptionsSettings(QSettings &settings)
     settings.setValue(QStringLiteral("duelExtension"), m_live.duelExtension);
     settings.setValue(QStringLiteral("paradiceExtension"), m_live.paradiceExtension);
     settings.setValue(QStringLiteral("pasinoExtension"), m_live.pasinoExtension);
+    settings.setValue(QStringLiteral("towerExtension"), m_live.towerExtension);
     settings.setValue(QStringLiteral("currency"), m_currencyByCasino[0]);
     settings.setValue(QStringLiteral("shuffleCurrency"), m_currencyByCasino[1]);
     settings.setValue(QStringLiteral("goatedCurrency"), m_currencyByCasino[2]);
@@ -4250,6 +4382,7 @@ void MainWindow::saveOptionsSettings(QSettings &settings)
     settings.setValue(QStringLiteral("duelCurrency"), m_currencyByCasino[4]);
     settings.setValue(QStringLiteral("paradiceCurrency"), m_currencyByCasino[5]);
     settings.setValue(QStringLiteral("pasinoCurrency"), m_currencyByCasino[6]);
+    settings.setValue(QStringLiteral("towerCurrency"), m_currencyByCasino[7]);
     settings.remove(QStringLiteral("remember")); // old "Remember…" checkbox, no longer used
 	settings.setValue(QStringLiteral("enabled"), m_live.enabled);
 	
@@ -4261,6 +4394,9 @@ void MainWindow::saveOptionsSettings(QSettings &settings)
     settings.setValue(QStringLiteral("wolfbetToken"), m_live.wolfbetToken);
     settings.setValue(QStringLiteral("paradiceToken"), m_live.paradiceToken);
     settings.setValue(QStringLiteral("pasinoToken"), m_live.pasinoToken);
+    settings.setValue(QStringLiteral("towerToken"), m_live.towerToken);
+    settings.setValue(QStringLiteral("towerClearance"), m_live.towerClearance);
+    settings.setValue(QStringLiteral("towerUserAgent"), m_live.towerUserAgent);
     settings.setValue(QStringLiteral("duelSite"), m_live.duelSite);
     settings.setValue(QStringLiteral("duelToken"), m_live.duelToken);
     settings.setValue(QStringLiteral("duelUuid"), m_live.duelUuid);

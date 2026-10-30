@@ -1,8 +1,8 @@
 {
   "name": "xBot Request Proxy",
-  "description": "Forwards xBot's requests to the casino tab you have open (Stake, Shuffle, Goated, Wolfbet, Duel) and sends the answers back.",
+  "description": "Forwards xBot's requests to the casino tab you have open (Stake, Shuffle, Goated, Wolfbet, Duel, Paradice, Pasino, Tower) and sends the answers back.",
   "manifest_version": 3,
-  "version": "2.1.1",
+  "version": "2.2.0",
   "permissions": [
     "webNavigation",
     "scripting",
@@ -13,6 +13,7 @@
     "cookies"
   ],
   "host_permissions": [
+	"https://*.tower.bet/*",
 	"https://*.pasino.com/*",
 	"https://*.paradice.in/*",
     "https://*.stake.bet/*",

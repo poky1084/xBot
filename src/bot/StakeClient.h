@@ -51,6 +51,9 @@ struct LiveBetResult
     bool win = false;
     QString betId;
     qint64 nonce = -1;
+    // The account balance right after this bet, when the casino reports it (Tower "newBalance",
+    // Pasino "balance"); < 0 = not reported. The engine's balance is set to it.
+    double balanceAfter = -1.0;
 };
 
 // Talks to the casino's REST/GraphQL API through an IStakeTransport.
@@ -67,7 +70,8 @@ public:
     // WolfbetTransport to Wolfbet's REST API (dice only; balances over HTTPS), a DuelTransport
     // to Duel's REST API (dice and limbo; balances over HTTPS), a ParadiceTransport to Paradice's
     // GraphQL API (dice only; balances over HTTPS), a PasinoTransport to Pasino's REST API
-    // (dice and limbo; balances over HTTPS).
+    // (dice and limbo; balances over HTTPS), a TowerTransport to Tower.bet's REST API (dice and limbo;
+    // balances over HTTPS, cf_clearance in Direct mode).
     void setTransport(IStakeTransport *transport);
     IStakeTransport *transport() const { return m_transport; }
     bool isShuffle() const;
@@ -76,6 +80,7 @@ public:
     bool isDuel() const;
     bool isParadice() const;
     bool isPasino() const;
+    bool isTower() const;
 
     // API currency code, lowercase ("btc", "usdt", ...).
     void setCurrency(const QString &currency);
@@ -140,6 +145,8 @@ private:
     void rotateParadiceSeed();
     void placePasinoDice(const DiceBetRequest &request);
     void placePasinoLimbo(const LimboBetRequest &request);
+    void placeTowerDice(const DiceBetRequest &request);
+    void placeTowerLimbo(const LimboBetRequest &request);
     void rotatePasinoSeed(const QString &clientSeed);
     void placeDuelDice(const DiceBetRequest &request);
     void rotateDuelSeed(const QString &clientSeed);

@@ -1,0 +1,326 @@
+#include "ui/TowerLoginDialog.h"
+
+#include "ui/WebViewSession.h"
+#include <QHBoxLayout>
+#include <QJsonArray>
+#include <QJsonDocument>
+#include <QJsonObject>
+#include <QLabel>
+#include <QPushButton>
+#include <QResizeEvent>
+#include <QTimer>
+#include <QVBoxLayout>
+#include <QWidget>
+
+#include <windows.h>
+#include <wrl.h>
+#include <WebView2.h>
+
+using namespace Microsoft::WRL;
+
+// Returns a JSON string {"token","ua","loggedIn"}.
+//  token     the "__tt" cookie (not httpOnly, so document.cookie has it)
+//  loggedIn  GET /api/accounts answered with a list for this token (checked in the background at
+//            most every 3 s; the answer is kept in window.__xbotTowerLoggedIn for the next poll)
+static const wchar_t *kPollScript = LR"JS(
+(function () {
+    var r = { token: '', ua: navigator.userAgent, loggedIn: false };
+    try {
+        var m = document.cookie.match(/(?:^|;\s*)__tt=([^;]*)/);
+        if (m)
+            r.token = decodeURIComponent(m[1]).replace(/^"+|"+$/g, '').trim();
+    } catch (e) {}
+    try {
+        if (r.token) {
+            var now = Date.now();
+            if (window.__xbotTowerToken !== r.token) {
+                window.__xbotTowerToken = r.token;
+                window.__xbotTowerLoggedIn = false;
+                window.__xbotTowerCheckAt = 0;
+            }
+            if (!window.__xbotTowerCheckAt || now - window.__xbotTowerCheckAt > 3000) {
+                window.__xbotTowerCheckAt = now;
+                fetch('/api/accounts', {
+                    method: 'GET',
+                    credentials: 'include',
+                    headers: { 'Accept': 'application/json', 'Authorization': 'Bearer ' + r.token }
+                }).then(function (res) {
+                    return res.json().catch(function () { return null; }).then(function (j) {
+                        window.__xbotTowerLoggedIn = !!(res.ok && Array.isArray(j));
+                    });
+                }).catch(function () {});
+            }
+        }
+    } catch (e) {}
+    r.loggedIn = !!window.__xbotTowerLoggedIn;
+    return JSON.stringify(r);
+})()
+)JS";
+
+TowerLoginDialog::TowerLoginDialog(QWidget *parent)
+    : QDialog(parent)
+    , m_site(QStringLiteral("tower.bet"))
+{
+    setWindowTitle(tr("Log in to Tower.bet"));
+    resize(1000, 720);
+
+    auto *root = new QVBoxLayout(this);
+
+    auto *hint = new QLabel(tr(
+        "Log in to your Tower.bet account in the browser below. As soon as you are logged in, "
+        "the token (\"__tt\" cookie), cf_clearance and User-Agent are filled in automatically and "
+        "this window closes."));
+    hint->setWordWrap(true);
+    root->addWidget(hint);
+
+    m_webContainer = new QWidget(this);
+    m_webContainer->setStyleSheet(QStringLiteral("background-color: white;"));
+    root->addWidget(m_webContainer, 1);
+
+    m_status = new QLabel(tr("Initializing WebView2…"));
+    m_status->setWordWrap(true);
+    root->addWidget(m_status);
+
+    auto *btnRow = new QHBoxLayout;
+    m_useBtn = new QPushButton(tr("Use captured data"));
+    m_useBtn->setToolTip(tr("Take the token / cf_clearance found so far without waiting "
+                            "for the automatic login check."));
+    m_useBtn->setEnabled(false);
+    auto *cancelBtn = new QPushButton(tr("Cancel"));
+    btnRow->addStretch();
+    btnRow->addWidget(m_useBtn);
+    btnRow->addWidget(cancelBtn);
+    root->addLayout(btnRow);
+    connect(cancelBtn, &QPushButton::clicked, this, &QDialog::reject);
+    connect(m_useBtn, &QPushButton::clicked, this, &TowerLoginDialog::finish);
+
+    m_pollTimer = new QTimer(this);
+    m_pollTimer->setInterval(1000);
+    connect(m_pollTimer, &QTimer::timeout, this, &TowerLoginDialog::poll);
+
+    QTimer::singleShot(50, this, [this] { initializeWebView(); });
+}
+
+TowerLoginDialog::~TowerLoginDialog()
+{
+    if (m_pollTimer)
+        m_pollTimer->stop();
+    if (m_controller) {
+        m_controller->put_IsVisible(FALSE); // hidden first: it lets go of the mouse cursor
+        m_controller->Close();
+        m_controller->Release();
+    }
+    if (m_webview)
+        m_webview->Release();
+    if (m_env)
+        m_env->Release();
+}
+
+bool TowerLoginDialog::isAvailable()
+{
+    LPWSTR versionInfo = nullptr;
+    const HRESULT hr = GetAvailableCoreWebView2BrowserVersionString(nullptr, &versionInfo);
+    if (SUCCEEDED(hr) && versionInfo) {
+        CoTaskMemFree(versionInfo);
+        return true;
+    }
+    return false;
+}
+
+void TowerLoginDialog::resizeEvent(QResizeEvent *event)
+{
+    QDialog::resizeEvent(event);
+    updateBounds();
+}
+
+void TowerLoginDialog::updateBounds()
+{
+    if (m_controller && m_webContainer)
+        m_controller->put_Bounds({0, 0, m_webContainer->width(), m_webContainer->height()});
+}
+
+void TowerLoginDialog::initializeWebView()
+{
+    HWND hwnd = reinterpret_cast<HWND>(m_webContainer->winId());
+    QPointer<TowerLoginDialog> self(this);
+
+    // Every WebView2 environment in this process (same user-data folder) must use identical
+    // browser arguments, so keep them the same as the hidden browser used for Stake.
+    if (qEnvironmentVariableIsEmpty("WEBVIEW2_ADDITIONAL_BROWSER_ARGUMENTS")) {
+        qputenv("WEBVIEW2_ADDITIONAL_BROWSER_ARGUMENTS",
+                "--disable-background-timer-throttling --disable-renderer-backgrounding "
+                "--disable-backgrounding-occluded-windows "
+                "--disable-features=CalculateNativeWinOcclusion");
+    }
+
+    // Own user-data folder for windows opened with "+" (they start logged out).
+    const std::wstring userDataFolder = WebViewSession::folderW(this);
+    const HRESULT hr = CreateCoreWebView2EnvironmentWithOptions(
+        nullptr, userDataFolder.empty() ? nullptr : userDataFolder.c_str(), nullptr,
+        Callback<ICoreWebView2CreateCoreWebView2EnvironmentCompletedHandler>(
+            [self, hwnd](HRESULT result, ICoreWebView2Environment *env) -> HRESULT {
+                if (!self)
+                    return S_OK;
+                if (FAILED(result) || !env) {
+                    self->m_status->setText(tr("Failed to create WebView2 environment."));
+                    return result;
+                }
+                self->m_env = env;
+                self->m_env->AddRef();
+
+                self->m_env->CreateCoreWebView2Controller(
+                    hwnd,
+                    Callback<ICoreWebView2CreateCoreWebView2ControllerCompletedHandler>(
+                        [self](HRESULT result, ICoreWebView2Controller *controller) -> HRESULT {
+                            if (!self)
+                                return S_OK;
+                            if (FAILED(result) || !controller) {
+                                self->m_status->setText(tr("Failed to create the browser window."));
+                                return result;
+                            }
+                            self->m_controller = controller;
+                            self->m_controller->AddRef();
+                            self->m_controller->put_IsVisible(TRUE);
+                            self->m_controller->get_CoreWebView2(&self->m_webview);
+                            self->updateBounds();
+
+                            // Same light anti-automation tweak as the Stake browser.
+                            self->m_webview->AddScriptToExecuteOnDocumentCreated(
+                                LR"(Object.defineProperty(navigator, 'webdriver', { get: () => undefined });)",
+                                nullptr);
+
+                            self->m_webview->Navigate(
+                                (L"https://" + self->m_site.toStdWString() + L"/dice").c_str());
+                            self->m_status->setText(
+                                tr("Loading https://%1 … log in to continue.").arg(self->m_site));
+                            self->m_pollTimer->start();
+                            return S_OK;
+                        }).Get());
+                return S_OK;
+            }).Get());
+    if (FAILED(hr)) // e.g. the WebView2 Runtime is not installed: the callback never runs
+        m_status->setText(tr("Failed to start WebView2 (error 0x%1). Is the WebView2 Runtime installed?")
+                              .arg(QString::number(static_cast<quint32>(hr), 16)));
+}
+
+void TowerLoginDialog::poll()
+{
+    if (!m_webview || m_polling)
+        return;
+    m_polling = true;
+
+    QPointer<TowerLoginDialog> self(this);
+    const HRESULT hr = m_webview->ExecuteScript(
+        kPollScript,
+        Callback<ICoreWebView2ExecuteScriptCompletedHandler>(
+            [self](HRESULT result, LPCWSTR resultJson) -> HRESULT {
+                if (!self)
+                    return S_OK;
+                if (FAILED(result) || !resultJson) {
+                    self->m_polling = false;
+                    return S_OK;
+                }
+
+                // resultJson is the JSON encoding of the returned string: "\"{...}\"".
+                const QJsonDocument wrapper = QJsonDocument::fromJson(
+                    QByteArray("[") + QString::fromWCharArray(resultJson).toUtf8() + "]");
+                const QJsonObject info =
+                    QJsonDocument::fromJson(wrapper.array().at(0).toString().toUtf8()).object();
+
+                const QString token = info.value(QStringLiteral("token")).toString().trimmed();
+                const QString ua = info.value(QStringLiteral("ua")).toString().trimmed();
+                if (!ua.isEmpty())
+                    self->m_userAgent = ua;
+                if (token.isEmpty()) {
+                    self->m_polling = false;
+                    self->m_status->setText(tr("Waiting for the login…"));
+                    return S_OK; // not logged in yet
+                }
+                self->m_token = token;
+                self->readCookies(info.value(QStringLiteral("loggedIn")).toBool());
+                return S_OK;
+            }).Get());
+    if (FAILED(hr))
+        m_polling = false;
+}
+
+// "cf_clearance" is an httpOnly cookie (not visible to document.cookie): read it (and "__tt")
+// through the WebView2 cookie manager.
+void TowerLoginDialog::readCookies(bool loggedIn)
+{
+    ICoreWebView2CookieManager *cookieManager = nullptr;
+    ICoreWebView2_2 *webview2 = nullptr;
+    if (SUCCEEDED(m_webview->QueryInterface(IID_ICoreWebView2_2, reinterpret_cast<void **>(&webview2)))
+        && webview2) {
+        webview2->get_CookieManager(&cookieManager);
+        webview2->Release();
+    }
+    if (!cookieManager) {
+        m_polling = false;
+        m_status->setText(tr("This WebView2 version cannot read cookies - update the WebView2 Runtime."));
+        return;
+    }
+
+    QPointer<TowerLoginDialog> self(this);
+    const std::wstring url = L"https://" + m_site.toStdWString();
+    const HRESULT hr = cookieManager->GetCookies(
+        url.c_str(),
+        Callback<ICoreWebView2GetCookiesCompletedHandler>(
+            [self, cookieManager, loggedIn](HRESULT result, ICoreWebView2CookieList *list) -> HRESULT {
+                cookieManager->Release();
+                if (!self)
+                    return S_OK;
+                self->m_polling = false;
+                if (FAILED(result) || !list)
+                    return S_OK;
+
+                UINT count = 0;
+                list->get_Count(&count);
+                for (UINT i = 0; i < count; ++i) {
+                    ICoreWebView2Cookie *cookie = nullptr;
+                    if (FAILED(list->GetValueAtIndex(i, &cookie)) || !cookie)
+                        continue;
+                    LPWSTR name = nullptr;
+                    LPWSTR value = nullptr;
+                    cookie->get_Name(&name);
+                    cookie->get_Value(&value);
+                    const QString n = name ? QString::fromWCharArray(name) : QString();
+                    const QString v = value ? QString::fromWCharArray(value) : QString();
+                    if (n == QLatin1String("__tt") && !v.isEmpty())
+                        self->m_token = v;
+                    else if (n == QLatin1String("cf_clearance") && !v.isEmpty())
+                        self->m_clearance = v;
+                    if (name)
+                        CoTaskMemFree(name);
+                    if (value)
+                        CoTaskMemFree(value);
+                    cookie->Release();
+                }
+
+                const bool haveData = !self->m_token.isEmpty();
+                self->m_useBtn->setEnabled(haveData);
+                if (haveData && loggedIn) {
+                    self->finish();
+                    return S_OK;
+                }
+                self->m_status->setText(
+                    haveData ? tr("Found the \"__tt\" token%1 - waiting for the login check…")
+                                   .arg(self->m_clearance.isEmpty() ? QString()
+                                                                    : tr(" and cf_clearance"))
+                             : tr("Waiting for the login…"));
+                return S_OK;
+            }).Get());
+    if (FAILED(hr)) {
+        cookieManager->Release();
+        m_polling = false;
+    }
+}
+
+void TowerLoginDialog::finish()
+{
+    if (m_token.isEmpty())
+        return;
+    m_pollTimer->stop();
+    m_status->setText(tr("Logged in — token and cf_clearance captured."));
+    accept();
+}
