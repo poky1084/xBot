@@ -146,6 +146,7 @@ private:
     void saveConditions();
 	void updateConnectionStatus();
     void updateCasinoMenu();
+    void updateFairTab();
     static QString casinoDisplayName(LiveSettings::Casino casino);
     QAction *casinoAction(LiveSettings::Casino casino) const;
     void closeHiddenBrowser();

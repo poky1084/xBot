@@ -1469,8 +1469,23 @@ QAction *MainWindow::casinoAction(LiveSettings::Casino casino) const
     }
 }
 
+// The Provably Fair tab is only available while Stake is the selected casino.
+void MainWindow::updateFairTab()
+{
+    if (!m_tabs || !m_fairPanel)
+        return;
+    const int fairIdx = m_tabs->indexOf(m_fairPanel);
+    if (fairIdx < 0)
+        return;
+    const bool enabled = m_live.casino == LiveSettings::Casino::Stake;
+    m_tabs->setTabEnabled(fairIdx, enabled);
+    if (!enabled && m_tabs->currentIndex() == fairIdx)
+        m_tabs->setCurrentIndex(0); // leave the disabled tab: back to Manual Bet
+}
+
 void MainWindow::updateCasinoMenu()
 {
+    updateFairTab();
     if (!m_actCasinoStake || !m_actCasinoShuffle || !m_actCasinoGoated || !m_actCasinoWolfbet
         || !m_actCasinoDuel || !m_actCasinoParadice || !m_actCasinoPasino
         || !m_actCasinoTower || !m_actCasinoWinna)
@@ -1801,7 +1816,7 @@ void MainWindow::rotateSeed(bool fromScript, const QString &clientSeed)
     }
 
     // The Fair panel owns rotation so the revealed-seeds list stays in sync.
-    if (!fromScript)
+    if (!fromScript && m_tabs->isTabEnabled(m_tabs->indexOf(m_fairPanel)))
         m_tabs->setCurrentWidget(m_fairPanel);
     m_fairPanel->onRotate();
     // The server seed was rotated above; the client seed is the script's / the Options one.
@@ -4012,10 +4027,7 @@ void MainWindow::updateModeWidgets()
         m_statusMode->setStyleSheet(QStringLiteral("color:#737373;"));
     }
 
-    // The Fairness tab verifies the *simulated* seeds only.
-    const int fairIdx = m_tabs->indexOf(m_fairPanel);
-    if (fairIdx >= 0)
-        m_tabs->setTabEnabled(fairIdx, true);
+    updateFairTab();
     m_actRotate->setEnabled(!m_rotatingSeed);
 	updateConnectionStatus(); 
     updateWindowTitle();
