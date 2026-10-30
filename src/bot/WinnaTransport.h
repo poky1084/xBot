@@ -67,6 +67,13 @@ public:
     // Reads all balances (lowercase currency code -> amount).
     void requestBalances();
 
+    // New seed pair with `clientSeed`: reads the active seed (GET /v1/games/our-game/get-active-seed
+    // -> its "id"), then POST /v1/games/our-game/unhash {"seedId","clientSeed"} (the active seed is
+    // revealed, a new one becomes active). `done(error, newSeed)`: error "" = rotated; newSeed =
+    // {"id","nonce","client_seed","server_seed" (hash),"next_server_seed"}.
+    void rotateSeed(const QString &clientSeed,
+                    std::function<void(const QString &error, const QJsonObject &newSeed)> done);
+
     static QString webHost() { return QStringLiteral("winna.com"); }
     static QString apiBase() { return QStringLiteral("https://api2.winna.com"); }
     static QString gameBase() { return QStringLiteral("https://originals.winna.com"); }

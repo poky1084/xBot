@@ -384,6 +384,58 @@ void WinnaTransport::requestBalances()
     });
 }
 
+void WinnaTransport::rotateSeed(const QString &clientSeed,
+                                std::function<void(const QString &, const QJsonObject &)> done)
+{
+    QString why;
+    if (!isReady(&why)) {
+        QTimer::singleShot(0, this, [done, why] { done(why, QJsonObject()); });
+        return;
+    }
+    const quint32 generation = m_generation;
+    auto failText = [](int status, const QByteArray &data, const QString &netError) {
+        QString msg = errorText(status, data);
+        if (msg.isEmpty())
+            msg = netError.isEmpty() ? tr("unexpected answer: %1")
+                                           .arg(QString::fromUtf8(data.left(200)).simplified())
+                                     : netError;
+        return msg;
+    };
+
+    // 1. the active seed: GET /v1/games/our-game/get-active-seed
+    //    {"success":true,"response":{"id":1103124,"nonce":75,"client_seed","server_seed",…}}
+    sendApi("GET", QStringLiteral("v1/games/our-game/get-active-seed"), QJsonObject(),
+            [this, generation, clientSeed, done, failText](int status, const QByteArray &data,
+                                                           const QString &netError) {
+        if (generation != m_generation)
+            return done(tr("Winna: the login changed - try again."), QJsonObject());
+        const QJsonObject active = QJsonDocument::fromJson(data).object()
+                                       .value(QStringLiteral("response")).toObject();
+        const qint64 seedId = qint64(numberOf(active.value(QStringLiteral("id"))));
+        if (status < 200 || status >= 300 || seedId <= 0)
+            return done(tr("could not read the active seed (%1)").arg(failText(status, data, netError)),
+                        QJsonObject());
+
+        // 2. reveal it and start a new pair: POST /v1/games/our-game/unhash {"seedId","clientSeed"}
+        QJsonObject body;
+        body.insert(QStringLiteral("seedId"), seedId);
+        body.insert(QStringLiteral("clientSeed"), clientSeed);
+        sendApi("POST", QStringLiteral("v1/games/our-game/unhash"), body,
+                [this, generation, done, failText](int status2, const QByteArray &data2,
+                                                   const QString &netError2) {
+            if (generation != m_generation)
+                return done(tr("Winna: the login changed - try again."), QJsonObject());
+            const QJsonObject newSeed = QJsonDocument::fromJson(data2).object()
+                                            .value(QStringLiteral("response")).toObject()
+                                            .value(QStringLiteral("new_seed")).toObject();
+            if (status2 < 200 || status2 >= 300 || newSeed.isEmpty())
+                return done(failText(status2, data2, netError2), QJsonObject());
+            m_gameToken.clear(); // the next game session starts with the new seed pair
+            done(QString(), newSeed);
+        });
+    });
+}
+
 void WinnaTransport::ensureGameToken(const QString &game, std::function<void(const QString &)> then)
 {
     const QString coin = m_coin;

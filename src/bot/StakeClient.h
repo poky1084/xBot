@@ -153,6 +153,7 @@ private:
     // `overWord`: index into the words tried for "over" (the site's word was not captured yet).
     void sendWinnaDice(double amount, double target, bool over, int overWord);
     void placeWinnaLimbo(const LimboBetRequest &request);
+    void rotateWinnaSeed(const QString &clientSeed);
     void rotatePasinoSeed(const QString &clientSeed);
     void placeDuelDice(const DiceBetRequest &request);
     void rotateDuelSeed(const QString &clientSeed);

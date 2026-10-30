@@ -316,9 +316,7 @@ void StakeClient::rotateSeedPair(const QString &clientSeed)
         return;
     }
     if (isWinna()) {
-        QTimer::singleShot(0, this, [this] {
-            emit seedRotateFailed(tr("Winna: seed rotation is not supported yet (change the seed on the site)."));
-        });
+        rotateWinnaSeed(clientSeed);
         return;
     }
 
@@ -2128,6 +2126,31 @@ void StakeClient::sendWinnaDice(double amount, double target, bool over, int ove
             r.betId = json.value(QStringLiteral("betUuid")).toString();
         r.nonce = -1;
         emit diceFinished(r);
+    });
+}
+
+// Winna: POST https://api2.winna.com/v1/games/our-game/unhash {"seedId":1102869,"clientSeed":"…"}
+// Answer: {"success":true,"response":{"new_seed":{"id":1103124,"nonce":0,"client_seed",
+//   "server_seed" (hash of the new active seed),"next_server_seed","is_active":true},
+//   "old_seed":{… "server_seed" revealed …}}}
+void StakeClient::rotateWinnaSeed(const QString &clientSeed)
+{
+    auto *winna = qobject_cast<WinnaTransport *>(m_transport);
+    if (!winna) {
+        QTimer::singleShot(0, this, [this] { emit seedRotateFailed(tr("No transport configured.")); });
+        return;
+    }
+    const QString seed = clientSeed.trimmed().isEmpty() ? randomClientSeed(10) : clientSeed.trimmed();
+    winna->rotateSeed(seed, [this](const QString &error, const QJsonObject &newSeed) {
+        if (!error.isEmpty()) {
+            emit seedRotateFailed(error);
+            return;
+        }
+        const qint64 nonce = newSeed.contains(QStringLiteral("nonce"))
+                                 ? qint64(numberOf(newSeed.value(QStringLiteral("nonce")))) : 0;
+        emit seedRotated(newSeed.value(QStringLiteral("client_seed")).toString(), nonce,
+                         newSeed.value(QStringLiteral("server_seed")).toString(),
+                         newSeed.value(QStringLiteral("next_server_seed")).toString());
     });
 }
 
