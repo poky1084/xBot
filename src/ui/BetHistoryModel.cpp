@@ -53,9 +53,9 @@ QVariant BetHistoryModel::data(const QModelIndex &index, int role) const
     if (role == Qt::TextAlignmentRole)
         return int(Qt::AlignLeft | Qt::AlignVCenter);
 
-    if (role == Qt::FontRole && index.column() == ColRoll) {
+    if (role == Qt::FontRole && (index.column() == ColRoll || index.column() == ColMultiplier)) {
         QFont boldFont;
-        boldFont.setBold(true); // roll column is semibold in the reference
+        boldFont.setBold(true); // roll and multiplier columns are bold
         return boldFont;
     }
 
