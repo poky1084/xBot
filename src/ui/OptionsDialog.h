@@ -75,6 +75,8 @@ public:
     static bool clearStoredData(QString *error = nullptr);
 
 signals:
+    // The user picked another theme: applied right away (reverted on Cancel).
+    void darkThemeChanged(bool dark);
     // The user pressed "Log in": apply the current live settings and fetch balances.
     void loginRequested();
     // All stored data was deleted; the app must exit without saving settings again.

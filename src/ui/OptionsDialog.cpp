@@ -163,6 +163,8 @@ OptionsDialog::OptionsDialog(QWidget *parent)
     m_themeCombo->addItem(tr("Light"));
     m_themeCombo->addItem(tr("Dark"));
     appearanceForm->addRow(tr("Theme:"), m_themeCombo);
+    connect(m_themeCombo, qOverload<int>(&QComboBox::activated), this,
+            [this](int index) { emit darkThemeChanged(index == 1); });
 
     // The "Currency label" row was removed from the window; the (hidden) combo keeps the
     // simulation label value flowing through currencyTag() / setCurrencyTag() unchanged.

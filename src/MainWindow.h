@@ -147,6 +147,16 @@ private:
 	void updateConnectionStatus();
     void updateCasinoMenu();
     void updateFairTab();
+    bool betListStacked() const;
+    int bottomPanelHeight() const;
+    void updateCentralHeight();
+    void positionBottomPanel();
+    void fitBetList(bool growPanel);
+    void rememberLogHeight();
+    void keepLogHeight();
+    void scheduleKeepLogHeight();
+    void setupFloatingDocks();
+    void detachFloatingDock(QDockWidget *dock);
     static QString casinoDisplayName(LiveSettings::Casino casino);
     QAction *casinoAction(LiveSettings::Casino casino) const;
     void closeHiddenBrowser();
@@ -329,7 +339,11 @@ private:
 
     // Splitters
     QSplitter *m_centralSplitter = nullptr;
-    QSplitter *m_mainSplitter = nullptr;
+    QDockWidget *m_betListDock = nullptr; // holds m_betTable
+    QWidget *m_centralArea = nullptr;     // central area; the bottom panel sits at its bottom
+    int m_panelHeight = 0;                // the bottom panel's content height
+    int m_logHeight = -1;                 // the Log height the user chose (kept, see keepLogHeight)
+    bool m_separatorDrag = false;         // mouse held on the main window: a separator drag
 
     // Tabs
     QTabWidget *m_tabs = nullptr;

@@ -48,8 +48,8 @@
 #include <QFileDialog>
 #include <QFileInfo>
 #include <QGridLayout>
-#include <QHeaderView>
 #include <QHBoxLayout>
+#include <QHeaderView>
 #include <QJsonDocument>
 #include <QJsonObject>
 #include <QLabel>
@@ -86,6 +86,16 @@
 #include <QVBoxLayout>
 
 #include <algorithm>
+
+#ifdef Q_OS_WIN
+#  ifndef NOMINMAX
+#    define NOMINMAX
+#  endif
+#  ifndef WIN32_LEAN_AND_MEAN
+#    define WIN32_LEAN_AND_MEAN
+#  endif
+#  include <windows.h>
+#endif
 
 namespace
 {
@@ -655,7 +665,9 @@ MainWindow::MainWindow(int slot, bool freshWebSession, QWidget *parent)
     createToolbar();
     createStatusBar();
     createLogDock();
+    installEventFilter(this); // dock separator drags: see eventFilter()
     createLuaDock();
+    setupFloatingDocks();
 
     // ---- Engine wiring
     connect(m_engine, &BotEngine::started, this, &MainWindow::onEngineStarted);
@@ -840,8 +852,13 @@ void MainWindow::createActions()
     m_actShowBetList->setCheckable(true);
     m_actShowBetList->setChecked(true);
     connect(m_actShowBetList, &QAction::toggled, this, [this](bool visible) {
-        if (m_betTable)
-            m_betTable->setVisible(visible);
+        if (!m_betListDock)
+            return;
+        m_betListDock->setVisible(visible);
+        if (visible) {
+            m_betListDock->raise(); // tabbed with another dock: bring this tab to the front
+            QTimer::singleShot(0, this, [this] { onTabChanged(m_tabs->currentIndex()); });
+        }
     });
 
     m_actShowTabs = new QAction(tr("Show bottom panel"), this);
@@ -853,6 +870,8 @@ void MainWindow::createActions()
         m_tabs->parentWidget()->setVisible(visible); // the holder around the tabs
         if (visible) // re-fit the pane to the current tab's content height
             QTimer::singleShot(0, this, [this] { onTabChanged(m_tabs->currentIndex()); });
+        else // the bet list takes the panel's height
+            QTimer::singleShot(0, this, &MainWindow::updateCentralHeight);
     });
 }
 
@@ -1257,17 +1276,43 @@ void MainWindow::createCentralWidget()
         settings.setValue(QStringLiteral("MainWindow/bottomTab"), index);
     });
 
-    m_mainSplitter = new QSplitter(Qt::Vertical);
-    m_mainSplitter->setObjectName(QStringLiteral("mainSplitter"));
-    // The bet list sits in a holder, so hiding it (View > Show bet list) leaves an empty
-    // area in the splitter instead of letting the bottom panel grow into its space: the
-    // bottom panel stays at the bottom, at the same size.
-    auto *betHolder = new QWidget;
-    auto *betHolderLayout = new QVBoxLayout(betHolder);
-    betHolderLayout->setContentsMargins(0, 0, 0, 0);
-    betHolderLayout->setSpacing(0);
-    betHolderLayout->addWidget(m_betTable);
-    m_mainSplitter->addWidget(betHolder);
+    // The bet list is a dock widget, like the Log and the Status / Session panel: it can be
+    // dragged to any side of the window, floated, or closed (View > Show bet list brings it
+    // back). By default it sits above the bottom panel (Manual / Auto / Chart / Fair), which
+    // is the window's central area.
+    m_betListDock = new QDockWidget(tr("Bet List"), this);
+    m_betListDock->setObjectName(QStringLiteral("betListDock"));
+    m_betListDock->setWidget(m_betTable);
+    setCorner(Qt::TopLeftCorner, Qt::LeftDockWidgetArea); // the sidebar keeps the full height
+    addDockWidget(Qt::TopDockWidgetArea, m_betListDock);
+    connect(m_betListDock, &QDockWidget::visibilityChanged, this, [this](bool) {
+        // Keep the View menu check in sync when the dock is closed via its X. (isHidden, not
+        // the signal's value: a dock tabbed behind another one is still "shown".)
+        const bool shown = !m_betListDock->isHidden();
+        if (m_actShowBetList && m_actShowBetList->isChecked() != shown) {
+            const QSignalBlocker blocker(m_actShowBetList);
+            m_actShowBetList->setChecked(shown);
+        }
+        QTimer::singleShot(0, this, &MainWindow::updateCentralHeight);
+    });
+    // Moved back above / below the panel (or out of it): re-fit the bottom panel.
+    const auto refit = [this] {
+        QTimer::singleShot(0, this, [this] {
+            if (m_tabs)
+                onTabChanged(m_tabs->currentIndex());
+        });
+    };
+    connect(m_betListDock, &QDockWidget::dockLocationChanged, this, refit);
+    connect(m_betListDock, &QDockWidget::topLevelChanged, this, refit);
+    // Popping the bet list out frees its height. That must stay as empty space above the
+    // bottom panel, not go to the Log: lift the panel's cap right away (before the window
+    // re-lays out) and put the Log back to the height it had.
+    connect(m_betListDock, &QDockWidget::topLevelChanged, this, [this](bool) {
+        updateCentralHeight(); // (un)cap the central area right away, before the re-layout
+        scheduleKeepLogHeight();
+    });
+    connect(m_betListDock, &QDockWidget::dockLocationChanged, this,
+            [this] { scheduleKeepLogHeight(); });
     // The tabs live in a holder so they keep their width (and are clipped) when
     // the Lua dock is widened over them, rather than being resized.
     auto *tabsHolder = new FixedWidthHolder(m_tabs);
@@ -1282,25 +1327,17 @@ void MainWindow::createCentralWidget()
     // The horizontal scroll bar under the panel takes its own row: grow the pane by
     // that much when it appears (and give it back when it goes), so the tab page
     // keeps the height it had and nothing at its bottom is covered.
-    tabsHolder->setScrollBarToggledCallback([this](int delta) {
-        QList<int> sizes = m_mainSplitter->sizes();
-        if (sizes.size() < 2 || sizes.value(1) <= 0)
-            return;
-        const int take = std::min(delta, std::max(0, sizes[0] - 60));
-        sizes[0] -= take;
-        sizes[1] += take;
-        m_mainSplitter->setSizes(sizes);
+    tabsHolder->setScrollBarToggledCallback([this](int) {
+        QTimer::singleShot(0, this, &MainWindow::updateCentralHeight);
     });
-    m_mainSplitter->addWidget(tabsHolder);
-    m_mainSplitter->setStretchFactor(0, 1); // 1 = Table takes all extra window space
-    m_mainSplitter->setStretchFactor(1, 0); // 0 = Tabs stay at the exact size you dragged
-    m_mainSplitter->setSizes({600, 200});
 
+    // No layout: the panel is placed by hand at the bottom of this area, at its content
+    // height (see positionBottomPanel()), so it always sits right on the Log. Any spare height
+    // stays empty above it.
     auto *right = new QWidget;
-    auto *rightLayout = new QVBoxLayout(right);
-    rightLayout->setContentsMargins(0, 0, 0, 0);
-    rightLayout->setSpacing(0);
-    rightLayout->addWidget(m_mainSplitter);
+    m_centralArea = right;
+    tabsHolder->setParent(right);
+    right->installEventFilter(this); // Resize: positionBottomPanel()
 
     m_centralSplitter = new QSplitter(Qt::Horizontal);
     m_centralSplitter->setObjectName(QStringLiteral("centralSplitter"));
@@ -1372,6 +1409,15 @@ void MainWindow::createLogDock()
     });
     resizeDocks({m_logDock}, {100}, Qt::Vertical);
     m_logDock->hide();
+    // The Log's height only changes when the user changes it: moved to another place or shown
+    // again -> take its new height as the one to keep (see keepLogHeight()).
+    connect(m_logDock, &QDockWidget::dockLocationChanged, this, [this] {
+        QTimer::singleShot(100, this, &MainWindow::rememberLogHeight);
+    });
+    connect(m_logDock, &QDockWidget::visibilityChanged, this, [this](bool visible) {
+        if (visible)
+            QTimer::singleShot(100, this, &MainWindow::rememberLogHeight);
+    });
 }
 
 void MainWindow::createLuaDock()
@@ -2126,7 +2172,7 @@ void MainWindow::onSwitchToChart()
     // been dragged shut, since currentChanged does not fire then).
     constexpr int kChartTab = 2; // Manual Bet, Auto Bet, Profit Chart, Provably Fair
     const bool panelShown = m_actShowTabs && m_actShowTabs->isChecked();
-    const bool paneOpen = m_mainSplitter->sizes().value(1) > 40; // not dragged shut
+    const bool paneOpen = centralWidget()->height() > 40; // not dragged shut
     if (panelShown && paneOpen && m_tabs->currentIndex() == kChartTab) {
         m_actShowTabs->setChecked(false);
         return;
@@ -2143,41 +2189,186 @@ void MainWindow::onSwitchToChart()
 // QSizePolicy::Maximum, so its sizeHint() is already the tight natural height.
 void MainWindow::onTabChanged(int index)
 {
-    QWidget *page = m_tabs->widget(index);
-    if (!page)
+    if (!m_tabs->widget(index))
         return;
+    // Size the panel to the new tab's content (again once the layout has settled), and
+    // make room for all of it if a dock had been dragged over the panel.
+    updateCentralHeight();
+    QTimer::singleShot(0, this, [this] {
+        updateCentralHeight();
+        fitBetList(true);
+    });
+}
 
-    // Tab pages keep their natural height (see the event filter below), so the
-    // Log dock can only clip them, never squeeze them. Here we just give the
-    // panel its full content height when there is room for it.
-    auto fit = [this, page]() {
-        if (m_tabs->currentWidget() != page)
+// Height the bottom panel needs for its current tab: tab bar + page content (+ the
+// horizontal scroll bar when part of the panel is covered).
+int MainWindow::bottomPanelHeight() const
+{
+    QWidget *page = m_tabs ? m_tabs->currentWidget() : nullptr;
+    if (!page)
+        return 0;
+    if (QLayout *l = page->layout())
+        l->activate();
+    const int tabBarH = m_tabs->tabBar()->sizeHint().height();
+    const int contentH = std::max({page->sizeHint().height(),
+                                   page->minimumSizeHint().height(),
+                                   page->minimumHeight(),
+                                   80});
+    int needed = contentH + tabBarH + 8; // small buffer for the pane border
+    if (auto *holder = dynamic_cast<FixedWidthHolder *>(m_tabs->parentWidget()))
+        needed += holder->scrollBarHeight();
+    return needed;
+}
+
+// The bottom panel has a fixed height: the height of its current tab's content, never more
+// (it can still be made smaller by dragging a separator into it; the page is then clipped).
+// It is placed at the bottom of the central area, right on the Log. While the bet list is
+// docked above / below it, the bet list is sized so that the panel fits exactly (only the
+// separator between the bet list and the panel moves - the Log is never touched);
+// otherwise the spare height stays empty above the panel.
+void MainWindow::updateCentralHeight()
+{
+    QWidget *central = centralWidget();
+    if (!central || !m_tabs)
+        return;
+    const bool panelShown = !m_actShowTabs || m_actShowTabs->isChecked();
+    m_panelHeight = panelShown ? std::max(1, bottomPanelHeight()) : 0;
+    positionBottomPanel();
+    if (central->maximumHeight() != QWIDGETSIZE_MAX)
+        central->setMaximumHeight(QWIDGETSIZE_MAX); // never capped (that let the Log grow)
+    QTimer::singleShot(0, this, [this] { fitBetList(false); });
+}
+
+// Sizes the docked bet list so the central area is exactly the bottom panel's height:
+// empty space above the panel is given to the bet list. With growPanel (a tab was clicked)
+// the bet list also gives back height the panel is missing, so the whole tab shows; it
+// keeps at least a small strip. Nothing happens during a separator drag.
+void MainWindow::fitBetList(bool growPanel)
+{
+    if (!betListStacked() || m_separatorDrag || !m_centralArea)
+        return;
+    const int diff = m_centralArea->height() - m_panelHeight; // > 0: empty, < 0: clipped
+    if (diff == 0 || (diff < 0 && !growPanel))
+        return;
+    const int betH = m_betListDock->height();
+    const int target = std::max(60, betH + diff);
+    if (target != betH)
+        resizeDocks({m_betListDock}, {target}, Qt::Vertical);
+}
+
+// The Log keeps the height the user gave it: only dragging its separator (or moving / showing
+// it) changes that height. Whatever else re-lays the window out - the bet list popped out or
+// docked back, a bottom-panel tab clicked, the window resized - the Log is put back to it.
+void MainWindow::rememberLogHeight()
+{
+    if (m_logDock && !m_logDock->isHidden() && !m_logDock->isFloating())
+        m_logHeight = m_logDock->height();
+}
+
+void MainWindow::keepLogHeight()
+{
+    if (m_separatorDrag || m_logHeight <= 0 || !m_logDock || m_logDock->isHidden()
+        || m_logDock->isFloating())
+        return;
+    const Qt::DockWidgetArea area = dockWidgetArea(m_logDock);
+    if (area != Qt::TopDockWidgetArea && area != Qt::BottomDockWidgetArea)
+        return;
+    if (m_logDock->height() != m_logHeight)
+        resizeDocks({m_logDock}, {m_logHeight}, Qt::Vertical);
+}
+
+void MainWindow::scheduleKeepLogHeight()
+{
+    QTimer::singleShot(0, this, &MainWindow::keepLogHeight);
+    QTimer::singleShot(60, this, &MainWindow::keepLogHeight); // again once the layout settled
+}
+
+// Places the panel at the bottom of the central area, at its content height (or the whole
+// area when that is smaller).
+void MainWindow::positionBottomPanel()
+{
+    if (!m_centralArea || !m_tabs)
+        return;
+    QWidget *holder = m_tabs->parentWidget();
+    const int areaH = m_centralArea->height();
+    const int h = std::min(areaH, m_panelHeight);
+    const QRect r(0, areaH - h, m_centralArea->width(), h);
+    if (holder->geometry() != r)
+        holder->setGeometry(r);
+}
+
+// Floating (undocked) panels: by default Qt makes them tool windows owned by the main
+// window, so they always stay on top of it. Here they become independent windows instead:
+// clicking the main window brings it in front of them, and each floating panel gets its own
+// taskbar button to bring it back. Docked panels are unaffected.
+void MainWindow::setupFloatingDocks()
+{
+    for (QDockWidget *dock : findChildren<QDockWidget *>()) {
+        connect(dock, &QDockWidget::topLevelChanged, this, [this, dock](bool floating) {
+            if (floating)
+                detachFloatingDock(dock);
+        });
+        // Docks appearing / moving / floating change what can take the spare height.
+        const auto refit = [this] {
+            QTimer::singleShot(0, this, &MainWindow::updateCentralHeight);
+        };
+        connect(dock, &QDockWidget::topLevelChanged, this, refit);
+        connect(dock, &QDockWidget::dockLocationChanged, this, refit);
+        connect(dock, &QDockWidget::visibilityChanged, this, refit);
+        dock->installEventFilter(this); // Show: see eventFilter()
+    }
+}
+
+void MainWindow::detachFloatingDock(QDockWidget *dock)
+{
+#ifdef Q_OS_WIN
+    QPointer<QDockWidget> guard(dock);
+    QTimer::singleShot(0, this, [this, guard] {
+        if (!guard || !guard->isFloating() || !guard->isVisible())
             return;
-        if (QLayout *l = page->layout())
-            l->activate();
-
-        const int tabBarH = m_tabs->tabBar()->sizeHint().height();
-        const int contentH = std::max({page->sizeHint().height(),
-                                       page->minimumSizeHint().height(),
-                                       page->minimumHeight(),
-                                       80});
-        int needed = contentH + tabBarH + 8;   // small buffer for the pane border
-        // Room for the horizontal scroll bar when part of the panel is covered.
-        if (auto *holder = dynamic_cast<FixedWidthHolder *>(m_tabs->parentWidget()))
-            needed += holder->scrollBarHeight();
-
-        const QList<int> sizes = m_mainSplitter->sizes();
-        const int total = sizes.value(0) + sizes.value(1);
-        if (total <= 0)
+        // Still being dragged (it may yet be docked again): try once the mouse is released.
+        if (QGuiApplication::mouseButtons() != Qt::NoButton) {
+            QTimer::singleShot(150, this, [this, guard] {
+                if (guard)
+                    detachFloatingDock(guard);
+            });
             return;
+        }
+        const HWND hwnd = reinterpret_cast<HWND>(guard->winId());
+        // No owner: the window is no longer kept above the main window.
+        SetWindowLongPtrW(hwnd, GWLP_HWNDPARENT, 0);
+        // A normal (not tool) window with its own taskbar button, so it can be found again
+        // once it is behind the main window. The taskbar picks this up on the next show.
+        const LONG_PTR ex = GetWindowLongPtrW(hwnd, GWL_EXSTYLE);
+        const LONG_PTR want = (ex & ~LONG_PTR(WS_EX_TOOLWINDOW)) | WS_EX_APPWINDOW;
+        if (want != ex) {
+            ShowWindow(hwnd, SW_HIDE);
+            SetWindowLongPtrW(hwnd, GWL_EXSTYLE, want);
+            SetWindowPos(hwnd, nullptr, 0, 0, 0, 0,
+                         SWP_NOMOVE | SWP_NOSIZE | SWP_NOZORDER | SWP_NOACTIVATE
+                             | SWP_FRAMECHANGED);
+            ShowWindow(hwnd, SW_SHOW);
+        }
+        // Without an owner Windows may leave it under the main window (the mouse click that
+        // dropped it): bring it to the front and focus it. It stays there until the main
+        // window is clicked.
+        SetWindowPos(hwnd, HWND_TOP, 0, 0, 0, 0, SWP_NOMOVE | SWP_NOSIZE);
+        guard->raise();
+        guard->activateWindow();
+    });
+#else
+    Q_UNUSED(dock);
+#endif
+}
 
-        const int minTableH = 60;
-        const int tabsH = qMin(needed, qMax(0, total - minTableH));
-        m_mainSplitter->setSizes({total - tabsH, tabsH});
-    };
-
-    fit();
-    QTimer::singleShot(0, this, fit);
+// True when the bet list is docked above or below the bottom panel, so the two share the
+// window height (like the old splitter); false when it is floating, hidden or on a side.
+bool MainWindow::betListStacked() const
+{
+    if (!m_betListDock || m_betListDock->isHidden() || m_betListDock->isFloating())
+        return false;
+    const Qt::DockWidgetArea area = dockWidgetArea(m_betListDock);
+    return area == Qt::TopDockWidgetArea || area == Qt::BottomDockWidgetArea;
 }
 
 void MainWindow::onToggleDarkTheme(bool enabled)
@@ -2281,7 +2472,11 @@ void MainWindow::onOpenOptions()
 {
     OptionsDialog dialog(this);
     m_optionsDialog = &dialog;
-    dialog.setDarkTheme(m_actDarkTheme->isChecked());
+    const bool darkBefore = m_actDarkTheme->isChecked();
+    dialog.setDarkTheme(darkBefore);
+    // Picking a theme applies it at once (to every window); Cancel restores the old one.
+    connect(&dialog, &OptionsDialog::darkThemeChanged, this,
+            [this](bool dark) { m_actDarkTheme->setChecked(dark); });
     dialog.setCurrencyTag(m_currencyTag);
     dialog.setStartBalance(m_startBalance);
     dialog.setClientSeed(m_clientSeed);
@@ -2378,6 +2573,7 @@ void MainWindow::onOpenOptions()
         return;
     }
     if (!accepted) {
+        m_actDarkTheme->setChecked(darkBefore); // undo a theme previewed in the dialog
         // A login test may have reconfigured the connection with unsaved values.
         configureConnection(m_live);
         updateShuffleBackground(m_live); // closes a socket a login test may have left open
@@ -4247,6 +4443,30 @@ void MainWindow::updateEmptyState()
 
 bool MainWindow::eventFilter(QObject *watched, QEvent *event)
 {
+    if (watched == m_centralArea && event->type() == QEvent::Resize) {
+        positionBottomPanel();
+        if (!m_separatorDrag) // e.g. window resized / bet list docked: no empty space above
+            QTimer::singleShot(0, this, [this] { fitBetList(false); });
+    }
+    // Mouse on the main window itself = a dock separator being dragged: the Log's height is
+    // the user's choice then; remember it when the mouse is released.
+    if (watched == this) {
+        if (event->type() == QEvent::MouseButtonPress) {
+            m_separatorDrag = true;
+        } else if (event->type() == QEvent::MouseButtonRelease) {
+            m_separatorDrag = false;
+            QTimer::singleShot(0, this, [this] {
+                rememberLogHeight();
+                fitBetList(false); // e.g. the Log was dragged smaller: the bet list fills up
+            });
+        }
+    }
+    // A floating panel shown again (View menu, restored layout): Qt gives it back its
+    // owner on show, so make it independent of the main window again.
+    if (event->type() == QEvent::Show) {
+        if (auto *dock = qobject_cast<QDockWidget *>(watched); dock && dock->isFloating())
+            detachFloatingDock(dock);
+    }
     // Sidebar resized (it is a dock now): re-fit the session value fonts to its width.
     if (m_sidebar && watched == m_sidebar && event->type() == QEvent::Resize)
         QTimer::singleShot(0, this, [this] { updateSessionWidgets(); });
@@ -4258,8 +4478,11 @@ bool MainWindow::eventFilter(QObject *watched, QEvent *event)
         if (w && m_tabs->indexOf(w) >= 0) {
             if (QLayout *l = w->layout()) {
                 const int h = qMax(l->minimumSize().height(), l->sizeHint().height());
-                if (w->minimumHeight() != h)
+                if (w->minimumHeight() != h) {
                     w->setMinimumHeight(h);
+                    if (w == m_tabs->currentWidget()) // content grew / shrank: re-fit
+                        QTimer::singleShot(0, this, &MainWindow::updateCentralHeight);
+                }
             }
         }
     }
@@ -4351,10 +4574,8 @@ void MainWindow::loadSettings()
         m_sidebarDock->show();
         resizeDocks({m_sidebarDock}, {210}, Qt::Horizontal);
     }
-    m_mainSplitter->restoreState(
-        settings.value(QStringLiteral("MainWindow/mainSplitter")).toByteArray());
     {
-        // Last opened bottom tab. Signals are blocked so the saved splitter height is kept
+        // Last opened bottom tab. Signals are blocked so the saved panel height is kept
         // (onTabChanged would re-fit the panel); the tab is the one that was open with it.
         const int tab = settings.value(QStringLiteral("MainWindow/bottomTab"), 0).toInt();
         if (tab >= 0 && tab < m_tabs->count()) {
@@ -4370,6 +4591,9 @@ void MainWindow::loadSettings()
     m_actShowSidebar->setChecked(settings.value(QStringLiteral("View/sidebar"), true).toBool());
     m_actShowBetList->setChecked(settings.value(QStringLiteral("View/betList"), true).toBool());
     m_actShowTabs->setChecked(settings.value(QStringLiteral("View/bottomPanel"), true).toBool());
+    m_betListDock->setVisible(m_actShowBetList->isChecked());
+    // Fit the bottom panel to its tab once the window is shown.
+    QTimer::singleShot(0, this, [this] { onTabChanged(m_tabs->currentIndex()); });
     if (firstLaunch && m_logDock)
         m_logDock->show();
     {
@@ -4377,6 +4601,12 @@ void MainWindow::loadSettings()
         const QSignalBlocker blocker(m_actShowLog);
         m_actShowLog->setChecked(m_logDock && !m_logDock->isHidden());
     }
+    // The Log height to keep (see keepLogHeight()); measured once shown when not saved yet.
+    m_logHeight = settings.value(QStringLiteral("MainWindow/logHeight"), -1).toInt();
+    if (m_logHeight <= 0)
+        QTimer::singleShot(200, this, &MainWindow::rememberLogHeight);
+    else
+        scheduleKeepLogHeight();
     m_luaDock->loadSettings();
     if (firstLaunch)
         m_luaDock->show();
@@ -4586,8 +4816,9 @@ void MainWindow::saveSettings()
     settings.setValue(QStringLiteral("MainWindow/geometry"), saveGeometry());
     settings.setValue(QStringLiteral("MainWindow/state"), saveState());
     settings.setValue(QStringLiteral("MainWindow/sidebarDockSaved"), true); // saveState() knows the sidebar dock
-    settings.setValue(QStringLiteral("MainWindow/mainSplitter"), m_mainSplitter->saveState());
+    settings.setValue(QStringLiteral("MainWindow/betListDockSaved"), true); // saveState() knows the bet list dock
     settings.setValue(QStringLiteral("MainWindow/bottomTab"), m_tabs->currentIndex());
+    settings.setValue(QStringLiteral("MainWindow/logHeight"), m_logHeight);
     settings.setValue(QStringLiteral("MainWindow/tableState2"),
                       m_betTable->horizontalHeader()->saveState());
     m_luaDock->saveSettings();
