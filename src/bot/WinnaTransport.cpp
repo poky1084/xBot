@@ -436,6 +436,49 @@ void WinnaTransport::rotateSeed(const QString &clientSeed,
     });
 }
 
+void WinnaTransport::vaultDeposit(const QString &coin, double amount,
+                                  std::function<void(const QString &)> done)
+{
+    QString why;
+    if (!isReady(&why)) {
+        QTimer::singleShot(0, this, [done, why] { done(why); });
+        return;
+    }
+    // Amount as a plain decimal without trailing zeros ("1", "0.5"), like the site.
+    QString text = QString::number(std::max(0.0, amount), 'f', 8);
+    while (text.contains(QLatin1Char('.')) && text.endsWith(QLatin1Char('0')))
+        text.chop(1);
+    if (text.endsWith(QLatin1Char('.')))
+        text.chop(1);
+
+    QJsonObject body;
+    body.insert(QStringLiteral("coin"), apiCurrency(coin));
+    body.insert(QStringLiteral("balance"), text);
+    const quint32 generation = m_generation;
+    sendApi("POST", QStringLiteral("v2/vault/deposit"), body,
+            [this, generation, done](int status, const QByteArray &data, const QString &netError) {
+        if (generation != m_generation)
+            return done(tr("Winna: the login changed - try again."));
+        const QJsonObject root = QJsonDocument::fromJson(data).object();
+        const QJsonValue success = root.value(QStringLiteral("success"));
+        if (status >= 200 && status < 300 && (!success.isBool() || success.toBool()))
+            return done(QString());
+        // {"success":false,"status":400,"message":"Minimum vault deposit amount is 1 USD",
+        //  "title":"Bad Request","code":"MA-000000"}: show the site's message as it is.
+        QString msg = root.value(QStringLiteral("message")).toString().trimmed();
+        if (msg.isEmpty())
+            msg = root.value(QStringLiteral("title")).toString().trimmed();
+        if (!msg.isEmpty())
+            return done(tr("Winna: %1").arg(msg));
+        msg = errorText(status, data);
+        if (msg.isEmpty())
+            msg = netError.isEmpty() ? tr("Winna vault deposit rejected (HTTP %1): %2")
+                                           .arg(status).arg(QString::fromUtf8(data.left(200)).simplified())
+                                     : netError;
+        done(msg);
+    });
+}
+
 void WinnaTransport::ensureGameToken(const QString &game, std::function<void(const QString &)> then)
 {
     const QString coin = m_coin;

@@ -506,7 +506,26 @@ void StakeClient::vaultDeposit(double amount)
         return;
     }
     if (isWinna()) {
-        QTimer::singleShot(0, this, [this] { emit vaultFailed(tr("Winna: vault deposits are not supported.")); });
+        // POST api2.winna.com/v2/vault/deposit {"coin":"USDC","balance":"<amount>"} -> {"success":true}
+        auto *winna = qobject_cast<WinnaTransport *>(m_transport);
+        if (!(amount > 0.0)) {
+            QTimer::singleShot(0, this, [this] { emit vaultFailed(tr("Please specify vault amount.")); });
+            return;
+        }
+        if (m_currency.isEmpty()) {
+            QTimer::singleShot(0, this, [this] {
+                emit vaultFailed(tr("No currency selected — log in and pick one in Options."));
+            });
+            return;
+        }
+        const QString currency = m_currency.toUpper();
+        const double rounded = std::round(amount * 1e8) / 1e8;
+        winna->vaultDeposit(m_currency, rounded, [this, rounded, currency](const QString &error) {
+            if (!error.isEmpty())
+                emit vaultFailed(error);
+            else
+                emit vaultDeposited(rounded, currency);
+        });
         return;
     }
     if (!isShuffle()) {

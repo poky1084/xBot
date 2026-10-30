@@ -74,6 +74,10 @@ public:
     void rotateSeed(const QString &clientSeed,
                     std::function<void(const QString &error, const QJsonObject &newSeed)> done);
 
+    // Moves `amount` of `coin` into the vault: POST /v2/vault/deposit {"coin":"USDC","balance":"1"}
+    // ("balance" = the amount) -> {"success":true}. `done(error)`: "" = deposited.
+    void vaultDeposit(const QString &coin, double amount, std::function<void(const QString &error)> done);
+
     static QString webHost() { return QStringLiteral("winna.com"); }
     static QString apiBase() { return QStringLiteral("https://api2.winna.com"); }
     static QString gameBase() { return QStringLiteral("https://originals.winna.com"); }
