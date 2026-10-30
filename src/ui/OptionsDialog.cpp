@@ -9,6 +9,7 @@
 #include "ui/ParadiceLoginDialog.h"
 #include "ui/PasinoLoginDialog.h"
 #include "ui/TowerLoginDialog.h"
+#include "ui/WinnaLoginDialog.h"
 #include "bot/CasinoCurrencies.h"
 #include "bot/StakeTransport.h" // ExtensionTransport::bareHost / stakeHosts
 
@@ -247,6 +248,7 @@ OptionsDialog::OptionsDialog(QWidget *parent)
     m_casinoCombo->addItem(tr("Paradice.in"), int(LiveSettings::Casino::Paradice));
     m_casinoCombo->addItem(tr("Pasino.com"), int(LiveSettings::Casino::Pasino));
     m_casinoCombo->addItem(tr("Tower.bet"), int(LiveSettings::Casino::Tower));
+    m_casinoCombo->addItem(tr("Winna.com"), int(LiveSettings::Casino::Winna));
     m_casinoCombo->setToolTip(tr("Casino to bet on (same as the Casino menu)"));
     liveForm->addRow(tr("Casino:"), m_casinoCombo);
 
@@ -345,6 +347,21 @@ OptionsDialog::OptionsDialog(QWidget *parent)
     m_towerLoginBtn->setEnabled(TowerLoginDialog::isAvailable());
     liveForm->addRow(QString(), m_towerLoginBtn);
     connect(m_towerLoginBtn, &QPushButton::clicked, this, &OptionsDialog::onTowerLogin);
+
+    // Winna only (cf_clearance / User-Agent rows above are shared with Tower).
+    m_winnaDeviceEdit = new QLineEdit;
+    m_winnaDeviceEdit->setPlaceholderText(tr("localStorage \"wn-antifraud-device-id\" → id"));
+    m_winnaDeviceEdit->setToolTip(tr("Sent as the x-antifraud-device-id header (the \"id\" inside "
+                                     "localStorage \"wn-antifraud-device-id\"; the whole JSON can be pasted)."));
+    liveForm->addRow(tr("Device ID:"), m_winnaDeviceEdit);
+
+    m_winnaLoginBtn = new QPushButton(tr("Open Winna && Log in - to autofill data"));
+    m_winnaLoginBtn->setToolTip(
+        tr("Opens winna.com in a browser window. After you log in, the session (\"connect.sid\" "
+           "cookie), cf_clearance, device id and User-Agent are filled in automatically."));
+    m_winnaLoginBtn->setEnabled(WinnaLoginDialog::isAvailable());
+    liveForm->addRow(QString(), m_winnaLoginBtn);
+    connect(m_winnaLoginBtn, &QPushButton::clicked, this, &OptionsDialog::onWinnaLogin);
 
     // Duel only: UUID and cf_clearance (the Token is the "duel" cookie).
     m_duelUuidEdit = new QLineEdit;
@@ -454,7 +471,7 @@ OptionsDialog::OptionsDialog(QWidget *parent)
     // A login result belongs to the inputs it was made with: editing them clears it.
     for (QLineEdit *edit : {m_siteEdit, m_apiKeyEdit, m_clearanceEdit, m_correlationEdit,
                             m_browserIdEdit, m_duelUuidEdit, m_duelClearanceEdit,
-                            m_towerClearanceEdit, m_towerUserAgentEdit}) {
+                            m_towerClearanceEdit, m_towerUserAgentEdit, m_winnaDeviceEdit}) {
         if (!edit)
             continue;
         connect(edit, &QLineEdit::textEdited, m_loginStatus, &QLabel::clear);
@@ -465,7 +482,7 @@ OptionsDialog::OptionsDialog(QWidget *parent)
     connect(m_siteEdit, &QLineEdit::textEdited, this, &OptionsDialog::siteEdited);
     // Wolfbet's / Paradice's / Pasino's currency list needs the token: fetch it once one is entered.
     connect(m_apiKeyEdit, &QLineEdit::editingFinished, this, [this] {
-        if (m_wolfbet || m_paradice || m_pasino || m_tower)
+        if (m_wolfbet || m_paradice || m_pasino || m_tower || m_winna)
             updateCurrencyList();
     });
 
@@ -638,11 +655,13 @@ void OptionsDialog::applyCasinoUi()
     const bool paradice = m_paradice;
     const bool pasino = m_pasino;
     const bool tower = m_tower;
+    const bool winna = m_winna;
     const bool tokenOnly = goated || wolfbet || paradice || pasino; // the token is the only input
-    const bool noSite = tokenOnly || tower;          // no "Site / mirror" input
+    const bool noSite = tokenOnly || tower || winna; // no "Site / mirror" input
     const bool direct = shuffle || noSite || duel; // all but Stake use "Direct mode"
 
-    m_liveBox->setTitle(tower ? tr("Live betting — Tower")
+    m_liveBox->setTitle(winna ? tr("Live betting — Winna")
+                        : tower ? tr("Live betting — Tower")
                         : pasino ? tr("Live betting — Pasino")
                         : paradice ? tr("Live betting — Paradice")
                         : duel ? tr("Live betting — Duel")
@@ -662,8 +681,9 @@ void OptionsDialog::applyCasinoUi()
 
     // "API key" is the "Token" on Shuffle, Goated and Wolfbet.
     if (auto *label = qobject_cast<QLabel *>(m_liveForm->labelForField(m_apiKeyEdit)))
-        label->setText(direct ? tr("Token:") : tr("API key:"));
-    m_apiKeyEdit->setPlaceholderText(tower ? tr("\"__tt\" cookie value (Bearer token)")
+        label->setText(winna ? tr("Session:") : direct ? tr("Token:") : tr("API key:"));
+    m_apiKeyEdit->setPlaceholderText(winna ? tr("\"connect.sid\" cookie value (s%3A…)")
+                                     : tower ? tr("\"__tt\" cookie value (Bearer token)")
                                      : pasino ? tr("localStorage \"token\" (64 hex characters)")
                                      : paradice ? tr("localStorage \"token\" (JWT)")
                                      : duel ? tr("\"duel\" cookie value")
@@ -684,9 +704,11 @@ void OptionsDialog::applyCasinoUi()
     setFormRowVisible(m_wolfbetLoginBtn, wolfbet);
     setFormRowVisible(m_paradiceLoginBtn, paradice);
     setFormRowVisible(m_pasinoLoginBtn, pasino);
-    setFormRowVisible(m_towerClearanceEdit, tower);
-    setFormRowVisible(m_towerUserAgentEdit, tower);
+    setFormRowVisible(m_towerClearanceEdit, tower || winna);
+    setFormRowVisible(m_towerUserAgentEdit, tower || winna);
     setFormRowVisible(m_towerLoginBtn, tower);
+    setFormRowVisible(m_winnaDeviceEdit, winna);
+    setFormRowVisible(m_winnaLoginBtn, winna);
     setFormRowVisible(m_duelUuidEdit, duel);
     setFormRowVisible(m_duelClearanceEdit, duel);
     setFormRowVisible(m_duelLoginBtn, duel);
@@ -701,7 +723,7 @@ void OptionsDialog::updateAuthFields()
     m_userAgentEdit->setEnabled(!ext);
     m_extStatus->setEnabled(ext);
     if (m_grabCookieBtn)
-        m_grabCookieBtn->setEnabled(!ext && !m_shuffle && !m_goated && !m_wolfbet && !m_duel && !m_paradice && !m_pasino && !m_tower
+        m_grabCookieBtn->setEnabled(!ext && !m_shuffle && !m_goated && !m_wolfbet && !m_duel && !m_paradice && !m_pasino && !m_tower && !m_winna
                                     && CookieGrabberDialog::isAvailable());
     updateExtensionStatusText();
 }
@@ -711,7 +733,8 @@ LiveSettings OptionsDialog::liveSettings() const
     // Start from what we were given so the other casino's values are kept.
     LiveSettings s = m_base;
     s.enabled = m_liveEnable->isChecked();
-    s.casino = m_tower ? LiveSettings::Casino::Tower
+    s.casino = m_winna ? LiveSettings::Casino::Winna
+               : m_tower ? LiveSettings::Casino::Tower
                : m_pasino ? LiveSettings::Casino::Pasino
                : m_paradice ? LiveSettings::Casino::Paradice
                : m_duel ? LiveSettings::Casino::Duel
@@ -723,6 +746,11 @@ LiveSettings OptionsDialog::liveSettings() const
         s.duelToken = m_apiKeyEdit->text().trimmed();
         s.duelUuid = m_duelUuidEdit->text().trimmed();
         s.duelClearance = m_duelClearanceEdit->text().trimmed();
+    } else if (m_winna) {
+        s.winnaSession = m_apiKeyEdit->text().trimmed();
+        s.winnaClearance = m_towerClearanceEdit->text().trimmed();
+        s.winnaUserAgent = m_towerUserAgentEdit->text().trimmed();
+        s.winnaDeviceId = m_winnaDeviceEdit->text().trimmed();
     } else if (m_tower) {
         s.towerToken = m_apiKeyEdit->text().trimmed();
         s.towerClearance = m_towerClearanceEdit->text().trimmed();
@@ -764,6 +792,7 @@ void OptionsDialog::setLiveSettings(const LiveSettings &s)
     m_paradice = s.isParadice();
     m_pasino = s.isPasino();
     m_tower = s.isTower();
+    m_winna = s.isWinna();
     {
         const QSignalBlocker blocker(m_casinoCombo);
         m_casinoCombo->setCurrentIndex(qMax(0, m_casinoCombo->findData(int(s.casino))));
@@ -778,6 +807,12 @@ void OptionsDialog::setLiveSettings(const LiveSettings &s)
         m_apiKeyEdit->setText(s.duelToken);
         m_duelUuidEdit->setText(s.duelUuid);
         m_duelClearanceEdit->setText(s.duelClearance);
+    } else if (m_winna) {
+        m_authCombo->setCurrentIndex(s.usesExtension(s.casino) ? 1 : 0); // Direct mode / extension
+        m_apiKeyEdit->setText(s.winnaSession);
+        m_towerClearanceEdit->setText(s.winnaClearance);
+        m_towerUserAgentEdit->setText(s.winnaUserAgent);
+        m_winnaDeviceEdit->setText(s.winnaDeviceId);
     } else if (m_tower) {
         m_authCombo->setCurrentIndex(s.usesExtension(s.casino) ? 1 : 0); // Direct mode / extension
         m_apiKeyEdit->setText(s.towerToken);
@@ -868,7 +903,7 @@ void OptionsDialog::setLiveCurrencies(const QStringList &codes, const QString &s
     // those at 0): it is the same list the dropdown fetches, so keep it.
     const auto casino = static_cast<LiveSettings::Casino>(m_casinoCombo->currentData().toInt());
     if ((casino == LiveSettings::Casino::Wolfbet || casino == LiveSettings::Casino::Paradice
-         || casino == LiveSettings::Casino::Pasino)
+         || casino == LiveSettings::Casino::Pasino || casino == LiveSettings::Casino::Winna)
         && codes.size() > 1) {
         QStringList all;
         for (const QString &c : codes)
@@ -939,7 +974,8 @@ void OptionsDialog::updateCurrencyList()
     // Wolfbet's list needs the token: it is fetched once one is filled in.
     if (CasinoCurrencies::hasSource(casino) && !m_currencyListFetched[int(casino)]) {
         const QString token = m_apiKeyEdit ? m_apiKeyEdit->text().trimmed() : QString();
-        const bool tower = casino == LiveSettings::Casino::Tower;
+        const bool tower = casino == LiveSettings::Casino::Tower
+                           || casino == LiveSettings::Casino::Winna; // cf_clearance + User-Agent
         m_currencyListFetched[int(casino)] = CasinoCurrencies::fetch(
             casino, this,
             [this, casino](const QStringList &) {
@@ -948,7 +984,8 @@ void OptionsDialog::updateCurrencyList()
             },
             token,
             tower ? m_towerClearanceEdit->text().trimmed() : QString(),
-            tower ? m_towerUserAgentEdit->text().trimmed() : QString());
+            tower ? m_towerUserAgentEdit->text().trimmed() : QString(),
+            casino == LiveSettings::Casino::Winna ? m_winnaDeviceEdit->text().trimmed() : QString());
     }
 }
 
@@ -978,6 +1015,8 @@ QString OptionsDialog::missingLoginData() const
     // "Browser extension": every token / id / API key is read from the casino's tab.
     if (m_authCombo && m_authCombo->currentIndex() == 1)
         return QString();
+    if (m_winna) // cf_clearance / device id are optional
+        return empty(m_apiKeyEdit) ? tr("the session (\"connect.sid\" cookie) is empty.") : QString();
     if (m_tower) // cf_clearance is optional (only needed when Cloudflare challenges)
         return empty(m_apiKeyEdit) ? tr("the token (\"__tt\" cookie) is empty.") : QString();
     if (m_goated || m_wolfbet || m_paradice || m_pasino)
@@ -1028,6 +1067,8 @@ QString OptionsDialog::autoFetchKey() const
         parts << s.pasinoToken;
     else if (s.isTower())
         parts << s.towerToken << s.towerClearance << s.towerUserAgent;
+    else if (s.isWinna())
+        parts << s.winnaSession << s.winnaClearance << s.winnaUserAgent << s.winnaDeviceId;
     else if (s.isGoated())
         parts << s.goatedToken;
     else if (s.isShuffle())
@@ -1095,6 +1136,12 @@ void OptionsDialog::setGrabbedCredentials(const LiveSettings &grabbed)
         m_apiKeyEdit->setText(grabbed.towerToken);
         if (!grabbed.towerClearance.isEmpty())
             m_towerClearanceEdit->setText(grabbed.towerClearance);
+        break;
+    case LiveSettings::Casino::Winna:
+        if (!grabbed.winnaSession.isEmpty())
+            m_apiKeyEdit->setText(grabbed.winnaSession);
+        if (!grabbed.winnaDeviceId.isEmpty())
+            m_winnaDeviceEdit->setText(grabbed.winnaDeviceId);
         break;
     case LiveSettings::Casino::Duel:
         if (!grabbed.duelToken.isEmpty())
@@ -1180,9 +1227,24 @@ void OptionsDialog::onGrabCookie()
         setLoginStatus(tr("cf_clearance captured — press Log in to verify."), true);
     }
 }
+void OptionsDialog::clearLoginInputs()
+{
+    // Only the selected casino's values are shown in these inputs; the others' are hidden and
+    // not read for this casino, so emptying all of them is safe. "Site / mirror" is kept: it
+    // says which site the login window opens.
+    for (QLineEdit *edit : {m_apiKeyEdit, m_clearanceEdit, m_userAgentEdit, m_correlationEdit,
+                            m_browserIdEdit, m_duelUuidEdit, m_duelClearanceEdit,
+                            m_towerClearanceEdit, m_towerUserAgentEdit, m_winnaDeviceEdit}) {
+        if (edit)
+            edit->clear();
+    }
+    m_loginStatus->clear();
+}
+
 void OptionsDialog::onShuffleLogin()
 {
     const CursorRestorer restoreCursor; // WebView2 bug: the pointer may stay hidden after `dlg`
+    clearLoginInputs(); // the login window fills them in again, like fresh data
     ShuffleLoginDialog dlg(m_siteEdit->text().trimmed(), this);
     if (dlg.exec() != QDialog::Accepted)
         return;
@@ -1190,6 +1252,7 @@ void OptionsDialog::onShuffleLogin()
     m_apiKeyEdit->setText(dlg.token());
     m_correlationEdit->setText(dlg.correlationUserId());
     m_browserIdEdit->setText(dlg.browserId());
+    emit credentialsCaptured(liveSettings()); // saved at once (not only with OK)
     setLoginStatus(tr("Shuffle token captured — press Log in to verify."), true);
     // Shuffle's currency list is built in: no auto fetch.
 }
@@ -1197,11 +1260,13 @@ void OptionsDialog::onShuffleLogin()
 void OptionsDialog::onGoatedLogin()
 {
     const CursorRestorer restoreCursor; // WebView2 bug: the pointer may stay hidden after `dlg`
+    clearLoginInputs(); // the login window fills them in again, like fresh data
     GoatedLoginDialog dlg(this);
     if (dlg.exec() != QDialog::Accepted)
         return;
 
     m_apiKeyEdit->setText(dlg.token());
+    emit credentialsCaptured(liveSettings()); // saved at once (not only with OK)
     setLoginStatus(tr("Goated token captured."), true);
     maybeAutoFetch(); // loads the account's currencies
 }
@@ -1209,11 +1274,13 @@ void OptionsDialog::onGoatedLogin()
 void OptionsDialog::onWolfbetLogin()
 {
     const CursorRestorer restoreCursor; // WebView2 bug: the pointer may stay hidden after `dlg`
+    clearLoginInputs(); // the login window fills them in again, like fresh data
     WolfbetLoginDialog dlg(this);
     if (dlg.exec() != QDialog::Accepted)
         return;
 
     m_apiKeyEdit->setText(dlg.token());
+    emit credentialsCaptured(liveSettings()); // saved at once (not only with OK)
     setLoginStatus(tr("Wolfbet token captured."), true);
     updateCurrencyList(); // the currency list needs the token
     maybeAutoFetch();     // loads the account's currencies
@@ -1222,11 +1289,13 @@ void OptionsDialog::onWolfbetLogin()
 void OptionsDialog::onParadiceLogin()
 {
     const CursorRestorer restoreCursor; // WebView2 bug: the pointer may stay hidden after `dlg`
+    clearLoginInputs(); // the login window fills them in again, like fresh data
     ParadiceLoginDialog dlg(this);
     if (dlg.exec() != QDialog::Accepted)
         return;
 
     m_apiKeyEdit->setText(dlg.token());
+    emit credentialsCaptured(liveSettings()); // saved at once (not only with OK)
     setLoginStatus(tr("Paradice token captured."), true);
     updateCurrencyList(); // the currency list needs the token
     m_autoFetchedKey[int(LiveSettings::Casino::Paradice)].clear();
@@ -1236,11 +1305,13 @@ void OptionsDialog::onParadiceLogin()
 void OptionsDialog::onPasinoLogin()
 {
     const CursorRestorer restoreCursor; // WebView2 bug: the pointer may stay hidden after `dlg`
+    clearLoginInputs(); // the login window fills them in again, like fresh data
     PasinoLoginDialog dlg(this);
     if (dlg.exec() != QDialog::Accepted)
         return;
 
     m_apiKeyEdit->setText(dlg.token());
+    emit credentialsCaptured(liveSettings()); // saved at once (not only with OK)
     setLoginStatus(tr("Pasino token captured."), true);
     updateCurrencyList(); // the currency list needs the token
     m_autoFetchedKey[int(LiveSettings::Casino::Pasino)].clear();
@@ -1250,6 +1321,7 @@ void OptionsDialog::onPasinoLogin()
 void OptionsDialog::onTowerLogin()
 {
     const CursorRestorer restoreCursor; // WebView2 bug: the pointer may stay hidden after `dlg`
+    clearLoginInputs(); // the login window fills them in again, like fresh data
     TowerLoginDialog dlg(this);
     if (dlg.exec() != QDialog::Accepted)
         return;
@@ -1259,6 +1331,7 @@ void OptionsDialog::onTowerLogin()
     // cf_clearance only works with the User-Agent of the browser that got it.
     if (!dlg.userAgent().isEmpty())
         m_towerUserAgentEdit->setText(dlg.userAgent());
+    emit credentialsCaptured(liveSettings()); // saved at once (not only with OK)
     setLoginStatus(dlg.clearance().isEmpty()
                        ? tr("Tower token captured (no cf_clearance cookie was set).")
                        : tr("Tower token and cf_clearance captured."),
@@ -1269,9 +1342,38 @@ void OptionsDialog::onTowerLogin()
     maybeAutoFetch();     // loads the account's balances
 }
 
+void OptionsDialog::onWinnaLogin()
+{
+    const CursorRestorer restoreCursor; // WebView2 bug: the pointer may stay hidden after `dlg`
+    // Every login starts from scratch: the inputs are emptied and the login window removes the
+    // old winna.com cookies / site data first (like "Clear data"), so no stale session is captured.
+    clearLoginInputs();
+    WinnaLoginDialog dlg(true, this);
+    if (dlg.exec() != QDialog::Accepted)
+        return;
+
+    m_apiKeyEdit->setText(dlg.session());
+    m_towerClearanceEdit->setText(dlg.clearance());
+    if (!dlg.deviceId().isEmpty())
+        m_winnaDeviceEdit->setText(dlg.deviceId());
+    // cf_clearance only works with the User-Agent of the browser that got it.
+    if (!dlg.userAgent().isEmpty())
+        m_towerUserAgentEdit->setText(dlg.userAgent());
+    emit credentialsCaptured(liveSettings()); // saved at once (not only with OK)
+    setLoginStatus(dlg.clearance().isEmpty()
+                       ? tr("Winna session captured (no cf_clearance cookie was set).")
+                       : tr("Winna session and cf_clearance captured."),
+                   true);
+    m_currencyListFetched[int(LiveSettings::Casino::Winna)] = false;
+    updateCurrencyList();
+    m_autoFetchedKey[int(LiveSettings::Casino::Winna)].clear();
+    maybeAutoFetch();     // loads the account's balances
+}
+
 void OptionsDialog::onDuelLogin()
 {
     const CursorRestorer restoreCursor; // WebView2 bug: the pointer may stay hidden after `dlg`
+    clearLoginInputs(); // the login window fills them in again, like fresh data
     DuelLoginDialog dlg(LiveSettings::hostOf(m_siteEdit->text(), QStringLiteral("duel.com")), this);
     if (dlg.exec() != QDialog::Accepted)
         return;
@@ -1283,6 +1385,7 @@ void OptionsDialog::onDuelLogin()
     // the other settings (not shown, used by the Duel transport).
     if (!dlg.userAgent().isEmpty())
         m_base.duelUserAgent = dlg.userAgent();
+    emit credentialsCaptured(liveSettings()); // saved at once (not only with OK)
     setLoginStatus(dlg.clearance().isEmpty()
                        ? tr("Duel token and UUID captured (no cf_clearance cookie was set).")
                        : tr("Duel token, UUID and cf_clearance captured."),
@@ -1296,6 +1399,7 @@ void OptionsDialog::onDuelLogin()
 void OptionsDialog::onStakeLogin()
 {
     const CursorRestorer restoreCursor; // WebView2 bug: the pointer may stay hidden after `dlg`
+    clearLoginInputs(); // the login window fills them in again, like fresh data
     StakeLoginDialog dlg(LiveSettings::hostOf(m_siteEdit->text(), QStringLiteral("stake.com")), this);
     if (dlg.exec() != QDialog::Accepted)
         return;
@@ -1309,6 +1413,7 @@ void OptionsDialog::onStakeLogin()
         m_userAgentEdit->setText(dlg.userAgent());
 
     const QString who = dlg.userName().isEmpty() ? QString() : tr(" (%1)").arg(dlg.userName());
+    emit credentialsCaptured(liveSettings()); // saved at once (not only with OK)
     setLoginStatus(dlg.clearance().isEmpty()
                        ? tr("Stake API key captured%1 (no cf_clearance cookie was set).").arg(who)
                        : tr("Stake API key and cf_clearance captured%1.").arg(who),

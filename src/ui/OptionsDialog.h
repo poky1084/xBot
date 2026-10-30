@@ -82,6 +82,9 @@ signals:
     // The user typed in "Site / mirror": liveSettings() holds the new site of the shown casino
     // (saved right away, not only when the dialog is accepted).
     void siteEdited();
+    // An "Open … & Log in" window filled in new login data (liveSettings() of the shown casino):
+    // the owner saves it at once, so it is kept even if the dialog is not closed with OK.
+    void credentialsCaptured(const LiveSettings &settings);
 
 private:
     void updateAuthFields();
@@ -90,7 +93,7 @@ private:
     void onCasinoChanged(int index);
     // Adapts the "Live betting" box to the casino chosen in the Casino selector / menu
     // (Shuffle: Token, Direct mode only, USER_ID, BROWSER_ID;
-    // Goated, Wolfbet, Paradice, Pasino: just the Token; Tower: Token, cf_clearance, User-Agent; Duel: Token, UUID, cf_clearance;
+    // Goated, Wolfbet, Paradice, Pasino: just the Token; Tower: Token, cf_clearance, User-Agent; Winna: Session, cf_clearance, User-Agent, Device ID; Duel: Token, UUID, cf_clearance;
     // Stake: API key, cf_clearance and the "Open Stake & Login" button).
     void applyCasinoUi();
     // The bet currency was typed / changed: fetch the balance for it (0 if the account
@@ -109,12 +112,16 @@ private:
     QString autoFetchKey() const;
     void onClearData();
 	void onGrabCookie();
+    // "Open … & Log in" clicked: empty every login input (token / API key, cookies, ids,
+    // User-Agent) and the status, so the window's answer fills them in like fresh data.
+    void clearLoginInputs();
     void onShuffleLogin();
     void onGoatedLogin();
     void onWolfbetLogin();
     void onParadiceLogin();
     void onPasinoLogin();
     void onTowerLogin();
+    void onWinnaLogin();
     void onDuelLogin();
     void onStakeLogin();
     QComboBox *m_themeCombo = nullptr;
@@ -132,6 +139,7 @@ private:
     bool m_paradice = false;
     bool m_pasino = false;
     bool m_tower = false;
+    bool m_winna = false;
     bool m_duel = false;
     QGroupBox *m_liveBox = nullptr;
     QFormLayout *m_liveForm = nullptr;
@@ -139,8 +147,9 @@ private:
     QLineEdit *m_browserIdEdit = nullptr;
     QLineEdit *m_duelUuidEdit = nullptr;       // Duel only
     QLineEdit *m_duelClearanceEdit = nullptr;  // Duel only
-    QLineEdit *m_towerClearanceEdit = nullptr; // Tower only
-    QLineEdit *m_towerUserAgentEdit = nullptr; // Tower only
+    QLineEdit *m_towerClearanceEdit = nullptr; // Tower / Winna: cf_clearance
+    QLineEdit *m_towerUserAgentEdit = nullptr; // Tower / Winna: User-Agent
+    QLineEdit *m_winnaDeviceEdit = nullptr;    // Winna only
 
     QCheckBox *m_liveEnable = nullptr;
     QComboBox *m_casinoCombo = nullptr;
@@ -165,6 +174,7 @@ private:
     QPushButton *m_paradiceLoginBtn = nullptr;
     QPushButton *m_pasinoLoginBtn = nullptr;
     QPushButton *m_towerLoginBtn = nullptr;
+    QPushButton *m_winnaLoginBtn = nullptr;
     QPushButton *m_duelLoginBtn = nullptr;
     QPushButton *m_stakeLoginBtn = nullptr;
     QLabel *m_loginStatus = nullptr;

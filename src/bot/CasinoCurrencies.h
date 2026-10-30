@@ -19,6 +19,9 @@
 //   Tower:   GET https://tower.bet/api/currencies (Bearer token; cf_clearance + User-Agent in
 //            Direct mode) -> [].symbol in the site's "order"; until the first fetch the site's
 //            list as of this writing (TowerTransport::defaultCurrencies()).
+//   Winna:   GET https://api2.winna.com/v1/payments/wallets (session cookie; cf_clearance +
+//            User-Agent in Direct mode) -> response.payload[].coin (each listed twice: main and
+//            vault); until the first fetch the site's list (WinnaTransport::defaultCurrencies()).
 //   Stake:   no public list; the Options dialog collects the currencies from the
 //            UserBalances answer (fetched automatically once Site + API key are filled in)
 //            and merges them into this cache.
@@ -36,6 +39,7 @@
 #include "bot/ParadiceTransport.h"
 #include "bot/PasinoTransport.h"
 #include "bot/TowerTransport.h"
+#include "bot/WinnaTransport.h"
 #include "bot/WolfbetTransport.h"
 
 #include <QCoreApplication>
@@ -72,7 +76,7 @@ inline bool hasSource(LiveSettings::Casino casino)
 {
     return casino == LiveSettings::Casino::Goated || casino == LiveSettings::Casino::Wolfbet
            || casino == LiveSettings::Casino::Paradice || casino == LiveSettings::Casino::Pasino
-           || casino == LiveSettings::Casino::Tower;
+           || casino == LiveSettings::Casino::Tower || casino == LiveSettings::Casino::Winna;
 }
 
 // Casinos with a fixed currency list (in the site's own order).
@@ -106,6 +110,9 @@ inline QStringList cached(LiveSettings::Casino casino)
     // Tower: the site's list until the first fetch.
     if (casino == LiveSettings::Casino::Tower && mem.value(int(casino)).isEmpty())
         return TowerTransport::defaultCurrencies();
+    // Winna: the site's list until the first fetch.
+    if (casino == LiveSettings::Casino::Winna && mem.value(int(casino)).isEmpty())
+        return WinnaTransport::defaultCurrencies();
     return mem.value(int(casino));
 }
 
@@ -190,13 +197,15 @@ inline QStringList parseGoated(const QByteArray &body)
 // Fetches the casino's currency list. On success the list is cached and `done` runs with it
 // (only while `context` is alive); on failure nothing happens and the cached list stays.
 // `token`: the login token, for casinos whose list needs it (Wolfbet, Paradice, Pasino, Tower);
-// `clearance` / `userAgent`: Tower's cf_clearance cookie and its browser's User-Agent. Returns false when
+// `clearance` / `userAgent`: Tower's / Winna's cf_clearance cookie and its browser's User-Agent
+// (for Winna `token` is the "connect.sid" session and `deviceId` the antifraud device id). Returns false when
 // nothing was requested (no source, or the needed token is empty).
 inline bool fetch(LiveSettings::Casino casino, QObject *context,
                   std::function<void(const QStringList &)> done,
                   const QString &token = QString(),
                   const QString &clearance = QString(),
-                  const QString &userAgent = QString())
+                  const QString &userAgent = QString(),
+                  const QString &deviceId = QString())
 {
     if (!hasSource(casino))
         return false;
@@ -252,8 +261,18 @@ inline bool fetch(LiveSettings::Casino casino, QObject *context,
         req = TowerTransport::buildRequest(QStringLiteral("currencies"), clean,
                                            TowerTransport::cleanClearance(clearance), userAgent);
         parse = TowerTransport::parseCurrencies;
+    } else if (casino == LiveSettings::Casino::Winna) {
+        WinnaCredentials wc;
+        wc.session = WinnaTransport::cleanSession(token);
+        if (wc.session.isEmpty())
+            return false;
+        wc.clearance = WinnaTransport::cleanClearance(clearance);
+        wc.userAgent = userAgent.trimmed();
+        wc.deviceId = WinnaTransport::cleanDeviceId(deviceId);
+        req = WinnaTransport::buildApiRequest(QStringLiteral("v1/payments/wallets"), wc);
+        parse = WinnaTransport::parseWalletCoins;
     }
-    if (casino != LiveSettings::Casino::Tower) {
+    if (casino != LiveSettings::Casino::Tower && casino != LiveSettings::Casino::Winna) {
         req.setRawHeader("Accept", "application/json, text/plain, */*");
         req.setHeader(QNetworkRequest::UserAgentHeader, detail::userAgent());
     }

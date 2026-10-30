@@ -502,13 +502,20 @@ void ExtensionTransport::fetch(const QStringList &pageHosts, const QByteArray &m
         headers.insert(QStringLiteral("Content-Type"), contentType.toString());
     const QList<QByteArray> names = req.rawHeaderList();
     for (const QByteArray &name : names) {
-        if (forwardHeader(name) && name.toLower() != "content-type")
+        // "X-Xbot-Credentials" is not sent: it sets fetch()'s credentials mode (below).
+        if (forwardHeader(name) && name.toLower() != "content-type"
+            && name.toLower() != "x-xbot-credentials")
             headers.insert(QString::fromLatin1(name), QString::fromUtf8(req.rawHeader(name)));
     }
 
     QJsonObject options;
     options.insert(QStringLiteral("method"), QString::fromLatin1(method));
     options.insert(QStringLiteral("headers"), headers);
+    // An API on another host of the same site (e.g. api2.winna.com from the winna.com tab) only
+    // gets the tab's cookies with credentials "include".
+    const QByteArray credentials = req.rawHeader("X-Xbot-Credentials").trimmed();
+    if (!credentials.isEmpty())
+        options.insert(QStringLiteral("credentials"), QString::fromLatin1(credentials));
     if (!body.isEmpty())
         options.insert(QStringLiteral("body"), QString::fromUtf8(body));
 

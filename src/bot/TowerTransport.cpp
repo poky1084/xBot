@@ -1,5 +1,7 @@
 #include "bot/TowerTransport.h"
 
+#include "bot/NoCookieJar.h"
+
 #include <QJsonArray>
 #include <QJsonDocument>
 #include <QNetworkReply>
@@ -58,6 +60,8 @@ QString stripName(QString t, const QString &name)
 TowerTransport::TowerTransport(QObject *parent)
     : IStakeTransport(parent)
 {
+    // Only the cookies from Options are sent (see NoCookieJar.h).
+    m_nam.setCookieJar(new NoCookieJar(&m_nam));
 }
 
 QString TowerTransport::defaultUserAgent()
@@ -153,6 +157,7 @@ QNetworkRequest TowerTransport::buildRequest(const QString &path, const QString 
     req.setHeader(QNetworkRequest::UserAgentHeader,
                   userAgent.trimmed().isEmpty() ? defaultUserAgent() : userAgent.trimmed());
     req.setTransferTimeout(kRequestTimeoutMs);
+    manualCookies(req); // also when sent through a shared QNetworkAccessManager (currency list)
     return req;
 }
 

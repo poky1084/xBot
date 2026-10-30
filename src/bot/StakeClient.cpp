@@ -7,6 +7,7 @@
 #include "bot/ParadiceTransport.h"
 #include "bot/PasinoTransport.h"
 #include "bot/TowerTransport.h"
+#include "bot/WinnaTransport.h"
 #include "bot/ShuffleTransport.h"
 #include "bot/WolfbetTransport.h"
 
@@ -16,6 +17,7 @@
 #include <QRandomGenerator>
 #include <QTimer>
 
+#include <algorithm>
 #include <cmath>
 #include <utility>
 
@@ -193,6 +195,14 @@ void StakeClient::setTransport(IStakeTransport *transport)
         m_shuffleConnections << connect(tower, &TowerTransport::balancesFailed, this,
                                         &StakeClient::balancesFailed);
     }
+    if (auto *winna = qobject_cast<WinnaTransport *>(transport)) {
+        // Winna: balances are read over HTTPS; same signals as the other casinos.
+        winna->setCoin(m_currency);
+        m_shuffleConnections << connect(winna, &WinnaTransport::balancesUpdated, this,
+                                        &StakeClient::balancesReady);
+        m_shuffleConnections << connect(winna, &WinnaTransport::balancesFailed, this,
+                                        &StakeClient::balancesFailed);
+    }
     if (auto *duel = qobject_cast<DuelTransport *>(transport)) {
         // Duel: balances are read over HTTPS; same signals as the other casinos.
         m_shuffleConnections << connect(duel, &DuelTransport::balancesUpdated, this,
@@ -237,11 +247,18 @@ bool StakeClient::isTower() const
     return qobject_cast<TowerTransport *>(m_transport) != nullptr;
 }
 
+bool StakeClient::isWinna() const
+{
+    return qobject_cast<WinnaTransport *>(m_transport) != nullptr;
+}
+
 void StakeClient::setCurrency(const QString &currency)
 {
     m_currency = currency.trimmed().toLower();
     if (auto *shuffle = qobject_cast<ShuffleTransport *>(m_transport))
         shuffle->setWantedCurrency(m_currency);
+    if (auto *winna = qobject_cast<WinnaTransport *>(m_transport))
+        winna->setCoin(m_currency); // the game session is started for this coin
 }
 
 QString StakeClient::randomIdentifier()
@@ -295,6 +312,12 @@ void StakeClient::rotateSeedPair(const QString &clientSeed)
     if (isTower()) {
         QTimer::singleShot(0, this, [this] {
             emit seedRotateFailed(tr("Tower: seed rotation is not supported yet (change the seed on the site)."));
+        });
+        return;
+    }
+    if (isWinna()) {
+        QTimer::singleShot(0, this, [this] {
+            emit seedRotateFailed(tr("Winna: seed rotation is not supported yet (change the seed on the site)."));
         });
         return;
     }
@@ -484,6 +507,10 @@ void StakeClient::vaultDeposit(double amount)
         QTimer::singleShot(0, this, [this] { emit vaultFailed(tr("Tower: vault deposits are not supported.")); });
         return;
     }
+    if (isWinna()) {
+        QTimer::singleShot(0, this, [this] { emit vaultFailed(tr("Winna: vault deposits are not supported.")); });
+        return;
+    }
     if (!isShuffle()) {
         stakeVaultDeposit(amount);
         return;
@@ -655,6 +682,11 @@ void StakeClient::fetchBalances()
         tower->requestBalances();
         return;
     }
+    // Winna: GET api2.winna.com/v1/payments/wallets; results arrive through the transport's signals.
+    if (auto *winna = qobject_cast<WinnaTransport *>(m_transport)) {
+        winna->requestBalances();
+        return;
+    }
 
     postBalanceQuery(m_transport, false);
 }
@@ -728,7 +760,7 @@ void StakeClient::postBalanceQuery(IStakeTransport *via, bool background)
 void StakeClient::lookupBetIid(const QString &betId, std::function<void(const QString &)> done)
 {
     QString why;
-    if (betId.isEmpty() || !m_transport || isShuffle() || isGoated() || isWolfbet() || isDuel() || isParadice() || isPasino() || isTower() || !m_transport->isReady(&why)) {
+    if (betId.isEmpty() || !m_transport || isShuffle() || isGoated() || isWolfbet() || isDuel() || isParadice() || isPasino() || isTower() || isWinna() || !m_transport->isReady(&why)) {
         QTimer::singleShot(0, this, [done] { done(QString()); });
         return;
     }
@@ -796,6 +828,10 @@ void StakeClient::placeDice(const DiceBetRequest &request)
         placeTowerDice(request);
         return;
     }
+    if (isWinna()) {
+        placeWinnaDice(request);
+        return;
+    }
 
     const double target = std::round(request.target * 100.0) / 100.0;
 
@@ -851,6 +887,11 @@ void StakeClient::placeLimbo(const LimboBetRequest &request)
     }
     if (isTower()) {
         placeTowerLimbo(request);
+        return;
+    }
+    if (isWinna()) {
+        const LiveBetResult r = failed(tr("Winna: Limbo is not supported yet (dice only)."));
+        QTimer::singleShot(0, this, [this, r] { emit diceFinished(r); });
         return;
     }
 
@@ -1967,6 +2008,126 @@ void StakeClient::placeTowerLimbo(const LimboBetRequest &request)
         const QJsonObject account = json.value(QStringLiteral("account")).toObject();
         if (account.contains(QStringLiteral("newBalance")))
             r.balanceAfter = numberOf(account.value(QStringLiteral("newBalance")));
+        emit diceFinished(r);
+    });
+}
+
+// Winna dice: POST https://originals.winna.com/dice/play  (headers "token: <game jwt>", "sid")
+//   {"bet":"0.01","turbo":true,"data":{"mode":"classic","target":"lower","value":49.5}}
+// "lower" + value 49.5 = roll under 49.50 (range 0 - 49.5); the roll runs 0.00 - 100.00 with a
+// 1 % house edge (49.5 % pays 2x), the same as the app, so the target is sent as it is.
+// The game token belongs to the bet currency: WinnaTransport switches the wallet coin and starts
+// a dice session first (change-wallet-coin + our-game/start).
+// Answer: {"coin":"USDC","status":"win","id":1540147593,"multiplier":2,"wager":0.01,"profit":0.02,
+//   "balance":5,"data":{"number":1.48 (the roll),"win":true,"multiplier":2,"target","value",
+//   "ranges":[{"low":0,"high":49.5}]},"betUuid",…}
+void StakeClient::placeWinnaDice(const DiceBetRequest &request)
+{
+    const double target = std::round(request.target * 100.0) / 100.0;
+    if (!(target > 0.0) || !(target < 100.0)) {
+        const LiveBetResult r = failed(tr("Winna: invalid target %1.").arg(target));
+        QTimer::singleShot(0, this, [this, r] { emit diceFinished(r); });
+        return;
+    }
+    if (auto *winna = qobject_cast<WinnaTransport *>(m_transport))
+        winna->setCoin(m_currency);
+    sendWinnaDice(request.amount, target, request.over, m_winnaOverWord);
+}
+
+void StakeClient::sendWinnaDice(double amount, double target, bool over, int overWord)
+{
+    // "lower" is the site's word for roll under. The word for roll over was not captured yet:
+    // the likely ones are tried in turn, and the one the server accepts is kept.
+    static const QStringList kOverWords{QStringLiteral("higher"), QStringLiteral("upper"),
+                                        QStringLiteral("over"), QStringLiteral("above")};
+    const int wordIndex = std::clamp(overWord, 0, int(kOverWords.size()) - 1);
+
+    // Amount as a plain decimal without trailing zeros ("0.01"), like the site.
+    QString betText = QString::number(std::max(0.0, amount), 'f', 8);
+    while (betText.contains(QLatin1Char('.')) && betText.endsWith(QLatin1Char('0')))
+        betText.chop(1);
+    if (betText.endsWith(QLatin1Char('.')))
+        betText.chop(1);
+
+    QJsonObject data;
+    data.insert(QStringLiteral("mode"), QStringLiteral("classic"));
+    data.insert(QStringLiteral("target"), over ? kOverWords.at(wordIndex) : QStringLiteral("lower"));
+    data.insert(QStringLiteral("value"), target);
+    QJsonObject body;
+    body.insert(QStringLiteral("bet"), betText);
+    body.insert(QStringLiteral("turbo"), true);
+    body.insert(QStringLiteral("data"), data);
+
+    m_transport->post(QStringLiteral("dice/play"), body,
+                      [this, amount, target, over, wordIndex](const TransportReply &reply) {
+        if (!reply.ok) {
+            const bool isTimeout = (reply.status == 0);
+            const bool unknown = (reply.status >= 500 && reply.status != 503);
+            if (reply.status == 0)
+                emit sessionLost(reply.error);
+            emit diceFinished(failed(reply.error, {}, isTimeout, unknown));
+            return;
+        }
+
+        const QJsonObject &json = reply.json;
+        if (reply.status >= 400 || reply.status == 0 || json.contains(QStringLiteral("errors"))) {
+            QString errText = firstErrorText(json, nullptr);
+            if (errText.isEmpty())
+                errText = tr("Winna bet rejected (HTTP %1).").arg(reply.status);
+            // A roll-over bet refused because of its "target" word: try the next word for "over"
+            // (a refused bet was not placed). Other refusals (minimum bet, balance, …) are not retried.
+            const bool targetRejected = containsCI(errText, "target") || containsCI(errText, "one of")
+                                        || containsCI(errText, "enum") || containsCI(errText, "validation");
+            if (over && targetRejected && (reply.status == 400 || reply.status == 422)
+                && wordIndex + 1 < kOverWords.size()) {
+                sendWinnaDice(amount, target, over, wordIndex + 1);
+                return;
+            }
+            LiveBetResult r = failed(errText, {}, isRetryable({}, errText), false);
+            r.retryDelayMs = fastRetryDelayMs({}, errText);
+            emit diceFinished(r);
+            return;
+        }
+        const QJsonObject d = json.value(QStringLiteral("data")).toObject();
+        if (!d.contains(QStringLiteral("number"))) {
+            const QString raw = QString::fromUtf8(QJsonDocument(json).toJson(QJsonDocument::Compact)).left(400);
+            emit diceFinished(failed(tr("Unexpected Winna bet response (no roll found): %1").arg(raw),
+                                     {}, false, true));
+            return;
+        }
+        if (over)
+            m_winnaOverWord = wordIndex; // this word works: keep it
+
+        LiveBetResult r;
+        r.ok = true;
+        r.amount = json.contains(QStringLiteral("wager")) ? numberOf(json.value(QStringLiteral("wager")))
+                                                          : amount;
+        r.roll = numberOf(d.value(QStringLiteral("number")));
+        if (d.value(QStringLiteral("win")).isBool())
+            r.win = d.value(QStringLiteral("win")).toBool();
+        else if (json.value(QStringLiteral("status")).isString())
+            r.win = json.value(QStringLiteral("status")).toString().compare(QLatin1String("win"),
+                                                                            Qt::CaseInsensitive) == 0;
+        else
+            r.win = over ? r.roll > target : r.roll < target;
+
+        if (r.win) {
+            double mult = numberOf(d.value(QStringLiteral("multiplier")));
+            if (!(mult > 0.0))
+                mult = numberOf(json.value(QStringLiteral("multiplier")));
+            if (!(mult > 0.0)) {
+                const double chance = over ? 100.0 - target : target;
+                mult = chance > 0.0 ? 99.0 / chance : 0.0;
+            }
+            r.multiplier = mult;
+            r.payout = r.amount * mult; // "profit" is the amount paid back (0.02 for 0.01 at 2x)
+        }
+
+        const QJsonValue id = json.value(QStringLiteral("id"));
+        r.betId = id.isString() ? id.toString() : QString::number(qint64(numberOf(id)));
+        if (r.betId.isEmpty() || r.betId == QLatin1String("0"))
+            r.betId = json.value(QStringLiteral("betUuid")).toString();
+        r.nonce = -1;
         emit diceFinished(r);
     });
 }

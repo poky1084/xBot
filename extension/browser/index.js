@@ -19,7 +19,7 @@
     return; // already running in this page
   window.__xbotRequestProxy = true;
 
-  const VERSION = '2.2.0';
+  const VERSION = '2.3.0';
   const URL_WS = 'ws://localhost:4444';
   const RECONNECT_MS = 5000;
   const STANDBY_MS = 15000;      // another tab of this site is connected already
@@ -128,7 +128,9 @@
     if (!options.body)
       delete options.body;
     // Default 'same-origin': the page's cookies go with requests to its own site. (Requests to an
-    // API on another host, e.g. apis.goated.com, use their Authorization header instead.)
+    // API on another host, e.g. apis.goated.com, use their Authorization header instead; xBot
+    // sends options.credentials = 'include' when that API needs the site's cookies, e.g.
+    // api2.winna.com from the winna.com tab.)
     options.cache = 'no-store';
     options.redirect = 'follow';
     const timeoutMs = payload.timeoutMs > 0 ? payload.timeoutMs : 15000;

@@ -51,6 +51,9 @@ set(SOURCES
 	src/bot/PasinoTransport.h
 	src/bot/TowerTransport.cpp
 	src/bot/TowerTransport.h
+	src/bot/WinnaTransport.cpp
+	src/bot/WinnaTransport.h
+	src/bot/NoCookieJar.h
 	src/bot/CasinoCurrencies.h
     src/ui/BetHistoryModel.cpp
     src/ui/BetHistoryModel.h
@@ -92,6 +95,8 @@ set(SOURCES
 	src/ui/PasinoLoginDialog.h
 	src/ui/TowerLoginDialog.cpp
 	src/ui/TowerLoginDialog.h
+	src/ui/WinnaLoginDialog.cpp
+	src/ui/WinnaLoginDialog.h
 	src/ui/StakeLoginDialog.cpp
 	src/ui/StakeLoginDialog.h
 	src/ui/DuelBrowser.cpp

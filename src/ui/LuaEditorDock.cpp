@@ -1007,7 +1007,7 @@ void LuaEditorDock::onHelp()
 {
     const bool js = m_lang == ScriptLanguage::JavaScript;
     const QString common = tr(
-		"<code>casino</code> = <code>\"stake\"</code>, <code>\"shuffle\"</code>, <code>\"goated\"</code>, <code>\"wolfbet\"</code>, <code>\"duel\"</code>, <code>\"paradice\"</code>, <code>\"pasino\"</code> or <code>\"tower\"</code> (set casino to play on)<br><br>"
+		"<code>casino</code> = <code>\"stake\"</code>, <code>\"shuffle\"</code>, <code>\"goated\"</code>, <code>\"wolfbet\"</code>, <code>\"duel\"</code>, <code>\"paradice\"</code>, <code>\"pasino\"</code>, <code>\"tower\"</code> or <code>\"winna\"</code> (set casino to play on)<br><br>"
         "<code>game</code> – <code>\"dice\"</code> or <code>\"limbo\"</code> (default: the game "
         "selected in the Game menu); can be changed at any time, e.g. in <code>dobet()</code><br>"
         "<code>currency</code> – currency code to bet in, e.g. <code>\"btc\"</code> or "
