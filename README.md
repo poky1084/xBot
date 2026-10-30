@@ -1,6 +1,6 @@
 # xBot
 
-xBot is a desktop dice and limbo betting bot for **Windows**, written in C++ with Qt 6. It can bet on five casinos: **Stake**, **Shuffle**, **Goated**, **Wolfbet** and **Duel**. You can bet by hand, run auto-bet with on-win and on-loss rules, build rules in the **Condition Builder**, or write your own strategy in **Lua** or **JavaScript**. The layout is modelled on qBittorrent.
+xBot is a desktop dice and limbo betting bot for **Windows**, written in C++ with Qt 6. It can bet on nine casinos: **Stake**, **Shuffle**, **Goated**, **Wolfbet**, **Duel**, **Paradice**, **Pasino**, **Tower.bet** and **Winna**. You can bet by hand, run auto-bet with on-win and on-loss rules, build rules in the **Condition Builder**, or write your own strategy in **Lua** or **JavaScript**. The layout is modelled on qBittorrent.
 
 Every new launch starts in **simulation mode**, which uses play money and a provably fair seed generator that works like Stake's. Real-money betting only starts after you turn it on yourself in *Tools → Options → Live betting*.
 
@@ -38,7 +38,7 @@ Source code and exe: <https://bitbucket.org/poky1084/xbot>
 | Requirement | Why |
 |---|---|
 | **Windows 10 / 11 (64-bit)** | xBot only runs on Windows. It uses the Windows registry for settings and Win32 APIs, and its embedded browser is Microsoft Edge WebView2. |
-| **Microsoft Edge WebView2 Runtime** | Used for the "Open … & Log in" windows, Stake's hidden browser (Cookie mode) and Duel's hidden browser (Direct mode). It is already installed on Windows 11 and on most Windows 10 PCs. If it is missing, download the *Evergreen Runtime* from Microsoft: <https://developer.microsoft.com/microsoft-edge/webview2/> |
+| **Microsoft Edge WebView2 Runtime** | Used for the "Open … & Log in" windows (all casinos except Stake), Stake's hidden browser (Cookie mode) and Duel's hidden browser (Direct mode). It is already installed on Windows 11 and on most Windows 10 PCs. If it is missing, download the *Evergreen Runtime* from Microsoft: <https://developer.microsoft.com/microsoft-edge/webview2/> |
 | **A Chromium browser (Chrome, Edge, Brave…)** *(optional)* | Only needed for [Browser extension mode](#browser-extension-mode). |
 
 If the WebView2 Runtime is missing, the login buttons are disabled, and Stake (Cookie mode) and Duel (Direct mode) report *"Is the WebView2 Runtime installed?"*. In that case, use the Browser extension mode for those casinos.
@@ -54,6 +54,16 @@ If the WebView2 Runtime is missing, the login buttons are disabled, and Stake (C
 | **Goated.com** | Dice, Limbo | *Direct mode* (HTTPS), or *Browser extension* | Token (`g3_token`) | ✅ | Fixed (`goated.com`) |
 | **Wolfbet.com** | Dice, Limbo | *Direct mode* (HTTPS), or *Browser extension* | Token (the `token` cookie) | ❌ | Fixed (`wolfbet.com`) |
 | **Duel.com** | Dice, Limbo | *Direct mode* (hidden WebView2 page), or *Browser extension* | Token (`duel` cookie), UUID (`security:uuid`), optional `cf_clearance` | ❌ | Editable (`duel.com` or a mirror) |
+| **Paradice.in** | Dice | *Direct mode* (HTTPS GraphQL), or *Browser extension* | Token (localStorage `token`, a JWT) | ❌ | Fixed (`paradice.in`) |
+| **Pasino.com** | Dice, Limbo | *Direct mode* (HTTPS), or *Browser extension* | Token (localStorage `token`, 64 hex characters) | ❌ | Fixed (`pasino.com`) |
+| **Tower.bet** | Dice, Limbo | *Direct mode* (HTTPS behind Cloudflare), or *Browser extension* | Token (`__tt` cookie), `cf_clearance`, User-Agent | ❌ | Fixed (`tower.bet`) |
+| **Winna.com** | Dice, Limbo | *Direct mode* (HTTPS behind Cloudflare), or *Browser extension* | Session (`connect.sid` + the other winna.com cookies), `cf_clearance`, User-Agent, Device ID (`wn-antifraud-device-id`) | ✅ | Fixed (`winna.com`) |
+
+**House edge:** the app's win chance and multiplier assume a 1 % house edge (multiplier = 99 / chance). Stake, Shuffle, Goated, Wolfbet, Paradice and Winna dice use the same edge. **Duel (0.1 %)**, **Tower (2 %)** and **Pasino (5 %)** dice use a different one, so xBot converts the win chance it sends so that the multiplier you set is the one paid: 2x is sent as 49.95 % on Duel, 49.000 % on Tower (over 51.000) and 47.50 % on Pasino. The bet list still shows the app's target. Limbo sends the multiplier itself, so it is exact everywhere.
+
+**Seeds:** Stake, Shuffle, Goated, Duel and **Winna** set the client seed you choose. Pasino sends the client seed with every bet, so setting it only changes the seed used from then on. Wolfbet and Paradice can only renew the server seed, so xBot bets on with the current client seed. Tower has no seed support in xBot yet.
+
+**Balance after a bet:** Tower (`newBalance`) and Pasino (`balance`) report the balance after every bet, and xBot sets the session balance to that figure.
 
 **Switching casino:** use the **Casino** menu, the *Casino* selector in Options, or set `casino = "..."` from a script. Every casino keeps its own login data and its own bet currency. While you bet on one casino, xBot keeps reading the balances of the others in the background (Shuffle over its WebSocket, the rest over HTTPS, the extension or the hidden browser), so switching shows the right balance straight away. Switching during an auto-bet keeps the session going: the next bet waits until the new casino's connection is ready.
 
@@ -63,6 +73,10 @@ If the WebView2 Runtime is missing, the login buttons are disabled, and Stake (C
 - **Wolfbet:** every currency on the account (needs the token).
 - **Stake:** the currencies the account holds, collected after login.
 - **Duel:** the site's wallet list plus the account's currencies.
+- **Paradice:** every wallet on the account (needs the token).
+- **Pasino:** every coin on the account (needs the token), e.g. GEM, BTC, TRX.
+- **Tower:** the site's currency list (`/api/currencies`, needs the token). Only currencies the account holds appear in its balances; any other is 0.
+- **Winna:** every coin in the account's wallets. Each coin is listed twice (main wallet and vault); the main wallet is the betting balance.
 
 Lists are cached, so the dropdown fills straight away next time. A currency the account doesn't hold has a balance of 0.
 
@@ -81,10 +95,10 @@ Lists are cached, so the dropdown fills straight away next time. A currency the 
 
 | Area | Contents |
 |---|---|
-| **Menu bar** | **File** (Exit) · **Casino** (Stake / Shuffle / Goated / Wolfbet / Duel) · **Game** (Dice / Limbo) · **View** (Show sidebar, Show bet list, Show bottom panel, Show log, Strategy editor, Dark theme) · **Bot** (Start / Pause / Stop auto-bet, Roll once, Reset session, Clear history, Rotate seed) · **Tools** (Statistics, Options, Condition builder) · **Help** (About) |
+| **Menu bar** | **File** (Exit) · **Casino** (Stake / Shuffle / Goated / Wolfbet / Duel / Paradice / Pasino / Tower / Winna) · **Game** (Dice / Limbo) · **View** (Show sidebar, Show bet list, Show bottom panel, Show log, Strategy editor, Dark theme) · **Bot** (Start / Pause / Stop auto-bet, Roll once, Reset session, Clear history, Rotate seed) · **Tools** (Statistics, Options, Condition builder) · **Help** (About) |
 | **Toolbar** | New window (+), Reset session, Start, Pause, Stop, Rotate seed, Statistics, Options, Condition builder, Strategy editor (#), and a filter box for the bet list (*Filter by nonce or roll…*) |
 | **Status / Session sidebar** (dockable) | **Status:** mode (Simulation / Live), casino, connection state. **Session:** Balance, Profit, Wager, Wins, Losses, Win rate, Big wins (10x+), Highest bet, highest and lowest profit, Highest / Lowest / Current streak, Running time |
-| **Bet list** | Time, Bet ID, Casino, Game, Nonce, Amount, Target, Roll, Multiplier, Payout, Profit. Right-click a live bet to **copy its Bet ID** (on Stake also the IID) or **open the bet in the browser** (not available for Duel bets). The list follows new bets until you scroll, and follows again when you scroll back to the top. |
+| **Bet list** | Time, Bet ID, Casino, Game, Nonce, Amount, Target, Roll, Multiplier, Payout, Profit. Right-click a live bet to **copy its Bet ID** (on Stake also the IID) or **open the bet in the browser** (not available for Duel, Paradice, Pasino, Tower and Winna bets, which only offer copying the Bet ID). The list follows new bets until you scroll, and follows again when you scroll back to the top. |
 | **Bottom panel tabs** | **Manual Bet** · **Auto Bet** · **Profit Chart** (running profit graph) · **Provably Fair** |
 | **Log** (dockable, hidden by default) | Time / Level / Message, with Copy and Clear log |
 | **Strategy editor** (dockable, `#` button) | The Lua / JavaScript editor with Run, Stop, Open, Save, Save as, Help, and a Console tab |
@@ -105,12 +119,13 @@ Open it from **Tools → Options**. The window has two columns and can be resize
 | **Enable live betting** | Off = simulation (play money). This is never saved, so every launch starts in simulation. |
 | **Casino** | Which casino this box shows and bets on. It is the same setting as the Casino menu. Values typed for one casino are kept when you switch to another. |
 | **Login method** | Stake: **Cookie (cf_clearance)** or **Browser extension**. All other casinos: **Direct mode** or **Browser extension**. |
-| **Site / mirror** | Domain to use (Stake, Shuffle, Duel). It is saved as you type. |
-| **API key / Token** | Stake: API key (`x-access-token`). Shuffle: auth token (JWT). Goated: `g3_token` (JWT). Wolfbet: `token` cookie value. Duel: `duel` cookie value. |
+| **Site / mirror** | Domain to use (Stake, Shuffle, Duel). It is saved as you type. The other casinos use a fixed site. |
+| **API key / Token / Session** | Stake: API key (`x-access-token`). Shuffle: auth token (JWT). Goated: `g3_token` (JWT). Wolfbet: `token` cookie value. Duel: `duel` cookie value. Paradice: localStorage `token` (JWT). Pasino: localStorage `token`. Tower: `__tt` cookie value. Winna (**Session**): the `connect.sid` cookie, or the whole winna.com cookie list (`connect.sid=…; chat.jwt=…; …`) as the login window captures it. |
 | **USER_ID / BROWSER_ID** | Shuffle only: `CORRELATION_USER_ID` and `BROWSER_ID` from localStorage. |
 | **UUID / cf_clearance** | Duel only: `security:uuid` from localStorage, plus the optional `cf_clearance` cookie. |
-| **cf_clearance** | Stake only (optional). |
-| **Open … & Log in** buttons | Shuffle, Goated, Wolfbet, Duel: open the site in a WebView2 window and **fill in the fields automatically** after you log in (see the next section). |
+| **cf_clearance** | Stake (optional). Tower and Winna have their own **cf_clearance** and **User-Agent** rows: Cloudflare only accepts `cf_clearance` together with the User-Agent of the browser that got it. Not needed in Browser extension mode. |
+| **Device ID** | Winna only: the `id` inside localStorage `wn-antifraud-device-id` (sent as `x-antifraud-device-id`). The whole JSON value can be pasted. Winna ties the session to this id, so keep the session and the device id from the same login. |
+| **Open … & Log in** buttons | Shuffle, Goated, Wolfbet, Duel, Paradice, Pasino, Tower, Winna: open the site in a WebView2 window and **fill in the fields automatically** after you log in (see the next section). Clicking a button first **empties the login fields**, so they are filled with fresh data, and the captured login is **saved straight away** (even if you close Options without OK). |
 | **Extension** | Status of the browser extension server: *server off*, *waiting for a … tab*, or *connected (… tab)*. |
 | **Bet currency** | Currency to bet in, remembered separately for each casino. Picking or typing a currency fetches its balance. |
 | **Log in** | Checks the login and loads the balances and currencies. The status text next to it shows the result, e.g. *Logged in — 0.0123 BTC available*. |
@@ -157,6 +172,10 @@ For every casino except Stake, the easiest way to log in is the **"Open … & Lo
 | **Goated** | *Open Goated & Log in - to autofill token* | **Token** ← `localStorage["g3_token"]` |
 | **Wolfbet** | *Open Wolfbet & Log in - to autofill token* | **Token** ← the `value` field of the URL-encoded JSON in the `token` cookie |
 | **Duel** | *Open Duel.com & Log in - to autofill data* | **Token** ← the `duel` cookie (httpOnly, read through the WebView2 cookie manager) · **UUID** ← `localStorage["security:uuid"]` · **cf_clearance** ← `cf_clearance` cookie (if Cloudflare set one) · plus the browser's User-Agent (saved in the background, because `cf_clearance` only works with the same User-Agent). *Use captured data* takes whatever has been found so far. |
+| **Paradice** | *Open Paradice & Log in - to autofill token* | **Token** ← `localStorage["token"]` (JWT) |
+| **Pasino** | *Open Pasino & Log in - to autofill token* | **Token** ← `localStorage["token"]` (64 hex characters) |
+| **Tower** | *Open Tower & Log in - to autofill token* | **Token** ← the `__tt` cookie · **cf_clearance** ← `cf_clearance` cookie (httpOnly) · **User-Agent** ← the browser's User-Agent. The window closes once `/api/accounts` accepts the token. |
+| **Winna** | *Open Winna & Log in - to autofill data* | **Session** ← every winna.com cookie, `connect.sid` first (httpOnly ones too) · **cf_clearance** ← `cf_clearance` cookie · **Device ID** ← `localStorage["wn-antifraud-device-id"].id` · **User-Agent** ← the browser's User-Agent. The window **first deletes winna.com's old cookies and site data** from its browser, so you always log in fresh (old stale `connect.sid` cookies caused 401 errors). The window closes once the wallets request works. |
 | **Stake** | — (no login button) | Type the **Site / mirror** and the **API key**. Create the API key on Stake under *Settings → API*. In Cookie mode, requests go through a hidden WebView2 browser on the Stake site. Or use the [Browser extension mode](#browser-extension-mode), which reads everything from your Stake tab. |
 
 The login windows share one WebView2 profile with the hidden browsers, so after you log in once, the Duel hidden browser and the Stake hidden browser are logged in too. Logins persist between launches.
@@ -166,7 +185,8 @@ The login windows share one WebView2 profile with the hidden browsers, so after 
 You can paste every value yourself. Open the casino in your browser, then DevTools (F12):
 
 - **localStorage values:** *Application → Local Storage*, or the Console: `localStorage.getItem('g3_token')`.
-- **Cookies:** *Application → Cookies* (httpOnly cookies such as `duel` or Stake's `session` only appear there).
+- **Cookies:** *Application → Cookies* (httpOnly cookies such as `duel`, Stake's `session`, Winna's `connect.sid` or `cf_clearance` only appear there).
+- **A whole cookie header** (Winna): copy the `cookie:` request header of an `api2.winna.com` request from the *Network* tab and paste it into **Session**.
 
 ---
 
@@ -186,7 +206,7 @@ In **Browser extension** mode, xBot doesn't talk to the casino directly. All req
 ```
 
 1. When a casino uses *Browser extension* as its login method, xBot starts a small **WebSocket server on `127.0.0.1:4444`**. It is bound to localhost only and is never reachable from the LAN.
-2. The extension runs in every tab of a supported casino (Stake and its mirrors, Primedice, Shuffle, Goated, Wolfbet, Duel, plus any mirror typed in *Site / mirror*). Each tab connects to the server and says which site it is on: `{"type":"hello","host":"duel.com","version":"…"}`.
+2. The extension runs in every tab of a supported casino (Stake and its mirrors, Primedice, Shuffle, Goated, Wolfbet, Duel, Paradice, Pasino, Tower, Winna, plus any mirror typed in *Site / mirror*). Each tab connects to the server and says which site it is on: `{"type":"hello","host":"duel.com","version":"…"}`.
 3. **Security:** the server only accepts connections whose `Origin` is a browser extension (`chrome-extension://`, `moz-extension://`) or one of the casino sites. This stops other web pages from connecting to localhost and impersonating the extension.
 4. For each request, xBot sends `{"id", "payload": {"raw": true, "url", "options": {method, headers, body}, "timeoutMs"}}` to the tab of the right casino. The tab runs `fetch()` inside the page and answers `{"id", "status", "body"}`.
 5. **Auto-filled login:** xBot asks the tab for its localStorage values and cookies, including httpOnly ones (`{"op": "storage", "key": …}` and the cookie read). It reads:
@@ -195,12 +215,18 @@ In **Browser extension** mode, xBot doesn't talk to the casino directly. All req
    - **Goated:** `g3_token`
    - **Wolfbet:** `token` cookie
    - **Duel:** `security:uuid`, `duel` cookie, `cf_clearance`
+   - **Paradice:** `token` (localStorage)
+   - **Pasino:** `token` (localStorage)
+   - **Tower:** `__tt` cookie
+   - **Winna:** `wn-antifraud-device-id` (localStorage) and the `connect.sid` cookie. Requests to `api2.winna.com` are sent with the tab's cookies (`credentials: "include"`).
 
    These values appear in the Options fields and are saved when you press **OK**.
 6. **One tab per site** is used. A second tab of the same site is put on standby (close code 4001) and takes over when the first one closes.
 7. The login is read again whenever the tab connects, and every 5 s while you're not logged in yet. So if you log in in the browser after starting xBot, it picks that up by itself.
 
-**Extension version:** reading localStorage needs extension **2.0.1+**, and reading cookies (needed for Stake, Wolfbet and Duel) needs **2.1.0+**. Shuffle's balance WebSocket stays in the app even in extension mode.
+**Extension version:** reading localStorage needs extension **2.0.1+**, and reading cookies (needed for Stake, Wolfbet and Duel) needs **2.1.0+**. **2.2.0+** also reads cookies the page itself can see (needed for Tower's `__tt`), and **2.3.0+** adds winna.com. Paradice, Pasino and Tower need their sites in the extension's `host_permissions` and `targetSites` list (included from 2.2.0). Shuffle's balance WebSocket stays in the app even in extension mode.
+
+**Winna in extension mode:** balances and the account requests work through the tab. Dice and limbo bets go to `originals.winna.com`, which only expects requests from Winna's own game page; if extension-mode bets fail with *Failed to fetch*, use Direct mode with the login button.
 
 ### Installing the extension (Chrome / Edge / Brave / other Chromium browsers)
 
@@ -349,7 +375,7 @@ Scripts don't use the Manual or Auto Bet tabs, or the Options client seed. They 
 | `bethigh` | boolean | dice | `true` = roll over, `false` = roll under (default) |
 | `target` | number | **limbo** | Target multiplier (1.01 – 1,000,000). `chance` and `bethigh` are ignored in limbo. |
 | `game` | string | no | `"dice"` or `"limbo"` (default: the game selected in the Game menu). Can be changed in `dobet()`. |
-| `casino` | string | no | `"stake"`, `"shuffle"`, `"goated"`, `"wolfbet"` or `"duel"`. Switches the casino the next bets go to, **without resetting the session**. The casino must already be logged in in Options. |
+| `casino` | string | no | `"stake"`, `"shuffle"`, `"goated"`, `"wolfbet"`, `"duel"`, `"paradice"`, `"pasino"`, `"tower"` or `"winna"`. Switches the casino the next bets go to, **without resetting the session**. The casino must already be logged in in Options. |
 | `currency` | string | no | Currency code, e.g. `"btc"` or `"usdt"` (default: the current bet currency). In live mode the account needs a balance in it, and the session statistics restart in the new currency. |
 
 You can also create your own variables (e.g. `basebet`); they persist between `dobet()` calls.
@@ -379,8 +405,8 @@ You can also create your own variables (e.g. `basebet`); they persist between `d
 | `print(...)` / `log(...)` | Write to the Console tab (small numbers are printed in full, e.g. `0.00000226`) |
 | `console.log / info / warn / debug / error(...)` | JavaScript only; objects are printed as JSON |
 | `resetstats()` | Resets the session statistics (bets, wins, losses, wagered, profit, streaks). The balance is kept, and `startbalance` becomes the current balance. |
-| `resetseed([clientseed])` | Rotates the seed pair, e.g. `resetseed("123xcv123")`. Without an argument, a random 10-character client seed is used. Safe to call at any time: in live mode it waits for a bet in flight, and the next bet waits for the server. |
-| `vault(amount)` | Deposits `amount` of the current currency into the vault, e.g. `vault(0.001)`. Live mode only; supported on **Stake, Shuffle and Goated**. |
+| `resetseed([clientseed])` | Rotates the seed pair, e.g. `resetseed("123xcv123")`. Without an argument, a random 10-character client seed is used. Safe to call at any time: in live mode it waits for a bet in flight, and the next bet waits for the server. See *Seeds* under [Supported casinos](#supported-casinos) for what each casino supports (on Winna, xBot reads the active seed first and then rotates it). |
+| `vault(amount)` | Deposits `amount` of the current currency into the vault, e.g. `vault(0.001)`. Live mode only; supported on **Stake, Shuffle, Goated and Winna**. Winna has a minimum deposit (1 USD); a refused deposit shows the site's message in the log. |
 | `os.time()`, `os.clock()` | Lua only: Unix time in seconds, and CPU time |
 
 ### Lua syntax extras
@@ -524,7 +550,8 @@ Project layout:
 ```
 main.cpp, MainWindow.*      application and main window
 bot/                        engine, scripting (LuaStrategy, JsStrategy), Condition runner,
-                            casino transports (Stake, Shuffle, Goated, Wolfbet, Duel, WebView, Extension)
+                            casino transports (Stake, Shuffle, Goated, Wolfbet, Duel, Paradice,
+                            Pasino, Tower, Winna, WebView, Extension), NoCookieJar.h
 ui/                         panels, Options, Condition Builder, login dialogs, editor, chart, log
 ```
 
@@ -540,6 +567,10 @@ ui/                         panels, Options, Condition Builder, login dialogs, e
 | *Not logged in on the … tab (… not found)* | Log in on the site in your browser. xBot picks it up within a few seconds. |
 | *Could not start the extension server on 127.0.0.1:4444* | Another program (or another xBot window using the extension) is already using the port. |
 | The mouse pointer disappears after a login window closes | A known WebView2 runtime bug. xBot works around it automatically; moving the mouse also brings the pointer back. |
+| *HTTP 403: blocked by Cloudflare* (Tower, Winna) | `cf_clearance` expired or does not match the User-Agent. Click the casino's **Open … & Log in** button again, or use Browser extension mode. |
+| *HTTP 401: unauthorized* on Winna | The saved session no longer works (for example after logging in elsewhere). Click **Open Winna & Log in**: it clears winna.com's old cookies first and saves the new login at once. |
+| A Tower bet pays 1.98x instead of 2x (old versions) | Tower uses a 2 % house edge; current versions convert the win chance so the multiplier you set is paid. The same applies to Duel and Pasino. |
+| *Not logged in on the tower.bet tab (the "__tt" cookie not found)* in extension mode | Update the browser extension to 2.2.0+, reload it in `chrome://extensions`, and refresh the casino tab. |
 | A bet is larger than the balance and the run stops | Turn on *Retry bet when bet higher than balance* in Options → Game. |
 | Script error *"nextbet must be set to a number"* | Set `nextbet` (and `chance`, or `target` for limbo) in the script body. In JavaScript, don't use a top-level `let` / `const` for them. |
 
