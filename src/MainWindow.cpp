@@ -2191,15 +2191,12 @@ void MainWindow::onTabChanged(int index)
 {
     if (!m_tabs->widget(index))
         return;
-    m_panelUserSized = false; // back to automatic sizing (see fitBetList())
-    // Size the panel to the new tab's content and make room for all of it, in one go, right
-    // away (before the window repaints: no flashing of in-between sizes). A second pass once
-    // the layout has settled catches late size hints; it changes nothing when they are final.
+    // Size the panel to the new tab's content (again once the layout has settled, for late
+    // size hints). Docked panels are never resized for it - only the user resizes those.
     updateCentralHeight();
-    fitBetList(true);
     QTimer::singleShot(0, this, [this] {
         updateCentralHeight();
-        fitBetList(true);
+        fitTopDock(true); // a tab was clicked: show all of it
     });
 }
 
@@ -2225,10 +2222,10 @@ int MainWindow::bottomPanelHeight() const
 
 // The bottom panel has a fixed height: the height of its current tab's content, never more
 // (it can still be made smaller by dragging a separator into it; the page is then clipped).
-// It is placed at the bottom of the central area, right on the Log. While the bet list is
-// docked above / below it, the bet list is sized so that the panel fits exactly (only the
-// separator between the bet list and the panel moves - the Log is never touched);
-// otherwise the spare height stays empty above the panel.
+// It is placed at the bottom of the central area, right on whatever is docked below it (Log,
+// Bet List ...), so it moves with that dock's separator. A panel docked at the top of the
+// window fills down to it (see fitTopDock()); with nothing docked at the top, the spare
+// height stays empty above it. Panels docked at the bottom are never resized automatically.
 void MainWindow::updateCentralHeight()
 {
     QWidget *central = centralWidget();
@@ -2239,28 +2236,7 @@ void MainWindow::updateCentralHeight()
     positionBottomPanel();
     if (central->maximumHeight() != QWIDGETSIZE_MAX)
         central->setMaximumHeight(QWIDGETSIZE_MAX); // never capped (that let the Log grow)
-    QTimer::singleShot(0, this, [this] { fitBetList(false); });
-}
-
-// Sizes the docked bet list so the central area is exactly the bottom panel's height:
-// empty space above the panel is given to the bet list. With growPanel (a tab was clicked)
-// the bet list also gives back height the panel is missing, so the whole tab shows; it
-// keeps at least a small strip. Nothing happens during a separator drag.
-void MainWindow::fitBetList(bool growPanel)
-{
-    if (growPanel)
-        m_panelUserSized = false; // a tab was clicked: back to automatic sizing
-    else if (m_panelUserSized)
-        return; // the user sized the panel by hand: leave it
-    if (!betListStacked() || m_separatorDrag || !m_centralArea)
-        return;
-    const int diff = m_centralArea->height() - m_panelHeight; // > 0: empty, < 0: clipped
-    if (diff == 0 || (diff < 0 && !growPanel))
-        return;
-    const int betH = m_betListDock->height();
-    const int target = std::max(60, betH + diff);
-    if (target != betH)
-        resizeDocks({m_betListDock}, {target}, Qt::Vertical);
+    QTimer::singleShot(0, this, [this] { fitTopDock(false); });
 }
 
 // The Log keeps the height the user gave it: only dragging its separator (or moving / showing
@@ -2277,8 +2253,9 @@ void MainWindow::keepLogHeight()
     if (m_separatorDrag || m_logHeight <= 0 || !m_logDock || m_logDock->isHidden()
         || m_logDock->isFloating())
         return;
-    const Qt::DockWidgetArea area = dockWidgetArea(m_logDock);
-    if (area != Qt::TopDockWidgetArea && area != Qt::BottomDockWidgetArea)
+    // Only a Log docked at the bottom keeps a fixed height; at the top it fills down to the
+    // bottom panel (fitTopDock()).
+    if (dockWidgetArea(m_logDock) != Qt::BottomDockWidgetArea)
         return;
     if (m_logDock->height() != m_logHeight)
         resizeDocks({m_logDock}, {m_logHeight}, Qt::Vertical);
@@ -2292,17 +2269,46 @@ void MainWindow::scheduleKeepLogHeight()
 
 // Places the panel at the bottom of the central area, at its content height (or the whole
 // area when that is smaller).
+// The panel docked at the top of the window (Bet List, Log, ... or a tab group of them) fills
+// all the height down to the bottom panel, so the bottom panel is never taller than its
+// content: spare height goes to the top panel. With growPanel (a tab was clicked) a bottom
+// panel that is shorter than its content also gets the missing height back from the top panel
+// (which keeps a small strip); otherwise a bottom panel the user dragged smaller stays so. Only the separator between the top panel and the bottom
+// panel moves - panels docked at the bottom keep their size. Not during a separator drag
+// (it is applied when the mouse is released, so the bottom panel cannot stay taller than its
+// content).
+void MainWindow::fitTopDock(bool growPanel)
+{
+    if (m_separatorDrag || !m_centralArea || !m_tabs)
+        return;
+    QDockWidget *top = nullptr;
+    for (QDockWidget *dock : findChildren<QDockWidget *>()) {
+        if (dock->isHidden() || dock->isFloating() || !dock->isVisible()
+            || dockWidgetArea(dock) != Qt::TopDockWidgetArea)
+            continue;
+        if (!top || dock->height() > top->height())
+            top = dock;
+    }
+    if (!top)
+        return; // nothing above the panel: the spare height stays empty
+    const int diff = m_centralArea->height() - m_panelHeight; // > 0: empty, < 0: clipped
+    if (diff == 0 || (diff < 0 && !growPanel))
+        return;
+    const int topH = top->height();
+    const int target = std::max(60, topH + diff);
+    if (target != topH)
+        resizeDocks({top}, {target}, Qt::Vertical);
+}
+
 void MainWindow::positionBottomPanel()
 {
     if (!m_centralArea || !m_tabs)
         return;
     QWidget *holder = m_tabs->parentWidget();
     const int areaH = m_centralArea->height();
-    // Between the bet list and the Log, a panel sized by hand (or being dragged) fills the
-    // whole central area, whatever its height. Otherwise it is its content height at the
-    // bottom, right on the Log, so it moves with the Log's separator (spare height above).
-    const bool fill = (m_panelUserSized || m_separatorDrag) && betListStacked();
-    const int h = fill ? areaH : std::min(areaH, m_panelHeight);
+    // Always its content height, at the bottom (right on the dock below it, so it moves with
+    // that dock's separator); spare height stays empty above it.
+    const int h = std::min(areaH, m_panelHeight);
     const QRect r(0, areaH - h, m_centralArea->width(), h);
     if (holder->geometry() != r)
         holder->setGeometry(r);
@@ -4464,23 +4470,35 @@ bool MainWindow::eventFilter(QObject *watched, QEvent *event)
 {
     if (watched == m_centralArea && event->type() == QEvent::Resize) {
         positionBottomPanel();
-        if (!m_separatorDrag) // e.g. window resized / bet list docked: no empty space above
-            QTimer::singleShot(0, this, [this] { fitBetList(false); });
+        if (!m_separatorDrag) // e.g. window resized, a panel moved: top panel fills down
+            QTimer::singleShot(0, this, [this] { fitTopDock(false); });
     }
     // Mouse on the main window itself = a dock separator being dragged: the Log's height is
     // the user's choice then; remember it when the mouse is released.
     if (watched == this) {
         if (event->type() == QEvent::MouseButtonPress) {
             m_separatorDrag = true;
-            m_pressCentralH = m_centralArea ? m_centralArea->height() : -1;
+            // Pressed on the separator above the bottom panel (between the panel docked at the
+            // top and the bottom panel): the bottom panel must not be dragged taller than its
+            // content - cap it for the drag (Qt stops the separator at the cap).
+            QWidget *central = centralWidget();
+            const auto *me = static_cast<QMouseEvent *>(event);
+            if (central && m_panelHeight > 0
+                && me->position().toPoint().y() <= central->geometry().top()) {
+                central->setMaximumHeight(std::max(central->height(), m_panelHeight));
+                m_dragCapped = true;
+            }
         } else if (event->type() == QEvent::MouseButtonRelease) {
             m_separatorDrag = false;
-            // The bottom panel's height was dragged by hand: keep exactly that size (any
-            // height) until a tab is clicked - no automatic fitting in between.
-            if (m_centralArea && m_pressCentralH >= 0 && m_centralArea->height() != m_pressCentralH)
-                m_panelUserSized = true;
-            positionBottomPanel();
-            QTimer::singleShot(0, this, &MainWindow::rememberLogHeight);
+            if (m_dragCapped) {
+                m_dragCapped = false;
+                if (QWidget *central = centralWidget())
+                    central->setMaximumHeight(QWIDGETSIZE_MAX); // the cap is for the drag only
+            }
+            QTimer::singleShot(0, this, [this] {
+                rememberLogHeight();
+                fitTopDock(false); // no empty space above the panel (a smaller panel stays)
+            });
         }
     }
     // A floating panel shown again (View menu, restored layout): Qt gives it back its

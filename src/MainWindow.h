@@ -151,7 +151,7 @@ private:
     int bottomPanelHeight() const;
     void updateCentralHeight();
     void positionBottomPanel();
-    void fitBetList(bool growPanel);
+    void fitTopDock(bool growPanel = false);
     void rememberLogHeight();
     void keepLogHeight();
     void scheduleKeepLogHeight();
@@ -344,8 +344,7 @@ private:
     int m_panelHeight = 0;                // the bottom panel's content height
     int m_logHeight = -1;                 // the Log height the user chose (kept, see keepLogHeight)
     bool m_separatorDrag = false;         // mouse held on the main window: a separator drag
-    int m_pressCentralH = -1;             // central height when that drag started
-    bool m_panelUserSized = false;        // bottom panel height set by hand (until a tab click)
+    bool m_dragCapped = false;            // bottom panel capped during that drag
 
     // Tabs
     QTabWidget *m_tabs = nullptr;
