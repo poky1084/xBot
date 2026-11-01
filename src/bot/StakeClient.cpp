@@ -1871,8 +1871,11 @@ void StakeClient::placeTowerDice(const DiceBetRequest &request)
     const double appTarget = std::round(request.target * 100.0) / 100.0;
     const bool over = request.over;
     const double appChance = appChanceOf(request);
-    // Target with 2 decimals like every other casino (49.2537 % -> 49.25 %), sent in thousandths.
-    const double chance = chanceForRtp(appChance, kTowerRtp, 2);
+    // Target with 2 decimals like every other casino, sent in thousandths. Tower cuts its payout
+    // (98.5 / chance) to 2 decimals, so the chance is rounded DOWN, never up: 1.5x = 66 % in the
+    // app -> 65.6666 % -> 65.66 % ("over 34.34") pays 1.50015 -> 1.50x, where 65.67 % would pay
+    // 1.49992 -> 1.49x. (2x: 49.25 % exactly -> 2.00x.)
+    const double chance = std::floor(appChance * kTowerRtp / 99.0 * 100.0 + 1e-6) / 100.0;
     const double target = std::round((over ? 100.0 - chance : chance) * 100.0) / 100.0;
     const qint64 number = qint64(std::llround(target * 100.0)) * 10;
     m_lastDiceTarget = target;
