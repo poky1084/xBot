@@ -86,9 +86,10 @@ QVariant BetHistoryModel::data(const QModelIndex &index, int role) const
     case ColTarget:
         if (rec.game == Game::Limbo)
             return QStringLiteral("≥ %1x").arg(rec.target, 0, 'f', 2);
+        // The casino's own target when it differs from the app's (house edge / roll range).
         return QStringLiteral("%1 %2")
             .arg(rec.side == BetSide::Under ? QLatin1Char('<') : QLatin1Char('>'))
-            .arg(rec.target, 0, 'f', 2);
+            .arg(rec.casinoTarget >= 0.0 ? rec.casinoTarget : rec.target, 0, 'f', 2);
     case ColRoll:
         return QString::number(rec.roll, 'f', 2);
     case ColMultiplier:

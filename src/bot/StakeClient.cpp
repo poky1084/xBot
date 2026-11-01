@@ -109,9 +109,11 @@ QJsonObject findBetObject(const QJsonObject &json)
 }
 
 // The app's multiplier is 99 / win chance (1 % house edge). A casino whose dice pays
-// `rtp` / chance (Duel 99.9, Tower 98, Pasino 95) gets the chance that pays the same multiplier:
-// appChance * rtp / 99, rounded to the casino's target precision (`decimals`).
-// Example: 2x = 49.50 % in the app -> Tower 49.000 %, Pasino 47.50 %, Duel 49.95 %.
+// `rtp` / chance (Duel 99.9, Tower 98.5, Pasino 95) gets the chance that pays the same
+// multiplier: appChance * rtp / 99, rounded to 2 decimals (every casino's target uses 2).
+// Example: 2x = 49.50 % in the app -> Tower 49.25 %, Pasino 47.50 %, Duel 49.95 %.
+// Casinos with the same 1 % edge as the app (Stake, Shuffle, Wolfbet, Goated, Paradice, Winna) get the
+// app's target as it is (2x = over 50.50 / under 49.50).
 double chanceForRtp(double appChance, double rtp, int decimals)
 {
     const double scale = std::pow(10.0, decimals);
@@ -805,6 +807,7 @@ void StakeClient::lookupBetIid(const QString &betId, std::function<void(const QS
 
 void StakeClient::placeDice(const DiceBetRequest &request)
 {
+    m_lastDiceTarget = -1.0; // set below by the casinos whose target differs from the app's
     QString why;
     if (!m_transport || !m_transport->isReady(&why)) {
         const LiveBetResult r = failed(m_transport ? why : tr("No transport configured."));
@@ -865,6 +868,7 @@ void StakeClient::placeDice(const DiceBetRequest &request)
 
 void StakeClient::placeLimbo(const LimboBetRequest &request)
 {
+    m_lastDiceTarget = -1.0;
     QString why;
     if (!m_transport || !m_transport->isReady(&why)) {
         const LiveBetResult r = failed(m_transport ? why : tr("No transport configured."));
@@ -1174,11 +1178,18 @@ QString goatedErrorText(const QJsonObject &json)
 
 // Goated dice: POST https://apis.goated.com/casino/dice/v2
 //   {"user_value": 51, "roll_type": "OVER", "amount": 0.1, "currency": "USDC", "is_fiat": false}
+// Goated's dice has a 1 % house edge like the app (payout = 99 / chance: "UNDER 49" pays 2.0204x),
+// so the app's target is sent as it is: 2x = "OVER 50.5" / "UNDER 49.5".
 // The answer's layout was not captured, so it is read defensively (several field names, and
 // the bet may be wrapped in "data"). If no roll can be found the raw answer is logged.
 void StakeClient::placeGoatedDice(const DiceBetRequest &request)
 {
-    const double target = std::round(request.target * 100.0) / 100.0;
+    const double target = std::round(request.target * 100.0) / 100.0; // 2 decimals
+    if (!(target > 0.0) || !(target < 100.0)) {
+        const LiveBetResult r = failed(tr("Goated: invalid target %1.").arg(target));
+        QTimer::singleShot(0, this, [this, r] { emit diceFinished(r); });
+        return;
+    }
 
     QJsonObject body;
     body.insert(QStringLiteral("user_value"), target);
@@ -1274,7 +1285,7 @@ void StakeClient::placeGoatedDice(const DiceBetRequest &request)
             r.multiplier = haveMult ? multiplier
                            : (amount > 0.0 && havePayout && payout > 0.0)
                                  ? payout / amount
-                                 : (chance > 0.0 ? 99.0 / chance : 0.0);
+                                 : (chance > 0.0 ? 99.0 / chance : 0.0); // Goated: 1 % edge
             if (!havePayout)
                 r.payout = amount * r.multiplier;
         }
@@ -1344,6 +1355,7 @@ void StakeClient::placeWolfbetDice(const DiceBetRequest &request)
     // value sent for "over" is 99.99 - chance (not 100 - chance), or the site answers
     // "Incorrect win chance given".
     const double betValue = over ? std::round((99.99 - chance) * 100.0) / 100.0 : chance;
+    m_lastDiceTarget = betValue;
 
     // Fair multiplier at a 1 % house edge (50 % -> 1.98), cut (never rounded up) to 4 decimals,
     // shown with at least 2 decimals like the site does.
@@ -1666,6 +1678,7 @@ void StakeClient::rotatePasinoSeed(const QString &clientSeed)
 // type: 1 = low (roll under), 2 = high (roll over). The game is chosen by the payout, with a
 // 5 % house edge: win chance = 95 / payout (2 decimals), payout = 95 / chance cut to 5 decimals
 // (50.29 % -> 1.88904). The app's chance (1 % edge) is converted first, see chanceForRtp().
+// The roll runs 0000 - 9999 (hundredths); 2x = 47.50 % = "High > 5249" / "Low < 4750".
 // Answer: {"message":"","win":0|1,"payout":0,"roll_number":1790 (roll in hundredths: 17.90),
 //   "coin":"GEM","balance":"5198.81240700","profit":"-0.10000000","bet_id":"34126921394",
 //   "success":true}; errors: {"success":false,"message":"…"}.
@@ -1675,7 +1688,10 @@ void StakeClient::placePasinoDice(const DiceBetRequest &request)
     // multiplier set in the app is paid (2x: 49.50 % in the app -> 47.50 % on Pasino).
     const bool over = request.over;
     const double chance = chanceForRtp(appChanceOf(request), 95.0, 2);
-    const double target = over ? 100.0 - chance : chance;
+    // The site's own targets on its 0000 - 9999 roll: High > (9999 - chance * 100), Low < chance * 100
+    // (47.50 %: High > 52.49, Low < 47.50). Used only if the answer has no "win" field.
+    const double target = over ? (9999.0 - std::round(chance * 100.0)) / 100.0 : chance;
+    m_lastDiceTarget = target;
     if (!(chance > 0.0) || chance >= 100.0) {
         const LiveBetResult r = failed(tr("Pasino: invalid target %1.").arg(request.target, 0, 'f', 2));
         QTimer::singleShot(0, this, [this, r] { emit diceFinished(r); });
@@ -1838,25 +1854,28 @@ void StakeClient::placePasinoLimbo(const LimboBetRequest &request)
 // Tower.bet dice: POST https://tower.bet/api/dice/bet  (Bearer token; cf_clearance in Direct mode)
 //   {"symbol":"USDC","isHigh":true,"number":50000,"amount":"0.01000404"}
 // The roll runs 0 - 99999 (shown as 0.000 - 99.999), so the target is sent in thousandths:
-// "over 51.000" -> isHigh true, number 51000 (choice ">51000"). The chance is converted from the
-// app's 1 % edge to Tower's 2 % one first (see below), so the multiplier set in the app is paid.
+// "over 50.75" -> isHigh true, number 50750 (choice ">50750"); the target keeps 2 decimals. The chance is converted from the
+// app's 1 % edge to Tower's 1.5 % one first (see below), so the multiplier set in the app is paid.
 // Answer (HTTP 201): {"hash" (bet id),"game":"dice","number":38492 (the roll),"isWin":false,
 //   "choice":">50000","symbol","betAmount","payout" (multiplier, "0" on a loss),"winAmount",
 //   "profit":"-0.01000404","nonce":1,"userSeed":{"serverSeedHash","clientSeed","nonce"},
 //   "account":{"hash","newBalance":"0.47999192"}}; errors: Laravel {"message",...} with HTTP 4xx.
 void StakeClient::placeTowerDice(const DiceBetRequest &request)
 {
-    // Tower's dice has a 2 % house edge (payout = 98 / chance: 49.50 % pays 1.98x), the app's
-    // targets a 1 % one (multiplier = 99 / chance). Keep the multiplier the user set: the
-    // chance sent to Tower is scaled by 98 / 99, so 2x (49.50 % in the app) becomes 49.000 %,
-    // i.e. "over 51.000" / "under 49.000". The site takes the target in thousandths.
-    constexpr double kTowerRtp = 98.0;
+    // Tower's dice has a 1.5 % house edge (payout = 98.5 / chance: ">50000" = 49.999 % pays
+    // 1.97x, "<51000" = 51 % pays 1.93x), the app's targets a 1 % one (multiplier = 99 / chance).
+    // Keep the multiplier the user set: the chance sent to Tower is scaled by 98.5 / 99, so 2x
+    // (49.50 % in the app) becomes 49.25 %, i.e. "over 50.75" / "under 49.25" (number 50750 /
+    // 49250). The site takes the target in thousandths.
+    constexpr double kTowerRtp = 98.5;
     const double appTarget = std::round(request.target * 100.0) / 100.0;
     const bool over = request.over;
     const double appChance = appChanceOf(request);
-    const double chance = chanceForRtp(appChance, kTowerRtp, 3);
-    const double target = over ? 100.0 - chance : chance;
-    const qint64 number = qint64(std::llround(target * 1000.0));
+    // Target with 2 decimals like every other casino (49.2537 % -> 49.25 %), sent in thousandths.
+    const double chance = chanceForRtp(appChance, kTowerRtp, 2);
+    const double target = std::round((over ? 100.0 - chance : chance) * 100.0) / 100.0;
+    const qint64 number = qint64(std::llround(target * 100.0)) * 10;
+    m_lastDiceTarget = target;
     if (!(appChance > 0.0) || number <= 0 || number >= 100000) {
         const LiveBetResult r = failed(tr("Tower: invalid target %1.").arg(appTarget));
         QTimer::singleShot(0, this, [this, r] { emit diceFinished(r); });
@@ -2030,8 +2049,8 @@ void StakeClient::placeTowerLimbo(const LimboBetRequest &request)
 
 // Winna dice: POST https://originals.winna.com/dice/play  (headers "token: <game jwt>", "sid")
 //   {"bet":"0.01","turbo":true,"data":{"mode":"classic","target":"lower","value":49.5}}
-// "lower" + value 49.5 = roll under 49.50 (range 0 - 49.5); the roll runs 0.00 - 100.00 with a
-// 1 % house edge (49.5 % pays 2x), the same as the app, so the target is sent as it is.
+// "higher" + value 50.5 = roll over 50.50 (2x); "lower" + value 49.5 = roll under 49.50 (range
+// 0 - 49.5). The roll runs 0.00 - 100.00 with a 1 % house edge (49.5 % pays 2x), the same as the app, so the target is sent as it is.
 // The game token belongs to the bet currency: WinnaTransport switches the wallet coin and starts
 // a dice session first (change-wallet-coin + our-game/start).
 // Answer: {"coin":"USDC","status":"win","id":1540147593,"multiplier":2,"wager":0.01,"profit":0.02,
@@ -2052,8 +2071,8 @@ void StakeClient::placeWinnaDice(const DiceBetRequest &request)
 
 void StakeClient::sendWinnaDice(double amount, double target, bool over, int overWord)
 {
-    // "lower" is the site's word for roll under. The word for roll over was not captured yet:
-    // the likely ones are tried in turn, and the one the server accepts is kept.
+    // "lower" / "higher" are the site's words for roll under / roll over ({"target":"higher",
+    // "value":50.5} = 2x). The other words are only a fallback if the server ever refuses "higher".
     static const QStringList kOverWords{QStringLiteral("higher"), QStringLiteral("upper"),
                                         QStringLiteral("over"), QStringLiteral("above")};
     const int wordIndex = std::clamp(overWord, 0, int(kOverWords.size()) - 1);
@@ -2287,6 +2306,7 @@ void StakeClient::placeDuelDice(const DiceBetRequest &request)
     // the multiplier set in the app is paid (2x: 49.50 % in the app -> 49.95 % on Duel).
     const double chance = chanceForRtp(appChanceOf(request), 99.9, 2);
     const qint64 target = qint64(std::llround((request.over ? 100.0 - chance : chance) * 100.0));
+    m_lastDiceTarget = double(target) / 100.0; // "5005" -> 50.05
     if (!(chance > 0.0) || target <= 0 || target >= 10000) {
         const LiveBetResult r = failed(tr("Duel: invalid target %1.").arg(request.target, 0, 'f', 2));
         QTimer::singleShot(0, this, [this, r] { emit diceFinished(r); });

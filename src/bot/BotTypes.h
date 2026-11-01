@@ -134,6 +134,9 @@ struct BetRecord
     Game game = Game::Dice;
     double bet = 0.0;
     double target = 0.0;      // dice: roll target, limbo: multiplier target
+    // Dice: the target the casino itself got (Pasino 52.49, Tower 50.75, Duel 50.05,
+    // Wolfbet 50.49 for the app's 2x / over 50.50), shown in the bet list. < 0 = same as `target`.
+    double casinoTarget = -1.0;
     BetSide side = BetSide::Under;
     double roll = 0.0;
     double mult = 0.0;

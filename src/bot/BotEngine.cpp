@@ -184,8 +184,9 @@ void BotEngine::onLiveFinished(const LiveBetResult &r)
     // start from the figure that, with this bet's profit added, lands exactly on it.
     if (r.balanceAfter >= 0.0 && liveMode())
         m_stats.balance = r.balanceAfter - (r.payout - r.amount);
+    const double casinoTarget = (cfg.game == Game::Dice && m_live) ? m_live->lastDiceTarget() : -1.0;
     const BetRecord rec = recordBet(cfg, r.amount, r.roll, r.win, r.multiplier, r.payout,
-                                    r.nonce, r.betId, betCasino);
+                                    r.nonce, r.betId, betCasino, casinoTarget);
     flushPauseLog(); // a pause that came while this bet was in flight: now the numbers are final
     flushStopLog(); // a stop that came while this bet was in flight: now the numbers are final
 
@@ -845,7 +846,8 @@ void BotEngine::scheduleNext()
 
 BetRecord BotEngine::recordBet(const BotConfig &cfg, double betSize, double roll, bool win,
                                double mult, double payout, qint64 nonce,
-                               const QString &betId, const QString &casino)
+                               const QString &betId, const QString &casino,
+                               double casinoTarget)
 {
     BetRecord rec;
     rec.nonce = nonce;
@@ -884,6 +886,7 @@ BetRecord BotEngine::recordBet(const BotConfig &cfg, double betSize, double roll
     rec.game = cfg.game;
     rec.bet = betSize;
     rec.target = cfg.game == Game::Limbo ? cfg.multiplierTarget : cfg.target;
+    rec.casinoTarget = cfg.game == Game::Dice ? casinoTarget : -1.0;
     rec.side = cfg.side;
     rec.roll = truncate2(roll); // 2 decimals, cut not rounded (history, UI and scripts)
     rec.mult = mult;

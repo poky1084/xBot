@@ -98,6 +98,10 @@ public:
 
     void placeDice(const DiceBetRequest &request);
     void placeLimbo(const LimboBetRequest &request);
+    // The roll target the casino got for the last dice bet, in the roll's own scale (Pasino
+    // "High > 5249" -> 52.49, Tower ">50750" -> 50.75). It differs from the app's target where the casino has another house edge or range. < 0 = the app's
+    // target was sent as it is (and for limbo bets).
+    double lastDiceTarget() const { return m_lastDiceTarget; }
 
     // RotateSeedPair GraphQL mutation: sets a new client seed and rotates the
     // server seed. Result arrives through seedRotated() / seedRotateFailed().
@@ -176,4 +180,5 @@ private:
     QString m_pasinoClientSeed;
     // Winna: index of the word for "roll over" that the site accepted (see placeWinnaDice()).
     int m_winnaOverWord = 0;
+    double m_lastDiceTarget = -1.0; // see lastDiceTarget()
 };
