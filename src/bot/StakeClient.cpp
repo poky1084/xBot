@@ -312,9 +312,7 @@ void StakeClient::rotateSeedPair(const QString &clientSeed)
         return;
     }
     if (isTower()) {
-        QTimer::singleShot(0, this, [this] {
-            emit seedRotateFailed(tr("Tower: seed rotation is not supported yet (change the seed on the site)."));
-        });
+        rotateTowerSeed(clientSeed);
         return;
     }
     if (isWinna()) {
@@ -1496,6 +1494,51 @@ void StakeClient::rotateDuelSeed(const QString &clientSeed)
                                  ? qint64(numberOf(data.value(QStringLiteral("nonce")))) : 0;
         emit seedRotated(activeClient, nonce, hash,
                          data.value(QStringLiteral("next_server_seed_hash")).toString());
+    });
+}
+
+// Tower.bet: POST https://tower.bet/api/randomize  (Bearer token; cf_clearance in Direct mode)
+//   {"clientSeed":"MFlqIA2PkSGpnZBDa"}
+// Answer (HTTP 201): {"new":{"serverSeedHash","clientSeed"} (the NEXT pair, with a random client
+//   seed the site picked), "current":{"serverSeedHash","clientSeed" (ours),"nonce":0} (the pair
+//   now active)}; errors: Laravel {"message",...} with HTTP 4xx.
+void StakeClient::rotateTowerSeed(const QString &clientSeed)
+{
+    QString why;
+    if (!m_transport || !m_transport->isReady(&why)) {
+        const QString msg = m_transport ? why : tr("No transport configured.");
+        QTimer::singleShot(0, this, [this, msg] { emit seedRotateFailed(msg); });
+        return;
+    }
+    const QString seed = clientSeed.trimmed().isEmpty() ? randomClientSeed(17) : clientSeed.trimmed();
+
+    QJsonObject body;
+    body.insert(QStringLiteral("clientSeed"), seed);
+
+    m_transport->post(QStringLiteral("randomize"), body, [this, seed](const TransportReply &reply) {
+        if (!reply.ok) {
+            if (reply.status == 0)
+                emit sessionLost(reply.error);
+            emit seedRotateFailed(reply.error);
+            return;
+        }
+        const QJsonObject current = reply.json.value(QStringLiteral("current")).toObject();
+        const QString hash = current.value(QStringLiteral("serverSeedHash")).toString();
+        if (reply.status >= 400 || current.isEmpty() || hash.isEmpty()) {
+            QString msg = firstErrorText(reply.json, nullptr);
+            if (msg.isEmpty())
+                msg = reply.json.value(QStringLiteral("message")).toString();
+            if (msg.isEmpty())
+                msg = tr("Tower seed rotation rejected (HTTP %1).").arg(reply.status);
+            emit seedRotateFailed(msg);
+            return;
+        }
+        const QString active = current.value(QStringLiteral("clientSeed")).toString();
+        const qint64 nonce = current.contains(QStringLiteral("nonce"))
+                                 ? qint64(numberOf(current.value(QStringLiteral("nonce")))) : 0;
+        const QString nextHash = reply.json.value(QStringLiteral("new")).toObject()
+                                     .value(QStringLiteral("serverSeedHash")).toString();
+        emit seedRotated(active.isEmpty() ? seed : active, nonce, hash, nextHash);
     });
 }
 

@@ -1622,16 +1622,6 @@ void MainWindow::applyClientSeed(const std::function<void()> &then)
         then();
         return;
     }
-    if (m_engine->liveMode() && m_live.isTower()) {
-        // Tower's client seed is not changed from the app (no seed endpoint is used yet):
-        // do not rotate before every bet, just bet on with the current seed pair.
-        m_clientSeedPending = false;
-        onLogMessage(tr("%1: the client seed cannot be set from the app - betting with the "
-                        "current seed pair (change it on the site if needed).")
-                         .arg(casinoDisplayName(m_live.casino)), false);
-        then();
-        return;
-    }
     if (m_engine->liveMode() && m_live.isWolfbet()) {
         // Wolfbet's client seed cannot be set (the refresh call only renews the server seed):
         // do not rotate before every bet, just bet on with the current seed pair.

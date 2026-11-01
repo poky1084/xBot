@@ -158,6 +158,7 @@ private:
     void sendWinnaDice(double amount, double target, bool over, int overWord);
     void placeWinnaLimbo(const LimboBetRequest &request);
     void rotateWinnaSeed(const QString &clientSeed);
+    void rotateTowerSeed(const QString &clientSeed);
     void rotatePasinoSeed(const QString &clientSeed);
     void placeDuelDice(const DiceBetRequest &request);
     void rotateDuelSeed(const QString &clientSeed);
