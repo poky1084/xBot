@@ -394,8 +394,8 @@ You can also create your own variables (e.g. `basebet`); they persist between `d
 | `win` | `true` if the last bet won |
 | `previousbet` | Amount of the last bet |
 | `lastprofit`, `currentprofit` | Profit of the last bet (negative on a loss) |
-| `roll` | Roll of the last bet (in limbo: the result multiplier; in Stake's other games: see the per-game table) |
-| `lastBet.amount`, `lastBet.roll` (also `lastBet.Roll`), `lastBet.profit`, `lastBet.payout`, `lastBet.payoutMultiplier`, `lastBet.win`, `lastBet.id`, `lastBet.name` | Details of the last bet. Video poker: `lastBet.roll` / `lastBet.Roll` are the hand's outcome, e.g. `"twoPair"`; mines: the mine positions; keno: the drawn numbers (both 1-based lists). |
+| `roll` | Roll of the last bet, the full value as the casino reported it (in limbo: the result multiplier; in Stake's other games: see the per-game table). The bet list shows it cut to 2 decimals. |
+| `lastBet.amount`, `lastBet.roll` (also `lastBet.Roll`), `lastBet.profit`, `lastBet.payout`, `lastBet.payoutMultiplier`, `lastBet.win`, `lastBet.id`, `lastBet.name`, `lastBet.result` | Details of the last bet. `lastBet.result` is the game's own result as Stake reports it: baccarat `"banker"` / `"player"` / `"tie"`, roulette's winning number, wheel / cases result, the dice or Primedice X roll, the limbo multiplier; for games without one (video poker, mines, keno, …) and in simulation it is the same as `lastBet.roll`. Video poker: `lastBet.roll` / `lastBet.Roll` are the hand's outcome, e.g. `"twoPair"`; mines: the mine positions; keno: the drawn numbers (both 1-based lists). |
 | `bet` | Stake's full bet object of the last bet (e.g. `bet.payoutMultiplier`, `bet.state.playerHand`, `bet.state.drawnNumbers`). Positions inside it are Stake's own, 0-based. Empty in simulation. |
 | `balance` | Current balance |
 | `profit` | Profit of this run so far |
@@ -411,7 +411,7 @@ You can also create your own variables (e.g. `basebet`); they persist between `d
 |---|---|
 | `dobet()` | You define it; it's called after every bet |
 | `stop([reason])` | Stops the run (the reason is shown in the log) |
-| `print(...)` / `log(...)` | Write to the Console tab (small numbers are printed in full, e.g. `0.00000226`) |
+| `print(...)` / `log(...)` | Write to the Console tab. Numbers are printed in full, never rounded or in exponent form (`0.00000226`, `1.987654`), also inside lists and objects: Lua tables print their contents (`{1,5,12}`, `{banker=0.001,player=0.001,tie=0}`), JavaScript objects / arrays print as JSON. |
 | `console.log / info / warn / debug / error(...)` | JavaScript only; objects are printed as JSON |
 | `resetstats()` | Resets the session statistics (bets, wins, losses, wagered, profit, streaks). The balance is kept, and `startbalance` becomes the current balance. |
 | `resetseed([clientseed])` | Rotates the seed pair, e.g. `resetseed("123xcv123")`. Without an argument, a random 10-character client seed is used. Safe to call at any time: in live mode it waits for a bet in flight, and the next bet waits for the server. See *Seeds* under [Supported casinos](#supported-casinos) for what each casino supports (on Winna, xBot reads the active seed first and then rotates it). |

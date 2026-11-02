@@ -290,7 +290,8 @@ struct BetRecord
     // Wolfbet 50.49 for the app's 2x / over 50.50), shown in the bet list. < 0 = same as `target`.
     double casinoTarget = -1.0;
     BetSide side = BetSide::Under;
-    double roll = 0.0;
+    double roll = 0.0;        // 2 decimals, cut (bet list / UI)
+    double rawRoll = 0.0;     // the full value as the casino reported it (scripts' roll / lastBet.roll)
     // Games other than dice / limbo: what the Target and Roll columns show ("medium|8",
     // "3 hits", "fourOfAKind", ...). Empty = the numeric target / roll.
     QString targetText;

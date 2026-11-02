@@ -140,6 +140,11 @@ bool nextAction(Game game, const QJsonObject &bet, const QJsonObject &params,
 // numbers (both 1-based, like the inputs). Undefined = use the numeric roll.
 QJsonValue scriptRoll(Game game, const QJsonObject &bet);
 
+// Code mode: lastBet.result = the game's own result as Stake reports it (bet.state.result:
+// baccarat "banker" / "player" / "tie", roulette's number, the dice / primedice roll, the limbo
+// multiplier, ...). Games without one: scriptRoll(), else `roll` (also in simulation).
+QJsonValue scriptResult(Game game, const QJsonObject &bet, double roll);
+
 struct Summary
 {
     double roll = 0.0;   // numeric "roll" (scripts' lastBet.Roll / roll)

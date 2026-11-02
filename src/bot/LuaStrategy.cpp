@@ -12,6 +12,7 @@ extern "C" {
 #include <QByteArray>
 #include <QDateTime>
 #include <QJsonArray>
+#include <QJsonDocument>
 #include <QJsonObject>
 #include <QStringList>
 #include <QLocale>
@@ -343,6 +344,48 @@ LuaStrategy *self(lua_State *L)
     return s;
 }
 
+QJsonValue luaToJson(lua_State *L, int idx, int depth); // defined below
+
+// A number in full positional notation (0.0000001, not 1e-07), shortest exact form.
+QString fullNumber(double v)
+{
+    if (!std::isfinite(v))
+        return std::isnan(v) ? QStringLiteral("nan") : (v > 0 ? QStringLiteral("inf") : QStringLiteral("-inf"));
+    return QString::number(v, 'f', QLocale::FloatingPointShortest);
+}
+
+// A table's contents as JSON-like text ({"a":1,"b":[1,2]}) with every number in full.
+QString jsonFullText(const QJsonValue &v)
+{
+    switch (v.type()) {
+    case QJsonValue::Double:
+        return fullNumber(v.toDouble());
+    case QJsonValue::Bool:
+        return v.toBool() ? QStringLiteral("true") : QStringLiteral("false");
+    case QJsonValue::String: {
+        QJsonArray wrap;
+        wrap.append(v);
+        const QByteArray j = QJsonDocument(wrap).toJson(QJsonDocument::Compact); // ["..."]
+        return QString::fromUtf8(j.mid(1, j.size() - 2));
+    }
+    case QJsonValue::Array: {
+        QStringList items;
+        for (const QJsonValue &e : v.toArray())
+            items << jsonFullText(e);
+        return QLatin1Char('{') + items.join(QLatin1Char(',')) + QLatin1Char('}');
+    }
+    case QJsonValue::Object: {
+        QStringList items;
+        const QJsonObject o = v.toObject();
+        for (auto it = o.begin(); it != o.end(); ++it)
+            items << it.key() + QLatin1Char('=') + jsonFullText(it.value());
+        return QLatin1Char('{') + items.join(QLatin1Char(',')) + QLatin1Char('}');
+    }
+    default:
+        return QStringLiteral("nil");
+    }
+}
+
 // Joins the arguments like print() does (tab separated, using __tostring).
 QString joinArgs(lua_State *L)
 {
@@ -354,12 +397,21 @@ QString joinArgs(lua_State *L)
         if (lua_type(L, i) == LUA_TNUMBER && !lua_isinteger(L, i)) {
             const double v = lua_tonumber(L, i);
             if (std::isfinite(v)) {
-                QString txt = QString::number(v, 'f', QLocale::FloatingPointShortest);
+                QString txt = fullNumber(v);
                 if (!txt.contains(QLatin1Char('.')))
                     txt += QStringLiteral(".0"); // keep Lua's "5.0" for whole floats
                 parts << txt;
                 continue;
             }
+        }
+        // Tables: their contents ({1,2,3} / {player=0.001,...}) instead of "table: 0x...",
+        // unless the table has its own __tostring.
+        if (lua_type(L, i) == LUA_TTABLE) {
+            if (luaL_getmetafield(L, i, "__tostring") == LUA_TNIL) {
+                parts << jsonFullText(luaToJson(L, i, 0));
+                continue;
+            }
+            lua_pop(L, 1); // the __tostring field
         }
         size_t len = 0;
         const char *s = luaL_tolstring(L, i, &len);
@@ -645,6 +697,9 @@ void LuaStrategy::publishLastBet(const BetInfo &info)
     }
     lua_pushboolean(m_L, info.win ? 1 : 0);
     lua_setfield(m_L, -2, "win");
+    // The game's own result (baccarat "banker", roulette's number, the dice roll, ...).
+    pushJson(m_L, StakeGames::scriptResult(info.game, info.betJson, info.roll));
+    lua_setfield(m_L, -2, "result");
     const QByteArray id = info.betId.toUtf8();
     lua_pushstring(m_L, id.constData());
     lua_setfield(m_L, -2, "id");

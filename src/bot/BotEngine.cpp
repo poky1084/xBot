@@ -1051,7 +1051,7 @@ ScriptStrategy::BetInfo BotEngine::lastBetInfo(bool win) const
     info.bet = m_lastRec.bet;
     info.profit = m_lastRec.profit;
     info.payout = m_lastRec.payout;
-    info.roll = m_lastRec.roll;
+    info.roll = m_lastRec.rawRoll; // full value, not cut to 2 decimals
     info.balance = m_stats.balance;
     info.runProfit = m_stats.profit - m_runStartProfit;
     info.multiplier = m_lastRec.mult;
@@ -1109,7 +1109,8 @@ BetRecord BotEngine::recordBet(const BotConfig &cfg, double betSize, double roll
     rec.targetText = targetText;
     rec.rollText = rollText;
     rec.side = cfg.side;
-    rec.roll = truncate2(roll); // 2 decimals, cut not rounded (history, UI and scripts)
+    rec.roll = truncate2(roll); // 2 decimals, cut not rounded (history and UI)
+    rec.rawRoll = roll;         // scripts get the full value
     rec.mult = mult;
     rec.win = win;
     rec.payout = payout;

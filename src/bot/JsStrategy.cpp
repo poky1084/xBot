@@ -84,6 +84,24 @@ const char kPrelude[] = R"JS(
         if (exp >= digits.length) return m[1] + digits + new Array(exp - digits.length + 1).join("0");
         return m[1] + digits.slice(0, exp) + "." + digits.slice(exp);
     }
+    // Objects / arrays like JSON, but every number in full (0.0000001, not 1e-7).
+    function ser(v, depth) {
+        if (typeof v === "number") return num(v);
+        if (typeof v === "string") return JSON.stringify(v);
+        if (typeof v === "boolean") return String(v);
+        if (v === null || v === undefined) return "null";
+        if (typeof v === "function") return "[function]";
+        if (depth > 32) return "...";
+        if (Array.isArray(v)) {
+            var items = [];
+            for (var i = 0; i < v.length; i++) items.push(ser(v[i], depth + 1));
+            return "[" + items.join(",") + "]";
+        }
+        var parts = [], keys = Object.keys(v);
+        for (var k = 0; k < keys.length; k++)
+            parts.push(JSON.stringify(keys[k]) + ":" + ser(v[keys[k]], depth + 1));
+        return "{" + parts.join(",") + "}";
+    }
     function fmt(v) {
         if (typeof v === "number") return num(v);
         if (typeof v === "string") return v;
@@ -91,7 +109,7 @@ const char kPrelude[] = R"JS(
         if (v === undefined) return "undefined";
         if (typeof v === "function") return "[function]";
         if (typeof v === "object") {
-            try { return JSON.stringify(v); } catch (e) { return String(v); }
+            try { return ser(v, 0); } catch (e) { return String(v); }
         }
         return String(v);
     }
@@ -189,6 +207,8 @@ void JsStrategy::publishLastBet(const BetInfo &info)
     o.setProperty(QStringLiteral("profit"), info.profit);
     o.setProperty(QStringLiteral("payout"), info.payout);
     o.setProperty(QStringLiteral("payoutMultiplier"), info.multiplier);
+    // The game's own result (baccarat "banker", roulette's number, the dice roll, ...).
+    o.setProperty(QStringLiteral("result"), toJs(StakeGames::scriptResult(info.game, info.betJson, info.roll)));
     o.setProperty(QStringLiteral("win"), info.win);
     o.setProperty(QStringLiteral("id"), info.betId);
     o.setProperty(QStringLiteral("name"), info.betJson.value(QStringLiteral("user")).toObject()

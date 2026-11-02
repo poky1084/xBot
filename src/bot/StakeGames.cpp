@@ -1546,6 +1546,17 @@ QJsonValue scriptRoll(Game game, const QJsonObject &bet)
     }
 }
 
+QJsonValue scriptResult(Game game, const QJsonObject &bet, double roll)
+{
+    const QJsonValue result = stateOf(bet).value(QStringLiteral("result"));
+    if (!result.isUndefined() && !result.isNull())
+        return result;
+    const QJsonValue special = bet.isEmpty() ? QJsonValue(QJsonValue::Undefined) : scriptRoll(game, bet);
+    if (!special.isUndefined())
+        return special;
+    return roll;
+}
+
 Summary summarize(Game game, const QJsonObject &bet, const QJsonObject &params)
 {
     Summary s;

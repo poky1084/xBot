@@ -84,7 +84,7 @@ protected:
         static const QSet<QString> api = {
             "nextbet", "chance", "bethigh", "target", "game", "currency", "dobet", "stop", "startbalance", "balance",
             "profit", "win", "previousbet", "lastBet", "lastprofit", "roll", "bets", "wins", "losses", "wagered",
-            "currentstreak", "log", "resetstats", "resetseed", "vault",
+            "currentstreak", "log", "resetstats", "resetseed", "vault", "result",
             // Stake's other games (reference bot variables)
             "bet", "currentBet", "round", "currentprofit", "winstreak", "losestreak", "numbers",
             "risk", "fields", "mines", "rows", "segments", "startcard", "pattern", "chips", "eggs",
@@ -1060,7 +1060,8 @@ void LuaEditorDock::onHelp()
         "<code>win, previousbet, lastprofit, currentprofit, roll, balance, profit, bets, wins, "
         "losses, wagered, currentstreak, winstreak, losestreak, startbalance</code><br>"
         "<code>lastBet.amount, lastBet.roll (lastBet.Roll), lastBet.profit, lastBet.payout, "
-        "lastBet.payoutMultiplier, lastBet.win, lastBet.id</code> – details of the last bet "
+        "lastBet.payoutMultiplier, lastBet.win, lastBet.id, lastBet.result</code> – details of the last bet; "
+        "<code>lastBet.result</code> is the game's own result (baccarat \"banker\", roulette's number, the dice roll, ...) "
         "(<code>lastBet.roll</code> / <code>lastBet.Roll</code>: video poker the hand's outcome, e.g. "
         "<code>\"twoPair\"</code>; mines the mine positions, keno the drawn numbers, both 1-based lists)<br>"
         "<code>bet</code> – Stake's full bet object of the last bet (e.g. "
