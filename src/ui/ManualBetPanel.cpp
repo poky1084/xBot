@@ -1,11 +1,13 @@
 #include "ui/ManualBetPanel.h"
 
+#include "ui/GameParamsWidget.h"
 #include "ui/TargetBar.h"
 
 #include <QSignalBlocker>
 #include <QDoubleSpinBox>
 #include <QFormLayout>
 #include <QHBoxLayout>
+#include <QJsonObject>
 #include <QLabel>
 #include <QPushButton>
 #include <QSlider>
@@ -57,6 +59,7 @@ ManualBetPanel::ManualBetPanel(QWidget *parent)
     amountRow->addWidget(doubleBtn);
 
     auto *form = new QFormLayout;
+    m_form = form;
     form->setContentsMargins(0, 0, 0, 0);
     form->setHorizontalSpacing(12);
     form->setVerticalSpacing(6);
@@ -89,7 +92,15 @@ ManualBetPanel::ManualBetPanel(QWidget *parent)
     m_rollBtn->setFont(rollFont);
     connect(m_rollBtn, &QPushButton::clicked, this, &ManualBetPanel::rollRequested);
 
+    // Settings of Stake's other games (shown instead of Multiplier / Win chance).
+    m_params = new GameParamsWidget;
+    // Hilo "Stop on" only matters for auto-bet runs (Auto Bet tab); manual bets play "None".
+    m_params->setHiddenKeys({QStringLiteral("suitMode")});
+    m_params->setVisible(false);
+    connect(m_params, &GameParamsWidget::paramsChanged, this, &ManualBetPanel::gameChanged);
+
     left->addLayout(form);
+    left->addWidget(m_params);
     left->addWidget(m_rollBtn);
     left->addStretch();
     root->addLayout(left);
@@ -201,7 +212,19 @@ BotConfig ManualBetPanel::config() const
     cfg.target = target();
     cfg.baseBet = amount();
     cfg.startBalance = m_startBalance;
+    cfg.gameParams = m_params->params(); // empty for dice / limbo
     return cfg;
+}
+
+QJsonObject ManualBetPanel::gameParams() const
+{
+    return m_params->allParams();
+}
+
+void ManualBetPanel::setGameParams(const QJsonObject &all)
+{
+    m_params->setAllParams(all);
+    m_params->setGame(m_game);
 }
 
 void ManualBetPanel::setGame(Game game)
@@ -217,11 +240,24 @@ void ManualBetPanel::setGame(Game game)
 void ManualBetPanel::applyGameLayout()
 {
     const bool limbo = m_game == Game::Limbo;
-    m_sideBtn->setVisible(!limbo);
-    m_targetBar->setVisible(!limbo);
-    m_targetSlider->setVisible(!limbo);
-    m_scaleWidget->setVisible(!limbo);
-    m_rollBtn->setText(limbo ? tr("Bet Limbo") : tr("Roll Dice"));
+    const bool dice = m_game == Game::Dice;
+    const bool other = !isDiceOrLimbo(m_game);
+    m_sideBtn->setVisible(dice);
+    m_targetBar->setVisible(dice);
+    m_targetSlider->setVisible(dice);
+    m_scaleWidget->setVisible(dice);
+    m_targetLabel->setVisible(!other);
+    // Multiplier / Win chance / Profit on win belong to dice and limbo; the other games show
+    // their own settings instead.
+    for (QWidget *w : {static_cast<QWidget *>(m_multiplierSpin), static_cast<QWidget *>(m_chanceSpin),
+                       static_cast<QWidget *>(m_profitOnWin)}) {
+        w->setVisible(!other);
+        if (QWidget *label = m_form->labelForField(w))
+            label->setVisible(!other);
+    }
+    m_params->setGame(m_game);
+    m_params->setVisible(other && m_params->hasFields());
+    m_rollBtn->setText(dice ? tr("Roll Dice") : tr("Bet %1").arg(gameDisplayName(m_game)));
     updateResultStyle();
 
     m_multiplierSpin->blockSignals(true);
@@ -242,7 +278,7 @@ void ManualBetPanel::applyGameLayout()
 void ManualBetPanel::updateResultStyle()
 {
     // >>> Font size of the last result: limbo (first number) / dice (second number) <<<
-    const int pointSize = m_game == Game::Limbo ? 45 : 17;
+    const int pointSize = m_game == Game::Limbo ? 45 : (m_game == Game::Dice ? 17 : 20);
     QString css = QStringLiteral("font-size: %1pt; font-weight: bold;").arg(pointSize);
     if (!m_resultColor.isEmpty())
         css += QStringLiteral(" color: %1;").arg(m_resultColor);
@@ -263,7 +299,7 @@ void ManualBetPanel::setBetPrecision(int decimals, double minBet)
 void ManualBetPanel::setLocked(bool locked)
 {
     const QList<QWidget *> lockedWidgets = {m_amountSpin, m_multiplierSpin,
-                                            m_chanceSpin, m_targetSlider};
+                                            m_chanceSpin, m_targetSlider, m_params};
     for (QWidget *w : lockedWidgets)
         w->setEnabled(!locked);
     m_rollBtn->setEnabled(!locked);
@@ -273,6 +309,16 @@ void ManualBetPanel::onBetResult(const BetRecord &record)
 {
     if (record.game == Game::Dice)
         m_targetBar->setLastRoll(record.roll);
+    if (!isDiceOrLimbo(record.game)) {
+        // "3 hits  2.0000x", "fourOfAKind  22.0000x", "1.5000x"
+        const QString mult = QStringLiteral("%1x").arg(record.mult, 0, 'f', 4);
+        m_lastResult->setText(record.rollText.isEmpty() || record.rollText == mult
+                                  ? mult
+                                  : QStringLiteral("%1  %2").arg(record.rollText, mult));
+        m_resultColor = record.win ? QStringLiteral("#2e9e46") : QStringLiteral("#c9372a");
+        updateResultStyle();
+        return;
+    }
     m_lastResult->setText(QStringLiteral("%1%2 %3")
                               .arg(record.roll, 0, 'f', 2)
                               .arg(record.game == Game::Limbo ? QStringLiteral("x") : QString())
@@ -347,6 +393,8 @@ void ManualBetPanel::doubleAmount()
 
 void ManualBetPanel::refreshDerived()
 {
+    if (!isDiceOrLimbo(m_game))
+        return; // no multiplier / chance: the game's own settings decide the odds
     if (m_game == Game::Limbo) {
         m_targetLabel->setText(tr("Target: %1x").arg(m_limboTarget, 0, 'f', 2));
         m_chanceSpin->blockSignals(true);

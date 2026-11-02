@@ -8,6 +8,8 @@
 #include "bot/ScriptStrategy.h"
 
 #include <QElapsedTimer>
+#include <QJsonObject>
+#include <QJsonValue>
 #include <QTimer>
 
 #include <functional>
@@ -169,7 +171,15 @@ private:
     BetRecord recordBet(const BotConfig &cfg, double betSize, double roll, bool win,
                         double mult, double payout, qint64 nonce,
                         const QString &betId = QString(), const QString &casino = QString(),
-                        double casinoTarget = -1.0);
+                        double casinoTarget = -1.0, const QString &targetText = QString(),
+                        const QString &rollText = QString());
+    // Stake games that take several requests (hilo, blackjack, video poker, blue samurai
+    // bonus spins, an open mines game): sends the next move for the unfinished bet `r`
+    // (asks the script's round() for hilo / blackjack). False + error when no move is possible.
+    bool continueGame(const LiveBetResult &r, QString *error);
+    bool sendGameStep(QString *error);
+    // Fills the script's view of the last bet (shared by advanceProgression / finishScriptDrain).
+    ScriptStrategy::BetInfo lastBetInfo(bool win) const;
     bool checkStopConditions(); // true if a stop condition fired (engine stopped)
     void scheduleNext();
     // "Auto-bet <reason> (N bets, P/L x)". When the stop happens while a bet is still in flight
@@ -251,6 +261,13 @@ private:
     bool m_inFlight = false;
     bool m_inFlightManual = false;
     BotConfig m_inFlightCfg;
+    // Multi-step game in flight (see continueGame()).
+    int m_gameSteps = 0;          // moves sent for the current bet
+    int m_gameFallback = 0;       // blackjack: 1 = retry with noInsurance, 2 = with stand
+    QJsonObject m_gameBet;        // the open bet as last reported
+    QJsonValue m_gameChoice;      // what round() returned for it
+    double m_gameAmount = 0.0;
+    QJsonObject m_lastBetJson;    // the last settled bet (the scripts' `bet` variable)
     QString m_inFlightCasino; // casino the bet in flight was sent to (its row shows this one)
     int m_retryStreak = 0;
 

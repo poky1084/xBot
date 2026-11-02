@@ -1,5 +1,6 @@
 #pragma once
 
+#include "bot/BotTypes.h"
 #include "bot/StakeTransport.h"
 
 #include <QList>
@@ -21,6 +22,14 @@ struct LimboBetRequest
 {
     double amount = 0.0;
     double multiplierTarget = 2.0;
+};
+
+// One of Stake's other games (keno, mines, hilo, ...): see bot/StakeGames.h.
+struct GameBetRequest
+{
+    Game game = Game::Keno;
+    double amount = 0.0;     // total stake (baccarat / roulette: the sum of the sides / chips)
+    QJsonObject params;      // BotConfig::gameParams
 };
 
 // Outcome of one live bet. Everything here comes from the server.
@@ -54,6 +63,14 @@ struct LiveBetResult
     // The account balance right after this bet, when the casino reports it (Tower "newBalance",
     // Pasino "balance"); < 0 = not reported. The engine's balance is set to it.
     double balanceAfter = -1.0;
+
+    // Stake's other games (placeGame() / sendGameAction()):
+    // The bet is not settled yet (hilo / blackjack / video poker waiting for the next move,
+    // blue samurai bonus spins): BotEngine sends the next step with sendGameAction().
+    bool active = false;
+    QJsonObject bet;        // the casino's bet object ({id, amount, payoutMultiplier, state, ...})
+    QString targetText;     // bet list Target / Roll columns (see StakeGames::summarize())
+    QString rollText;
 };
 
 // Talks to the casino's REST/GraphQL API through an IStakeTransport.
@@ -83,6 +100,7 @@ public:
     bool isPasino() const;
     bool isTower() const;
     bool isWinna() const;
+    bool isStake() const; // none of the above: Stake (or one of its mirrors)
 
     // API currency code, lowercase ("btc", "usdt", ...).
     void setCurrency(const QString &currency);
@@ -98,6 +116,16 @@ public:
 
     void placeDice(const DiceBetRequest &request);
     void placeLimbo(const LimboBetRequest &request);
+    // Stake only: keno, mines, plinko, hilo, blackjack, ... (everything in StakeGames except
+    // dice / limbo). The result arrives through diceFinished(); an unfinished bet comes back
+    // with `active` set and is continued with sendGameAction(). When Stake answers
+    // "existingGame" for a game that can be left open (hilo, blackjack, video poker, mines),
+    // that open bet is fetched and returned as `active` so it can be finished first.
+    void placeGame(const GameBetRequest &request);
+    // Next step of an unfinished bet (StakeGames::nextAction()). `requestedAmount` is the
+    // bet's stake (used when the answer does not repeat it).
+    void sendGameAction(Game game, const QString &endpoint, const QJsonObject &body,
+                        const QJsonObject &params, double requestedAmount);
     // The roll target the casino got for the last dice bet, in the roll's own scale (Pasino
     // "High > 5249" -> 52.49, Tower ">50750" -> 50.75). It differs from the app's target where the casino has another house edge or range. < 0 = the app's
     // target was sent as it is (and for limbo bets).
@@ -140,6 +168,13 @@ signals:
 private:
     void postBalanceQuery(IStakeTransport *via, bool background);
     void postBet(const QString &endpoint, const QJsonObject &body, double requestedAmount);
+    // placeGame() / sendGameAction(): posts and turns the answer into a LiveBetResult.
+    void postGameBet(Game game, const QString &endpoint, const QJsonObject &body,
+                     const QJsonObject &params, double requestedAmount, bool firstRequest);
+    // "existingGame": fetches the open bet of `game` (_api/casino/active-bet/<slug>).
+    void fetchActiveGame(Game game, const QJsonObject &params, double requestedAmount);
+    LiveBetResult gameResult(Game game, const QJsonObject &bet, const QJsonObject &params,
+                             double requestedAmount) const;
     void placeShuffleDice(const DiceBetRequest &request);
     void placeShuffleLimbo(const LimboBetRequest &request);
     void placeGoatedDice(const DiceBetRequest &request);

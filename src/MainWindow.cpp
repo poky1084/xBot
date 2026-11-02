@@ -2,6 +2,7 @@
 
 #include "bot/BotEngine.h"
 #include "bot/SimulatedProvider.h"
+#include "bot/StakeGames.h"
 #include "ui/AutoBetPanel.h"
 #include "ui/BalanceGraphWidget.h"
 #include "ui/BetHistoryModel.h"
@@ -282,6 +283,16 @@ class CheckStyle : public QProxyStyle
 {
 public:
     explicit CheckStyle(const QString &key) : QProxyStyle(key) {}
+
+    // A menu taller than the screen (the Game menu on Stake lists ~29 games) scrolls with
+    // up / down arrows instead of being split into columns. Menus that fit are unchanged.
+    int styleHint(StyleHint hint, const QStyleOption *opt = nullptr, const QWidget *w = nullptr,
+                  QStyleHintReturn *ret = nullptr) const override
+    {
+        if (hint == SH_Menu_Scrollable)
+            return 1;
+        return QProxyStyle::styleHint(hint, opt, w, ret);
+    }
 
     void drawPrimitive(PrimitiveElement pe, const QStyleOption *opt, QPainter *p,
                        const QWidget *w) const override
@@ -921,15 +932,22 @@ void MainWindow::createMenus()
     QMenu *gameMenu = menuBar()->addMenu(tr("&Game"));
     m_gameGroup = new QActionGroup(this);
     m_gameGroup->setExclusive(true);
-    m_actGameDice = gameMenu->addAction(tr("&Dice"));
-    m_actGameLimbo = gameMenu->addAction(tr("&Limbo"));
-    for (QAction *a : {m_actGameDice, m_actGameLimbo}) {
+    for (Game g : allGames()) {
+        if (g == Game::Dice || g == Game::Limbo) {
+            // keep the old mnemonics
+        } else if (!m_gameSeparator) {
+            m_gameSeparator = gameMenu->addSeparator(); // Stake's own games below
+        }
+        const QString text = g == Game::Dice ? tr("&Dice")
+                             : g == Game::Limbo ? tr("&Limbo")
+                                                : gameDisplayName(g);
+        QAction *a = gameMenu->addAction(text);
         a->setCheckable(true);
         m_gameGroup->addAction(a);
+        m_gameActions.insert(g, a);
+        connect(a, &QAction::triggered, this, [this, g] { onGameSelected(g); });
     }
-    m_actGameDice->setChecked(true);
-    connect(m_actGameDice, &QAction::triggered, this, [this] { onGameSelected(Game::Dice); });
-    connect(m_actGameLimbo, &QAction::triggered, this, [this] { onGameSelected(Game::Limbo); });
+    m_gameActions.value(Game::Dice)->setChecked(true);
 
     QMenu *viewMenu = menuBar()->addMenu(tr("&View"));
     viewMenu->addAction(m_actShowSidebar);
@@ -1451,11 +1469,13 @@ void MainWindow::createLuaDock()
 void MainWindow::updateWindowTitle()
 {
     // The main window keeps the plain title; "+" windows show their number:
-    // #2 = first "+" window, #3 = the next, … (settings slot + 1).
+    // #2 = first "+" window, #3 = the next, … (settings slot + 1). The game being played
+    // follows the casino ("xBot - Stake: Keno").
+    const QString game = gameDisplayName(m_game);
     if (m_slot == 0)
-        setWindowTitle(tr("xBot - %1").arg(casinoDisplayName(m_live.casino)));
+        setWindowTitle(tr("xBot - %1: %2").arg(casinoDisplayName(m_live.casino), game));
     else
-        setWindowTitle(tr("xBot #%1 - %2").arg(m_slot + 1).arg(casinoDisplayName(m_live.casino)));
+        setWindowTitle(tr("xBot #%1 - %2: %3").arg(m_slot + 1).arg(casinoDisplayName(m_live.casino), game));
 }
 
 void MainWindow::setGame(Game game)
@@ -1463,14 +1483,55 @@ void MainWindow::setGame(Game game)
     m_game = game;
     {
         const QSignalBlocker blocker(m_gameGroup);
-        (game == Game::Limbo ? m_actGameLimbo : m_actGameDice)->setChecked(true);
+        if (QAction *a = m_gameActions.value(game))
+            a->setChecked(true);
     }
     if (m_manualPanel)
         m_manualPanel->setGame(game);
+    if (m_autoPanel)
+        m_autoPanel->setGame(game); // dice / limbo odds or the game's own settings
     if (m_fairPanel)
         m_fairPanel->setGame(game); // Limbo: verify shows the multiplier
     updateAutoOdds();
     updateWindowTitle();
+    fitPanelToGame();
+}
+
+void MainWindow::fitPanelToGame()
+{
+    if (!m_tabs)
+        return;
+    // Once the new game's inputs are laid out (and again after late size hints).
+    const auto fit = [this] {
+        if (!m_tabs || !m_centralArea || m_separatorDrag || !isVisible())
+            return; // not shown yet: the start-up layout sizes the panel
+        updateCentralHeight();
+        fitTopDock(true); // the panel docked above gives the missing height
+        const bool panelShown = !m_actShowTabs || m_actShowTabs->isChecked();
+        const int missing = m_panelHeight - m_centralArea->height();
+        if (!panelShown || missing <= 0)
+            return;
+        // Nothing (or not enough) above: take it from the tallest panel docked below.
+        QDockWidget *below = nullptr;
+        for (QDockWidget *dock : findChildren<QDockWidget *>()) {
+            if (dock->isHidden() || dock->isFloating() || !dock->isVisible()
+                || dockWidgetArea(dock) != Qt::BottomDockWidgetArea)
+                continue;
+            if (!below || dock->height() > below->height())
+                below = dock;
+        }
+        if (!below)
+            return;
+        const int target = std::max(60, below->height() - missing);
+        if (target != below->height()) {
+            resizeDocks({below}, {target}, Qt::Vertical);
+            if (below == m_logDock)
+                m_logHeight = target; // keep the Log at its new height (keepLogHeight)
+        }
+        QTimer::singleShot(0, this, &MainWindow::updateCentralHeight);
+    };
+    QTimer::singleShot(0, this, fit);
+    QTimer::singleShot(80, this, fit);
 }
 
 void MainWindow::onGameSelected(Game game)
@@ -1547,11 +1608,34 @@ void MainWindow::updateAutoOdds()
         default: break; // Stake, Shuffle, Goated, Wolfbet, Paradice, Winna: 1 % edge
         }
     }
-    m_autoPanel->setOddsContext(rtp, floorChance, m_game == Game::Dice);
+    m_autoPanel->setOddsContext(rtp, floorChance, m_game == Game::Dice, isDiceOrLimbo(m_game));
+}
+
+void MainWindow::updateGameMenu()
+{
+    if (m_gameActions.isEmpty())
+        return;
+    const QString site = LiveSettings::nameOf(m_live.casino);
+    bool stakeGames = false;
+    for (auto it = m_gameActions.begin(); it != m_gameActions.end(); ++it) {
+        const bool offered = StakeGames::casinoSupports(site, it.key());
+        it.value()->setVisible(offered);
+        if (offered && !isDiceOrLimbo(it.key()))
+            stakeGames = true;
+    }
+    if (m_gameSeparator)
+        m_gameSeparator->setVisible(stakeGames);
+    if (!StakeGames::casinoSupports(site, m_game)) {
+        onLogMessage(tr("%1 is not available on %2 - switched to Dice.")
+                         .arg(gameDisplayName(m_game), casinoDisplayName(m_live.casino)),
+                     false);
+        onGameSelected(Game::Dice);
+    }
 }
 
 void MainWindow::updateCasinoMenu()
 {
+    updateGameMenu();
     updateFairTab();
     updateAutoOdds();
     if (!m_actCasinoStake || !m_actCasinoShuffle || !m_actCasinoGoated || !m_actCasinoWolfbet
@@ -4706,10 +4790,16 @@ void MainWindow::loadSettings()
     m_engine->setBetDelayMs(m_betDelayMs);
     m_retryNoBalance = settings.value(QStringLiteral("General/retryNoBalance"), false).toBool();
     m_engine->setRetryNoBalance(m_retryNoBalance);
-    setGame(settings.value(QStringLiteral("General/game"), QStringLiteral("dice")).toString()
-                    == QLatin1String("limbo")
-                ? Game::Limbo
-                : Game::Dice);
+    m_manualPanel->setGameParams(
+        QJsonDocument::fromJson(settings.value(QStringLiteral("Manual/gameParams")).toString().toUtf8())
+            .object());
+    {
+        Game savedGame = Game::Dice;
+        if (!gameFromName(settings.value(QStringLiteral("General/game"), QStringLiteral("dice")).toString(),
+                          &savedGame))
+            savedGame = Game::Dice;
+        setGame(savedGame); // a game the casino does not offer falls back to dice (updateGameMenu)
+    }
 
     // Live connection settings. `enabled` is deliberately never restored: every
     // launch starts in simulation and live betting must be switched on again.
@@ -4794,6 +4884,14 @@ void MainWindow::loadSettings()
         else
             m_autoPanel->setSide(m_manualPanel->side());
         updateAutoOdds();
+    }
+    {
+        // The auto-bet's settings for Stake's other games; when none were saved yet (older
+        // settings) it starts from the Manual Bet tab's.
+        const QVariant saved = settings.value(QStringLiteral("AutoBet/gameParams"));
+        m_autoPanel->setGameParams(saved.isValid()
+                                       ? QJsonDocument::fromJson(saved.toString().toUtf8()).object()
+                                       : m_manualPanel->gameParams());
     }
     m_autoPanel->setConditionCount(m_conditions.size());
     m_autoPanel->setUseConditions(settings.value(QStringLiteral("AutoBet/useConditions"), false).toBool());
@@ -4889,6 +4987,8 @@ void MainWindow::saveManualTargets(QSettings &settings)
     settings.setValue(QStringLiteral("Manual/diceTarget"), m_manualPanel->target());
     settings.setValue(QStringLiteral("Manual/diceUnder"), m_manualPanel->side() == BetSide::Under);
     settings.setValue(QStringLiteral("Manual/limboTarget"), m_manualPanel->limboTarget());
+    settings.setValue(QStringLiteral("Manual/gameParams"),
+                      QString::fromUtf8(QJsonDocument(m_manualPanel->gameParams()).toJson(QJsonDocument::Compact)));
 }
 
 void MainWindow::saveSettings()
@@ -4929,6 +5029,8 @@ void MainWindow::saveSettings()
                                                             : QStringLiteral("over"));
     settings.remove(QStringLiteral("delayMs")); // old auto-bet panel delay, no longer used
     settings.setValue(QStringLiteral("useConditions"), m_autoPanel->useConditions());
+    settings.setValue(QStringLiteral("gameParams"),
+                      QString::fromUtf8(QJsonDocument(m_autoPanel->gameParams()).toJson(QJsonDocument::Compact)));
     settings.endGroup();
 }
 

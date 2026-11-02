@@ -2,6 +2,8 @@
 
 #include "bot/ScriptStrategy.h"
 
+#include "bot/BeepSound.h"
+
 #include <QObject>
 #include <QString>
 
@@ -29,6 +31,8 @@ public:
     Q_INVOKABLE void error(const QString &text) { m_owner->log(text, true); }
     Q_INVOKABLE void stop(const QString &reason) { m_owner->requestStop(reason); }
     Q_INVOKABLE void resetStats() { m_owner->requestResetStats(); }
+    // beep(): the reference bot's bell tone (e.g. to signal a hit).
+    Q_INVOKABLE void beep() { BeepSound::play(); }
     Q_INVOKABLE void resetSeed(const QString &clientSeed) { m_owner->requestResetSeed(clientSeed); }
     Q_INVOKABLE void vault(double amount)
     {
@@ -45,7 +49,20 @@ private:
 // Runs a user-written JavaScript (QJSEngine, ECMAScript) strategy. It follows the
 // same contract as the Lua strategy (see LuaStrategy.h), with JavaScript syntax:
 //
-//   game = "dice";          // optional: "dice" or "limbo"
+//   game = "dice";          // optional: "dice", "limbo" or one of Stake's games (Stake only):
+//                           // "keno", "mines", "plinko", "wheel", "hilo", "blackjack", "baccarat",
+//                           // "roulette", "dragontower", "flip", "rps", "pump", "snakes", "cases",
+//                           // "darts", "diamonds", "videopoker", "bluesamurai", "scarabspin",
+//                           // "tomeoflife", "bars", "chicken", "tarot", "drill", "packs", "moles",
+//                           // "primedice". Their settings use the reference bot's variables, e.g.
+//                           // keno: numbers = [1,2,3] (1 .. 40); risk = "low";
+//                           // mines: fields = [1,2] (1 .. 25, 1 = top-left); mines = 3;
+//                           // dragontower eggs / moles picks are 1-based too (1 = the first);
+//                           // baccarat: nextbet = {player: 0, banker: 0.004, tie: 0};
+//                           // roulette: chips = [{value: "colorRed", amount: 0.001}];
+//                           // hilo / blackjack: function round() { return HILO_BET_HIGH; } /
+//                           //   { return "BLACKJACK_STAND"; } decides each move (currentBet = the
+//                           //   open bet); see StakeGames::scriptVariables() for every game.
 //   currency = "btc";       // optional: currency code to bet in (default: the current bet
 //                           // currency); may be changed in dobet()
 //   nextbet = 0.00000100;   // required
@@ -62,9 +79,14 @@ private:
 // may not be visible to the host.
 //
 // Read-only globals refreshed before every dobet(): win, previousbet, lastBet
-// {amount, roll, profit, payout}, lastprofit, roll, balance, profit, bets, wins,
-// losses, wagered, currentstreak, startbalance.
-// Functions: stop([reason]), print(...) / log(...) / console.log(...),
+// {amount, roll, Roll, profit, payout, payoutMultiplier, win, id, name}, lastprofit,
+// currentprofit, roll, balance, profit, bets, wins, losses, wagered, currentstreak,
+// winstreak, losestreak, startbalance, and `bet` (Stake's bet object of the last bet, e.g.
+// bet.state.playerHand, bet.payoutMultiplier). Constants HILO_BET_HIGH (5), HILO_BET_LOW (4),
+// HILO_BET_EQUAL (2), HILO_SKIP (7), HILO_CASHOUT (3). Video poker helpers: getOptimalHold(hand),
+// getTargetedHold(hand, combos), checkTargetHit(hand, combos), evaluateHand(hand).
+// Functions: stop([reason]), print(...) / log(...) / console.log(...), beep() (plays the
+//   reference bot's bell tone),
 //   resetstats()  resets the session statistics (the balance is kept; startbalance
 //                 becomes the current balance),
 //   resetseed([clientseed])  rotates the seed pair; clientseed is an optional string
@@ -87,6 +109,7 @@ public:
     Status init(const QString &source, double balance, double &nextBet,
                 BotConfig &runCfg) override;
     Status onBet(const BetInfo &info, double &nextBet, BotConfig &runCfg) override;
+    Status callRound(const QJsonObject &currentBet, QJsonValue &result) override;
 
     bool isLoaded() const override { return m_engine != nullptr; }
     void setGlobalString(const char *name, const QString &value) override;
@@ -105,7 +128,10 @@ private:
     QJSValue readGlobal(const char *name);
     void publish(const char *name, double value);
     void publishBool(const char *name, bool value);
-    void publishLastBet(double amount, double roll, double profit, double payout);
+    void publishLastBet(const BetInfo &info);
+    void publishJson(const char *name, const QJsonValue &value);
+    // The script value of global `name` as JSON (undefined when it is not set).
+    QJsonValue readJson(const char *name);
 
     std::unique_ptr<QJSEngine> m_engine;
     std::unique_ptr<JsHost> m_host;

@@ -29,6 +29,8 @@ Source code and exe: <https://bitbucket.org/poky1084/xbot/downloads/> <br />
 10. [Condition Builder](#condition-builder)
     - [Importing Stake strategies (export-strategy extension)](#importing-stake-strategies-export-strategy-extension)
 11. [Code mode — Lua and JavaScript strategies](#code-mode--lua-and-javascript-strategies)
+    - [Stake games in code mode](#stake-games-in-code-mode)
+    - [Game examples (JavaScript)](#game-examples-javascript)
 12. [Provably fair / simulation](#provably-fair--simulation)
 13. [Multiple windows](#multiple-windows)
 14. [Where data is stored / clearing data](#where-data-is-stored)
@@ -54,7 +56,7 @@ If the WebView2 Runtime is missing, the login buttons are disabled, and Stake (C
 
 | Casino | Games | Login methods | Login data | Vault `vault()` | Site / mirror |
 |---|---|---|---|---|---|
-| **Stake.com** (and Primedice) | Dice, Limbo | *Cookie (cf_clearance)* → hidden WebView2 browser, or *Browser extension* | API key (`x-access-token`), optional `cf_clearance` | ✅ | Editable (`stake.com`, `stake.bet`, `stake.us`, `stake.games`, `stake.pet`, `stake.kim`, `stake.mba`, `stake.ac`, `stake.jp`, `stake.bz`, `stake.krd`, `stake.ceo`, `staketr.com`, `stake1021.com`, `stake1067.com`, `stake3075.com`, `primedice.com`, `primedice.games`, …) |
+| **Stake.com** (and Primedice) | Dice, Limbo + Stake's games (see [Stake games in code mode](#stake-games-in-code-mode)) | *Cookie (cf_clearance)* → hidden WebView2 browser, or *Browser extension* | API key (`x-access-token`), optional `cf_clearance` | ✅ | Editable (`stake.com`, `stake.bet`, `stake.us`, `stake.games`, `stake.pet`, `stake.kim`, `stake.mba`, `stake.ac`, `stake.jp`, `stake.bz`, `stake.krd`, `stake.ceo`, `staketr.com`, `stake1021.com`, `stake1067.com`, `stake3075.com`, `primedice.com`, `primedice.games`, …) |
 | **Shuffle.com** | Dice, Limbo | *Direct mode* (HTTPS + WebSocket from the app), or *Browser extension* | Token, `CORRELATION_USER_ID`, `BROWSER_ID` | ✅ | Editable (`shuffle.com` or a mirror) |
 | **Goated.com** | Dice, Limbo | *Direct mode* (HTTPS), or *Browser extension* | Token (`g3_token`) | ✅ | Fixed (`goated.com`) |
 | **Wolfbet.com** | Dice, Limbo | *Direct mode* (HTTPS), or *Browser extension* | Token (the `token` cookie) | ❌ | Fixed (`wolfbet.com`) |
@@ -100,7 +102,7 @@ Lists are cached, so the dropdown fills straight away next time. A currency the 
 
 | Area | Contents |
 |---|---|
-| **Menu bar** | **File** (Exit) · **Casino** (Stake / Shuffle / Goated / Wolfbet / Duel / Paradice / Pasino / Tower / Winna) · **Game** (Dice / Limbo) · **View** (Show sidebar, Show bet list, Show bottom panel, Show log, Strategy editor, Dark theme) · **Bot** (Start / Pause / Stop auto-bet, Roll once, Reset session, Clear history, Rotate seed) · **Tools** (Statistics, Options, Condition builder) · **Help** (About) |
+| **Menu bar** | **File** (Exit) · **Casino** (Stake / Shuffle / Goated / Wolfbet / Duel / Paradice / Pasino / Tower / Winna) · **Game** (the games the selected casino offers: Dice / Limbo, on Stake also its other games) · **View** (Show sidebar, Show bet list, Show bottom panel, Show log, Strategy editor, Dark theme) · **Bot** (Start / Pause / Stop auto-bet, Roll once, Reset session, Clear history, Rotate seed) · **Tools** (Statistics, Options, Condition builder) · **Help** (About) |
 | **Toolbar** | New window (+), Reset session, Start, Pause, Stop, Rotate seed, Statistics, Options, Condition builder, Strategy editor (#), and a filter box for the bet list (*Filter by nonce or roll…*) |
 | **Status / Session sidebar** (dockable) | **Status:** mode (Simulation / Live), casino, connection state. **Session:** Balance, Profit, Wager, Wins, Losses, Win rate, Big wins (10x+), Highest bet, highest and lowest profit, Highest / Lowest / Current streak, Running time |
 | **Bet list** | Time, Bet ID, Casino, Game, Nonce, Amount, Target, Roll, Multiplier, Payout, Profit. Right-click a live bet to **copy its Bet ID** (on Stake also the IID) or **open the bet in the browser** (not available for Duel, Paradice, Pasino, Tower and Winna bets, which only offer copying the Bet ID). The list follows new bets until you scroll, and follows again when you scroll back to the top. |
@@ -379,7 +381,7 @@ Scripts don't use the Manual or Auto Bet tabs, or the Options client seed. They 
 | `chance` | number | **dice** | Win chance in % (0.01 – 99.99, rounded to 2 dp) |
 | `bethigh` | boolean | dice | `true` = roll over, `false` = roll under (default) |
 | `target` | number | **limbo** | Target multiplier (1.01 – 1,000,000). `chance` and `bethigh` are ignored in limbo. |
-| `game` | string | no | `"dice"` or `"limbo"` (default: the game selected in the Game menu). Can be changed in `dobet()`. |
+| `game` | string | no | `"dice"` or `"limbo"` (default: the game selected in the Game menu). On Stake also `"keno"`, `"mines"`, `"plinko"`, `"wheel"`, `"hilo"`, `"blackjack"`, `"baccarat"`, `"roulette"`, `"dragontower"`, `"flip"`, `"rps"`, `"pump"`, `"snakes"`, `"cases"`, `"darts"`, `"diamonds"`, `"videopoker"`, `"bluesamurai"`, `"scarabspin"`, `"tomeoflife"`, `"bars"`, `"chicken"`, `"tarot"`, `"drill"`, `"packs"`, `"moles"`, `"primedice"` (Primedice X) — each with its own variables, see [Stake games in code mode](#stake-games-in-code-mode). Can be changed in `dobet()`. |
 | `casino` | string | no | `"stake"`, `"shuffle"`, `"goated"`, `"wolfbet"`, `"duel"`, `"paradice"`, `"pasino"`, `"tower"` or `"winna"`. Switches the casino the next bets go to, **without resetting the session**. The casino must already be logged in in Options. |
 | `currency` | string | no | Currency code, e.g. `"btc"` or `"usdt"` (default: the current bet currency). In live mode the account needs a balance in it, and the session statistics restart in the new currency. |
 
@@ -391,14 +393,16 @@ You can also create your own variables (e.g. `basebet`); they persist between `d
 |---|---|
 | `win` | `true` if the last bet won |
 | `previousbet` | Amount of the last bet |
-| `lastprofit` | Profit of the last bet (negative on a loss) |
-| `roll` | Roll of the last bet (in limbo: the result multiplier) |
-| `lastBet.amount`, `lastBet.roll`, `lastBet.profit`, `lastBet.payout` | Details of the last bet |
+| `lastprofit`, `currentprofit` | Profit of the last bet (negative on a loss) |
+| `roll` | Roll of the last bet (in limbo: the result multiplier; in Stake's other games: see the per-game table) |
+| `lastBet.amount`, `lastBet.roll` (also `lastBet.Roll`), `lastBet.profit`, `lastBet.payout`, `lastBet.payoutMultiplier`, `lastBet.win`, `lastBet.id`, `lastBet.name` | Details of the last bet. Video poker: `lastBet.roll` / `lastBet.Roll` are the hand's outcome, e.g. `"twoPair"`. |
+| `bet` | Stake's full bet object of the last bet (e.g. `bet.payoutMultiplier`, `bet.state.playerHand`, `bet.state.drawnNumbers`). Positions inside it are Stake's own, 0-based. Empty in simulation. |
 | `balance` | Current balance |
 | `profit` | Profit of this run so far |
 | `bets`, `wins`, `losses` | Counters for this run |
 | `wagered` | Total amount wagered in this run |
 | `currentstreak` | > 0 = consecutive wins, < 0 = consecutive losses |
+| `winstreak`, `losestreak` | Current number of wins / losses in a row (0 when the streak is the other way) |
 | `startbalance` | Balance when the run started (or at the last `resetstats()`) |
 
 ### Functions
@@ -413,6 +417,11 @@ You can also create your own variables (e.g. `basebet`); they persist between `d
 | `resetseed([clientseed])` | Rotates the seed pair, e.g. `resetseed("123xcv123")`. Without an argument, a random 10-character client seed is used. Safe to call at any time: in live mode it waits for a bet in flight, and the next bet waits for the server. See *Seeds* under [Supported casinos](#supported-casinos) for what each casino supports (on Winna, xBot reads the active seed first and then rotates it). |
 | `vault(amount)` | Deposits `amount` of the current currency into the vault, e.g. `vault(0.001)`. Live mode only; supported on **Stake, Shuffle, Goated and Winna**. Winna has a minimum deposit (1 USD); a refused deposit shows the site's message in the log. |
 | `os.time()`, `os.clock()` | Lua only: Unix time in seconds, and CPU time |
+| `beep()` | Plays a bell tone (the reference bot's beep), e.g. when a target hits |
+| `ding()` | Accepted so reference-bot scripts run; plays nothing |
+| `round()` | You define it (hilo and blackjack only); called for every move of an open game, see below |
+| `checkTargetHit(hand, combos)` | Video poker: the label of the first combo the hand contains (`"3xA + 2xK"`), else `nil` / `null`. Lua and JavaScript. |
+| `getOptimalHold(hand)`, `getTargetedHold(hand, combos)`, `evaluateHand(hand)` | JavaScript only: the video poker strategy helpers. The first two return `{hold, reason}`. |
 
 ### Lua syntax extras
 
@@ -493,6 +502,575 @@ function dobet()
     if bets == 1000 then casino = "shuffle" end           -- continue on Shuffle (session kept)
     if bets == 2000 then currency = "usdt" end            -- bet in USDT from now on
 end
+```
+
+### Stake games in code mode
+
+Besides dice and limbo, scripts can play Stake's own games. Set `game` to one of the names below plus that game's variables, the same way you set `chance` for dice. Crash and Slide are not supported.
+
+- **Stake only, live only.** On another casino the bet fails with *"… is only available on Stake"*, and in simulation with *"… can only be played live on Stake"*.
+- **No defaults in code mode.** Every variable listed for the game must be set by the script (in the script body, or in `dobet()` before it is read back). If one is missing, the run doesn't start, or stops, with *"keno needs these variables set in the script: numbers, risk"*. The only optional one is video poker's `target` (`nil` / `null` = the optimal hold). The Manual / Auto Bet tabs are not used in code mode.
+- **Variables** are read back after the script body and after every `dobet()`, like `nextbet`.
+- **Positions are 1-based** (1 = the first tile / egg / hole); xBot subtracts 1 before sending them to Stake. The `bet` object you get back still holds Stake's 0-based numbers.
+- **Results:** `win` is true when the payout multiplier is ≥ 1x. `roll` / `lastBet.roll` hold the value in the *Roll* column below; the full result is always in `bet`.
+
+| `game` | Variables the script must set (besides `nextbet`) | `roll` / bet list |
+|---|---|---|
+| `"keno"` | `numbers` — 1 to 10 numbers, 1–40 (duplicates and out-of-range numbers are skipped) · `risk` — `"low"`, `"classic"`, `"medium"` or `"high"` | Number of hits |
+| `"mines"` | `fields` — tiles to reveal, 1 (top-left) – 25 (bottom-right), row by row · `mines` — mines count 1–24. A game left open is cashed out. | Payout multiplier (Roll column: `safe` or `mine N`) |
+| `"plinko"` | `rows` — 8–16 · `risk` — `"low"`, `"medium"`, `"high"` or `"expert"` | Payout multiplier |
+| `"wheel"` | `segments` — 10, 20, 30, 40 or 50 · `risk` — `"low"`, `"medium"` or `"high"` | Result segment |
+| `"hilo"` | `startcard` — `{rank = "A", suit = "H"}` (Lua) / `{rank: "A", suit: "H"}` (JS), or text such as `"A"`, `"KH"`, `"10S"` · a `round()` function that decides every move (see below) | Payout multiplier (Target column: the cards) |
+| `"blackjack"` | a `round()` function that decides every move (see below) | Payout multiplier |
+| `"baccarat"` | `nextbet = {player = 0, banker = 0.004, tie = 0}` — the stake on each side; the total is the bet. Or a number in `nextbet` **plus** `side` — `"player"`, `"banker"` or `"tie"`. | Payout multiplier (Roll column: the result) |
+| `"roulette"` | `chips` — a list of `{value = "colorRed", amount = 0.0001}`; `nextbet` is not needed (the bet is the sum of the chips). Values: `colorRed` / `colorBlack`, `number0` – `number36`, `parityEven` / `parityOdd`, `range0112`, `range1324`, `range2536`, `range0118`, `range1936`, `row1` – `row3`. (Chip names without amounts split `nextbet` evenly between them.) | Winning number |
+| `"dragontower"` | `eggs` — the egg picked on each floor, from the bottom, 1-based · `difficulty` — `"easy"`, `"medium"`, `"hard"`, `"expert"` or `"master"` | Floor reached |
+| `"flip"` | `guesses` — list of `"heads"` / `"tails"`, one per flip | Payout multiplier |
+| `"rps"` | `guesses` — list of `"rock"` / `"paper"` / `"scissors"`, one per round | Payout multiplier |
+| `"pump"` | `pumps` — 1–20 · `difficulty` — `"easy"`, `"medium"`, `"hard"` or `"expert"` | Pop point |
+| `"snakes"` | `rolls` — 1–20 · `difficulty` — `"easy"`, `"medium"`, `"hard"`, `"expert"` or `"master"` | Winning rolls |
+| `"cases"` | `difficulty` — `"easy"`, `"medium"`, `"hard"` or `"expert"` | Case result |
+| `"darts"` | `difficulty` — `"easy"`, `"medium"`, `"hard"` or `"expert"` | Payout multiplier |
+| `"tarot"` | `difficulty` — `"easy"`, `"medium"`, `"hard"` or `"expert"` | Payout multiplier |
+| `"chicken"` | `steps` — 1–20 · `difficulty` — `"easy"`, `"medium"`, `"hard"` or `"expert"` | Death point |
+| `"drill"` | `target` — target multiplier 1.01–999 · `pick` — 1 (blue), 2 (yellow) or 3 (green) | Picked drill's multiplier |
+| `"moles"` | `moles` — 1–10 · `picks` — one hole per round, 1-based (repeats allowed, e.g. `{1, 2, 2, 2, 3, 7}`) | Last round with a hit |
+| `"bars"` | `tiles` — list of tiles, sent as written · `difficulty` — `"easy"`, `"medium"`, `"hard"` or `"expert"` | Payout multiplier |
+| `"scarabspin"`, `"tomeoflife"` | `lines` — 1–20 | Payout multiplier |
+| `"videopoker"` | *optional:* `target` — hold combos to chase, e.g. `{{A = 3, K = 2}, {A = 2, K = 3}}` (Lua) / `[{A: 3, K: 2}]` (JS); `nil` / `null` or not set = the optimal 9/6 Jacks-or-Better hold | `lastBet.roll` = the hand: `"royalFlush"`, `"straightFlush"`, `"fourOfAKind"`, `"fullHouse"`, `"flush"`, `"straight"`, `"threeOfAKind"`, `"twoPair"`, `"onePair"`, … (`roll` = payout multiplier) |
+| `"primedice"` | `condition` — `"rollBetween"`, `"rollOutside"` or `"rollBetweenTwo"` · `target1`, `target2` · `target3`, `target4` — only for `"rollBetweenTwo"` | Roll 0.00–100.00 |
+| `"diamonds"`, `"packs"`, `"bluesamurai"` | nothing else (blue samurai's bonus spins are played automatically) | Payout multiplier |
+
+#### Hilo and blackjack: `round()`
+
+A hilo or blackjack hand takes several moves. After the deal and after every move, while the hand is still open, xBot sets **`currentBet`** to Stake's open bet and calls your **`round()`** function. Its return value is the next move. `dobet()` runs only once the hand is settled. Hilo and blackjack scripts must define `round()`. (A `pattern` list, as in the examples, is just your own variable that `round()` reads.)
+
+| Game | `round()` returns | Constants |
+|---|---|---|
+| Hilo | `HILO_BET_HIGH` (5), `HILO_BET_LOW` (4), `HILO_BET_EQUAL` (2), `HILO_SKIP` (7), `HILO_CASHOUT` (3) — or a guess as text: `"higher"`, `"lower"`, `"equal"`, `"higherEqual"`, `"lowerEqual"`, `"skip"`, `"cashout"` | For the current card, HIGH means *higher or equal* (an Ace: *higher*, a King: *equal*), LOW means *lower or equal* (an Ace: *equal*, a King: *lower*). |
+| Blackjack | `"BLACKJACK_HIT"`, `"BLACKJACK_STAND"`, `"BLACKJACK_DOUBLE"`, `"BLACKJACK_SPLIT"`, `"BLACKJACK_INSURANCE"`, `"BLACKJACK_NOINSURANCE"` (or `"hit"`, `"stand"`, …) | If Stake refuses the move as invalid, xBot tries *no insurance*, then *stand*. |
+
+Useful fields of `currentBet`: hilo `currentBet.state.startCard.rank`, `currentBet.state.rounds` (each with `card.rank`, `card.suit`, `guess`, `payoutMultiplier`); blackjack `currentBet.state.player[1].value` / `.actions` and `currentBet.state.dealer[1].cards` (Lua tables start at 1; in JavaScript use `[0]`).
+
+If an earlier hilo, blackjack, video poker or mines game is still open on Stake (e.g. after a lost connection), the next bet first fetches it and finishes it.
+
+#### Example: keno (Lua)
+
+```lua
+game    = "keno"
+risk    = "classic"
+numbers = {1, 2, 3, 4, 5, 6, 7, 8}   -- 1-based: 1 .. 40
+basebet = 0.00000100
+nextbet = basebet
+
+function dobet()
+    if win then nextbet = basebet else nextbet = previousbet * 1.5 end
+    if roll >= 7 then beep(); stop("7+ hits") end   -- roll = number of hits
+end
+```
+
+#### Example: mines (JavaScript)
+
+```javascript
+game = "mines";
+mines = 3;
+fields = [1, 2, 3];                 // top-left row, 1-based
+nextbet = 0.000001;
+
+function dobet() {
+    if (!win) fields = [21, 22, 23]; // bottom row after a loss
+}
+```
+
+#### Example: hilo with `round()` (JavaScript)
+
+```javascript
+game = "hilo";
+nextbet = 0;
+startcard = {rank: "A", suit: "H"};
+pattern = [5, 5];                   // HIGH, HIGH, then cash out
+
+function round() {
+    const rounds = currentBet.state.rounds;
+    if (rounds.length < pattern.length) return pattern[rounds.length];
+    return HILO_CASHOUT;
+}
+
+function dobet() {
+    const ranks = ["A","2","3","4","5","6","7","8","9","10","J","Q","K"];
+    startcard = {rank: ranks[Math.floor(Math.random() * 13)], suit: "H"};
+}
+```
+
+#### Example: blackjack with `round()` (Lua)
+
+```lua
+game    = "blackjack"
+nextbet = 0
+
+function round()
+    local hand   = currentBet.state.player[1]
+    local dealer = currentBet.state.dealer[1]
+    local insuranceDone = false
+    for _, a in ipairs(hand.actions) do
+        if a == "insurance" or a == "noInsurance" then insuranceDone = true end
+    end
+    if dealer.cards[1].rank == "A" and not insuranceDone then
+        return "BLACKJACK_NOINSURANCE"
+    end
+    if hand.value < 17 then return "BLACKJACK_HIT" end
+    return "BLACKJACK_STAND"
+end
+```
+
+#### Example: video poker (Lua)
+
+```lua
+game    = "videopoker"
+nextbet = 0
+target  = {{A = 3, K = 2}, {A = 2, K = 3}}   -- chase aces full of kings (nil = optimal hold)
+
+function dobet()
+    if checkTargetHit(bet.state.playerHand, target) then beep(); stop("target hand") end
+    if lastBet.roll == "royalFlush" then beep(); stop("royal flush") end
+end
+```
+
+#### Example: baccarat, roulette, drill (Lua)
+
+```lua
+game    = "baccarat"
+nextbet = {player = 0, banker = 0.0004, tie = 0}
+
+-- game  = "roulette"
+-- chips = {{value = "colorRed", amount = 0.0001}, {value = "number0", amount = 0.0001}}
+
+-- game   = "drill"
+-- target = 2        -- target multiplier
+-- pick   = 2        -- 1 = blue, 2 = yellow, 3 = green
+```
+
+### Game examples (JavaScript)
+
+Ready-to-run starting points for every game, adapted from the reference bot's examples. Paste one into the Strategy editor (JavaScript), set your `nextbet` and press **Run**. Except dice and limbo, they need **live betting on Stake**.
+
+`dobet` can be declared either way:
+
+```javascript
+nextbet = 0.00001   // in crypto, not USD
+
+dobet = function () {
+    // strategy code
+}
+
+// or:
+function dobet() {
+    // strategy code
+}
+```
+
+#### Dice
+
+```javascript
+game = "dice"
+chance = 49.5
+nextbet = 0
+bethigh = false
+```
+
+#### Limbo
+
+```javascript
+game = "limbo"
+target = 2
+nextbet = 0
+```
+
+#### Primedice X
+
+```javascript
+game = "primedice"
+condition = "rollOutside"  // "rollBetween", "rollBetweenTwo" or "rollOutside"
+target1 = 5
+target2 = 24
+target3 = 45               // target3 / target4: only used by "rollBetweenTwo"
+target4 = 68
+nextbet = 0
+```
+
+#### Blackjack
+
+```javascript
+game = "blackjack"
+nextbet = 0
+basebet = nextbet
+nextAction = "BLACKJACK_STAND" // or "BLACKJACK_DOUBLE", "BLACKJACK_HIT", "BLACKJACK_SPLIT",
+                               //    "BLACKJACK_INSURANCE", "BLACKJACK_NOINSURANCE"
+
+function dobet() {
+    if (win) {
+        nextbet = basebet
+    }
+}
+
+function round() {
+    if (currentBet.state.dealer[0].value === 11) {
+        nextAction = "BLACKJACK_NOINSURANCE"
+    } else {
+        nextAction = "BLACKJACK_STAND"
+    }
+    if (currentBet.state.player[0].actions.includes("insurance") ||
+        currentBet.state.player[0].actions.includes("noInsurance")) {
+        nextAction = "BLACKJACK_STAND"
+    }
+    return nextAction
+}
+```
+
+#### Video poker #1 — stop on exact hands
+
+```javascript
+game = "videopoker"
+nextbet = 0.0
+target = null
+hunt1 = ["2", "2", "2", "K", "K"];
+hunt2 = ["2", "2", "K", "K", "K"];
+
+function dobet() {
+    const currentHand = bet.state.playerHand.map(card => card.rank);
+
+    const isHit = [...new Set(hunt1)].every(r =>
+        currentHand.filter(card => card === r).length === hunt1.filter(card => card === r).length
+    );
+
+    const isHit2 = [...new Set(hunt2)].every(r =>
+        currentHand.filter(card => card === r).length === hunt2.filter(card => card === r).length
+    );
+
+    if (isHit) {
+        stop();
+        beep();
+    }
+
+    if (isHit2) {
+        stop();
+        beep();
+    }
+}
+```
+
+#### Video poker #2 — hunt a pattern with `checkTargetHit`
+
+```javascript
+game = "videopoker"
+nextbet = 0.0
+target = null
+hunting = [
+    { 10: 2, A: 3 },
+    { 10: 3, A: 2 }
+]
+// the pattern to hunt: it stops when these cards are in the player's hand
+
+function dobet() {
+    const finalHand = bet.state.playerHand;
+    const hitLabel = checkTargetHit(finalHand, hunting);
+    if (hitLabel) {
+        stop();
+        beep();
+    }
+}
+```
+
+#### Video poker #3 — hold for a target, stop on big hands
+
+```javascript
+game = "videopoker"
+nextbet = 0.0
+target = [
+    { A: 2, K: 3 },
+    { A: 3, K: 2 }
+]
+// target = null
+// null = the optimal strategy; or list card ranks and how many to find: { card: amount, Q: 3 }
+
+function dobet() {
+    const finalHand = bet.state.playerHand;
+    const hitLabel = checkTargetHit(finalHand, target);
+    if (hitLabel) {
+        stop();
+        beep();
+    }
+
+    if (bet.payoutMultiplier >= 799) {
+        stop();
+        beep();
+    }
+
+    const handresult = bet.state.handResult;   // also in lastBet.roll
+    if (handresult == "fourOfAKind") {
+        stop();
+        beep();
+    }
+}
+
+// Possible values:
+//   "royalFlush"     → 800x
+//   "straightFlush"  → 60x
+//   "fourOfAKind"    → 22x
+//   "fullHouse"      → 9x
+//   "flush"          → 6x
+//   "straight"       → 4x
+//   "threeOfAKind"   → 3x
+//   "twoPair"        → 2x
+//   "onePair"        → 1x
+```
+
+#### Hilo
+
+```javascript
+game = "hilo"
+nextbet = 0
+startcard = {"rank": "A", "suit": "H"}
+pattern = [5, 5]
+//selection = [4, 5]
+
+function dobet() {
+    card = ["A", "2", "3", "4", "5", "6", "7", "8", "9", "10", "J", "Q", "K"].sort(() => Math.random() - 0.5).slice(0, 1).toString();
+    startcard = {"rank": card, "suit": "H"}
+    //pattern = selection.sort(() => Math.random() - 0.5).slice(0, 1)
+}
+
+function round() {
+    const rounds = currentBet.state.rounds;
+    const last = rounds.length > 0 ? rounds[rounds.length - 1] : null;
+    currentCardRank = last ? last.card.rank : currentBet.state.startCard.rank;
+    payoutMultiplier = last ? last.payoutMultiplier : 0;
+    skippedCards = rounds.filter(r => r.guess === 'skip').length;
+
+    if (rounds.length < pattern.length) {
+        guessing = pattern[rounds.length]
+    } else {
+        return HILO_CASHOUT;
+    }
+
+    if (currentCardRank === "A" && guessing === 4) return HILO_BET_LOW;
+    if (currentCardRank === "J" && guessing === 4) return HILO_BET_HIGH;
+    if (currentCardRank === "Q" && guessing === 4) return HILO_BET_HIGH;
+    if (currentCardRank === "K" && guessing === 4) return HILO_BET_HIGH;
+    if (parseInt(currentCardRank) <= 10 && parseInt(currentCardRank) >= 7 && guessing === 4) return HILO_BET_HIGH;
+    if (parseInt(currentCardRank) < 7 && guessing === 4) return HILO_BET_LOW;
+
+    if (currentCardRank === "A" && guessing === 5) return HILO_BET_HIGH;
+    if (currentCardRank === "J" && guessing === 5) return HILO_BET_LOW;
+    if (currentCardRank === "Q" && guessing === 5) return HILO_BET_LOW;
+    if (currentCardRank === "K" && guessing === 5) return HILO_BET_LOW;
+    if (parseInt(currentCardRank) <= 10 && parseInt(currentCardRank) >= 7 && guessing === 5) return HILO_BET_LOW;
+    if (parseInt(currentCardRank) < 7 && guessing === 5) return HILO_BET_HIGH;
+
+    if (guessing === 2) return HILO_BET_EQUAL;
+
+    return HILO_SKIP;
+}
+```
+
+#### Keno
+
+```javascript
+game = "keno"
+numbers = [1, 2, 3, 4, 5, 6, 7, 8]   // 1 .. 40
+risk = "low"
+nextbet = 0
+```
+
+#### Mines
+
+```javascript
+game = "mines"
+fields = [1, 2, 3, 4, 5, 6, 7, 8]    // 1 (top-left) .. 25 (bottom-right)
+mines = 3
+nextbet = 0
+```
+
+#### Plinko
+
+```javascript
+game = "plinko"
+rows = 8
+risk = "low"
+nextbet = 0
+```
+
+#### Wheel
+
+```javascript
+game = "wheel"
+nextbet = 0
+risk = "low"
+segments = 10
+```
+
+#### Baccarat
+
+```javascript
+game = "baccarat"
+nextbet = { player: 0, banker: 0.004, tie: 0 }
+```
+
+#### Roulette
+
+```javascript
+game = "roulette"
+chips = [{"value": "number0", "amount": 0.001}, {"value": "colorBlack", "amount": 0.001}]
+```
+
+Values you can put in `chips` (each as `{"value": …, "amount": …}`):
+
+```
+ranges   : range2536, range1324, range0112, range0118, range1936
+parities : parityOdd, parityEven
+colors   : colorRed, colorBlack
+rows     : row3, row2, row1
+numbers  : number0, number1, number2, … number36
+```
+
+#### Dragon tower
+
+```javascript
+game = "dragontower"
+nextbet = 0
+difficulty = "easy"
+eggs = [1, 2]       // 1-based: the egg picked on each floor (the reference bot's [0,1])
+```
+
+#### Moles
+
+```javascript
+game = "moles"
+nextbet = 0
+moles = 6
+picks = [1, 2, 2, 2, 3, 7]   // 1-based (the reference bot's [0,1,1,1,2,6])
+```
+
+#### Drill
+
+```javascript
+game = "drill"
+nextbet = 0
+target = 2
+pick = 1            // 1 = blue, 2 = yellow, 3 = green
+```
+
+#### Tarot
+
+```javascript
+game = "tarot"
+difficulty = "medium"
+nextbet = 0
+```
+
+#### Chicken
+
+```javascript
+game = "chicken"
+steps = 1
+difficulty = "medium"
+nextbet = 0
+```
+
+#### Packs
+
+```javascript
+game = "packs"
+nextbet = 0
+```
+
+#### Bars
+
+```javascript
+game = "bars"
+difficulty = "easy"
+tiles = [2, 3, 4, 5, 6]
+nextbet = 0
+```
+
+#### Flip
+
+```javascript
+game = "flip"
+nextbet = 0
+guesses = ["tails", "heads"]
+```
+
+#### Rock, paper, scissors
+
+```javascript
+game = "rps"
+guesses = ["rock", "paper", "scissors"]
+nextbet = 0
+```
+
+#### Pump
+
+```javascript
+game = "pump"
+difficulty = "easy"
+pumps = 1
+nextbet = 0
+```
+
+#### Snakes
+
+```javascript
+game = "snakes"
+difficulty = "easy"
+rolls = 1
+nextbet = 0
+```
+
+#### Cases
+
+```javascript
+game = "cases"
+difficulty = "easy"
+nextbet = 0
+```
+
+#### Darts
+
+```javascript
+game = "darts"
+difficulty = "easy"
+nextbet = 0
+```
+
+#### Diamonds
+
+```javascript
+game = "diamonds"
+nextbet = 0
+```
+
+#### Blue samurai
+
+```javascript
+game = "bluesamurai"
+nextbet = 0
+```
+
+#### Scarab spin
+
+```javascript
+game = "scarabspin"
+lines = 1
+nextbet = 0
+```
+
+#### Tome of life
+
+```javascript
+game = "tomeoflife"
+lines = 1
+nextbet = 0
 ```
 
 ---

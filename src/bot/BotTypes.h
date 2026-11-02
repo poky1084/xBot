@@ -1,6 +1,8 @@
 #pragma once
 
 #include <QDateTime>
+#include <QJsonObject>
+#include <QList>
 #include <QString>
 
 #include <algorithm>
@@ -71,11 +73,157 @@ inline double truncate2(double v)
 
 enum class BetSide { Under, Over };
 
-enum class Game { Dice, Limbo };
+// Dice and Limbo are played on every casino that supports them; the rest are Stake's own
+// games (see bot/StakeGames.h for which casino offers which game and how they are sent).
+// Crash and Slide (multiplayer) are not supported.
+enum class Game {
+    Dice,
+    Limbo,
+    Keno,
+    Mines,
+    Plinko,
+    Wheel,
+    Hilo,
+    Blackjack,
+    Baccarat,
+    Roulette,
+    DragonTower,
+    Flip,
+    Rps,
+    Pump,
+    Snakes,
+    Cases,
+    Darts,
+    Diamonds,
+    VideoPoker,
+    BlueSamurai,
+    ScarabSpin,
+    TomeOfLife,
+    Bars,
+    Chicken,
+    Tarot,
+    Drill,
+    Packs,
+    Moles,
+    Primedice
+};
 
+// Every game, in Game menu order.
+inline const QList<Game> &allGames()
+{
+    static const QList<Game> games = {
+        Game::Dice,       Game::Limbo,       Game::Baccarat,  Game::Bars,       Game::Blackjack,
+        Game::BlueSamurai, Game::Cases,      Game::Chicken,   Game::Darts,      Game::Diamonds,
+        Game::DragonTower, Game::Drill,      Game::Flip,      Game::Hilo,       Game::Keno,
+        Game::Mines,      Game::Moles,       Game::Packs,     Game::Plinko,     Game::Primedice,
+        Game::Pump,       Game::Rps,         Game::Roulette,  Game::ScarabSpin, Game::Snakes,
+        Game::Tarot,      Game::TomeOfLife,  Game::VideoPoker, Game::Wheel};
+    return games;
+}
+
+// Script name of a game (the value of `game = "..."` in Lua / JavaScript, also saved in the
+// settings and shown in the bet list). Same names as the reference bot's README.
 inline QString gameName(Game g)
 {
-    return g == Game::Limbo ? QStringLiteral("limbo") : QStringLiteral("dice");
+    switch (g) {
+    case Game::Dice:        return QStringLiteral("dice");
+    case Game::Limbo:       return QStringLiteral("limbo");
+    case Game::Keno:        return QStringLiteral("keno");
+    case Game::Mines:       return QStringLiteral("mines");
+    case Game::Plinko:      return QStringLiteral("plinko");
+    case Game::Wheel:       return QStringLiteral("wheel");
+    case Game::Hilo:        return QStringLiteral("hilo");
+    case Game::Blackjack:   return QStringLiteral("blackjack");
+    case Game::Baccarat:    return QStringLiteral("baccarat");
+    case Game::Roulette:    return QStringLiteral("roulette");
+    case Game::DragonTower: return QStringLiteral("dragontower");
+    case Game::Flip:        return QStringLiteral("flip");
+    case Game::Rps:         return QStringLiteral("rps");
+    case Game::Pump:        return QStringLiteral("pump");
+    case Game::Snakes:      return QStringLiteral("snakes");
+    case Game::Cases:       return QStringLiteral("cases");
+    case Game::Darts:       return QStringLiteral("darts");
+    case Game::Diamonds:    return QStringLiteral("diamonds");
+    case Game::VideoPoker:  return QStringLiteral("videopoker");
+    case Game::BlueSamurai: return QStringLiteral("bluesamurai");
+    case Game::ScarabSpin:  return QStringLiteral("scarabspin");
+    case Game::TomeOfLife:  return QStringLiteral("tomeoflife");
+    case Game::Bars:        return QStringLiteral("bars");
+    case Game::Chicken:     return QStringLiteral("chicken");
+    case Game::Tarot:       return QStringLiteral("tarot");
+    case Game::Drill:       return QStringLiteral("drill");
+    case Game::Packs:       return QStringLiteral("packs");
+    case Game::Moles:       return QStringLiteral("moles");
+    case Game::Primedice:   return QStringLiteral("primedice");
+    }
+    return QStringLiteral("dice");
+}
+
+// Menu / window title name.
+inline QString gameDisplayName(Game g)
+{
+    switch (g) {
+    case Game::Dice:        return QStringLiteral("Dice");
+    case Game::Limbo:       return QStringLiteral("Limbo");
+    case Game::Keno:        return QStringLiteral("Keno");
+    case Game::Mines:       return QStringLiteral("Mines");
+    case Game::Plinko:      return QStringLiteral("Plinko");
+    case Game::Wheel:       return QStringLiteral("Wheel");
+    case Game::Hilo:        return QStringLiteral("Hilo");
+    case Game::Blackjack:   return QStringLiteral("Blackjack");
+    case Game::Baccarat:    return QStringLiteral("Baccarat");
+    case Game::Roulette:    return QStringLiteral("Roulette");
+    case Game::DragonTower: return QStringLiteral("Dragon Tower");
+    case Game::Flip:        return QStringLiteral("Flip");
+    case Game::Rps:         return QStringLiteral("Rock Paper Scissors");
+    case Game::Pump:        return QStringLiteral("Pump");
+    case Game::Snakes:      return QStringLiteral("Snakes");
+    case Game::Cases:       return QStringLiteral("Cases");
+    case Game::Darts:       return QStringLiteral("Darts");
+    case Game::Diamonds:    return QStringLiteral("Diamonds");
+    case Game::VideoPoker:  return QStringLiteral("Video Poker");
+    case Game::BlueSamurai: return QStringLiteral("Blue Samurai");
+    case Game::ScarabSpin:  return QStringLiteral("Scarab Spin");
+    case Game::TomeOfLife:  return QStringLiteral("Tome of Life");
+    case Game::Bars:        return QStringLiteral("Bars");
+    case Game::Chicken:     return QStringLiteral("Chicken");
+    case Game::Tarot:       return QStringLiteral("Tarot");
+    case Game::Drill:       return QStringLiteral("Drill");
+    case Game::Packs:       return QStringLiteral("Packs");
+    case Game::Moles:       return QStringLiteral("Moles");
+    case Game::Primedice:   return QStringLiteral("Primedice X");
+    }
+    return QStringLiteral("Dice");
+}
+
+// Parses a script / settings game name ("keno", "Dragon Tower" and "dragon-tower" also work).
+inline bool gameFromName(const QString &name, Game *out)
+{
+    QString n = name.trimmed().toLower();
+    n.remove(QLatin1Char(' '));
+    n.remove(QLatin1Char('-'));
+    n.remove(QLatin1Char('_'));
+    if (n == QLatin1String("primedicex"))
+        n = QStringLiteral("primedice");
+    else if (n == QLatin1String("rockpaperscissors"))
+        n = QStringLiteral("rps");
+    else if (n == QLatin1String("samurai") || n == QLatin1String("slotssamurai"))
+        n = QStringLiteral("bluesamurai");
+    for (Game g : allGames()) {
+        if (gameName(g) == n) {
+            if (out)
+                *out = g;
+            return true;
+        }
+    }
+    return false;
+}
+
+// Dice and Limbo use the target / side / multiplier settings; every other game uses
+// BotConfig::gameParams.
+inline bool isDiceOrLimbo(Game g)
+{
+    return g == Game::Dice || g == Game::Limbo;
 }
 
 // Auto-bet progression rules, same model as the reference web app.
@@ -105,6 +253,10 @@ struct BotConfig
     int stopAfterBets = 0;     // 0 = unlimited
     QString casino;            // scripts: "stake" / "shuffle"; empty = unchanged
     QString currency;          // scripts: lowercase currency code to bet in ("btc", "usdt", ...); empty = unchanged
+    // Settings of the Stake games other than dice / limbo, keyed by the script variable names
+    // of the reference bot (keno: {"risk", "numbers"}, mines: {"mines", "fields"}, ...).
+    // See StakeGames::buildBetRequest() for what each game reads.
+    QJsonObject gameParams;
 
     OnResultRule onWin{false, 0.0};
     OnResultRule onLoss{false, 0.0};
@@ -139,6 +291,10 @@ struct BetRecord
     double casinoTarget = -1.0;
     BetSide side = BetSide::Under;
     double roll = 0.0;
+    // Games other than dice / limbo: what the Target and Roll columns show ("medium|8",
+    // "3 hits", "fourOfAKind", ...). Empty = the numeric target / roll.
+    QString targetText;
+    QString rollText;
     double mult = 0.0;
     bool win = false;
     double payout = 0.0;

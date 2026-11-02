@@ -6,10 +6,13 @@
 
 class QCheckBox;
 class QComboBox;
+class QJsonObject;
 class QDoubleSpinBox;
 class QLabel;
 class QPushButton;
 class QSpinBox;
+
+class GameParamsWidget;
 
 // "Auto Bet" tab: progression rules and stop conditions, mirroring the
 // reference app. Settings lock while a session is running.
@@ -25,8 +28,16 @@ public:
     void setFrom(const BotConfig &cfg);
     // Only the Multiplier / Win chance / Direction: sets the dice target and side (from the
     // Direction box, not the Manual tab) and the limbo target. Used for every auto-bet run,
-    // also in Condition Builder mode.
+    // also in Condition Builder mode. Stake's other games: their settings from this tab
+    // (BotConfig::gameParams) instead.
     void applyOddsTo(BotConfig &cfg) const;
+
+    // The game being played: dice / limbo show Multiplier / Win chance / Direction, Stake's
+    // other games their own settings (risk, numbers, mines, ...) in that place.
+    void setGame(Game game);
+    // Settings of Stake's other games for the auto-bet, all games at once (saved per window).
+    QJsonObject gameParams() const;
+    void setGameParams(const QJsonObject &all);
 
     // Auto-bet odds (left column). Saved / restored by MainWindow.
     double multiplier() const;
@@ -40,7 +51,9 @@ public:
     // 1 % edge, Pasino 95, Tower 98.5, Duel 99.9). The Win chance box shows that casino's real
     // chance for the multiplier; `floorChance` = the casino cuts the chance down (Tower).
     // `dice` = false (limbo): the Direction box is disabled.
-    void setOddsContext(double rtp, bool floorChance, bool dice);
+    // oddsUsed = false: Stake's other games (keno, mines, ...) take their odds from this tab's
+    // game settings (see setGame()), so Multiplier / Win chance / Direction are not used.
+    void setOddsContext(double rtp, bool floorChance, bool dice, bool oddsUsed = true);
 
     void setRunning(bool running);
 
@@ -62,12 +75,17 @@ signals:
 private:
     void loadRulePreset(const OnResultRule &onWin, const OnResultRule &onLoss);
     void updateRuleWidgets();
+    void applyGameLayout();
     double casinoChanceFor(double multiplier) const;
 
     double m_rtp = 99.0;
     bool m_floorChance = false;
     bool m_dice = true;
+    bool m_oddsUsed = true;
     QComboBox *m_directionCombo = nullptr;
+    Game m_game = Game::Dice;
+    GameParamsWidget *m_params = nullptr;
+    QWidget *m_oddsHost = nullptr; // Multiplier / Win chance / Direction (dice and limbo)
 
     QDoubleSpinBox *m_baseBetSpin = nullptr;
     QDoubleSpinBox *m_multiplierSpin = nullptr;

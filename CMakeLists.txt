@@ -27,6 +27,10 @@ set(SOURCES
 	src/bot/StakeTransport.h
 	src/bot/StakeClient.cpp
 	src/bot/StakeClient.h
+	src/bot/StakeGames.cpp
+	src/bot/StakeGames.h
+	src/bot/BeepSound.cpp
+	src/bot/BeepSound.h
 	src/bot/LiveSettings.h
 	src/bot/WebViewTransport.cpp
 	src/bot/WebViewTransport.h
@@ -63,6 +67,8 @@ set(SOURCES
     src/ui/TargetBar.h
     src/ui/ManualBetPanel.cpp
     src/ui/ManualBetPanel.h
+    src/ui/GameParamsWidget.cpp
+    src/ui/GameParamsWidget.h
     src/ui/AutoBetPanel.cpp
     src/ui/AutoBetPanel.h
     src/ui/FairPanel.cpp
@@ -123,6 +129,11 @@ target_link_libraries(xBot PRIVATE
     unofficial::webview2::webview2
     lua54
 )
+
+# beep() in scripts plays its tone with PlaySound (winmm)
+if(WIN32)
+    target_link_libraries(xBot PRIVATE winmm)
+endif()
 
 if(MSVC)
     # Changed target name to xBot

@@ -9,6 +9,7 @@
 #include "bot/TowerTransport.h"
 #include "bot/WinnaTransport.h"
 #include "bot/ShuffleTransport.h"
+#include "bot/StakeGames.h"
 #include "bot/WolfbetTransport.h"
 
 #include <QJsonArray>
@@ -252,6 +253,12 @@ bool StakeClient::isTower() const
 bool StakeClient::isWinna() const
 {
     return qobject_cast<WinnaTransport *>(m_transport) != nullptr;
+}
+
+bool StakeClient::isStake() const
+{
+    return m_transport && !isShuffle() && !isGoated() && !isWolfbet() && !isDuel() && !isParadice()
+           && !isPasino() && !isTower() && !isWinna();
 }
 
 void StakeClient::setCurrency(const QString &currency)
@@ -922,6 +929,140 @@ void StakeClient::placeLimbo(const LimboBetRequest &request)
     body.insert(QStringLiteral("currency"), m_currency);
 
     postBet(QStringLiteral("_api/casino/limbo/bet"), body, request.amount);
+}
+
+// ---------------------------------------------------------------- Stake's other games
+// Keno, mines, plinko, hilo, blackjack, ... - the same requests as the reference JavaScript
+// bot (bodies built by StakeGames::buildBetRequest()). REST answers look like
+// {"kenoBet": {...}}, the GraphQL ones (plinko, flip) like {"data": {"plinkoBet": {...}}}.
+void StakeClient::placeGame(const GameBetRequest &request)
+{
+    m_lastDiceTarget = -1.0;
+    auto failLater = [this](const LiveBetResult &r) {
+        QTimer::singleShot(0, this, [this, r] { emit diceFinished(r); });
+    };
+    QString why;
+    if (!m_transport || !m_transport->isReady(&why)) {
+        failLater(failed(m_transport ? why : tr("No transport configured.")));
+        return;
+    }
+    if (m_currency.isEmpty()) {
+        failLater(failed(tr("No currency selected — log in and pick one in Options.")));
+        return;
+    }
+    if (!isStake()) {
+        failLater(failed(tr("%1 is only available on Stake - switch the casino to Stake or pick "
+                            "another game.").arg(gameDisplayName(request.game))));
+        return;
+    }
+
+    QString endpoint;
+    QJsonObject body;
+    QString err;
+    if (!StakeGames::buildBetRequest(request.game, request.amount, m_currency, request.params,
+                                     &endpoint, &body, &err)) {
+        failLater(failed(err));
+        return;
+    }
+    postGameBet(request.game, endpoint, body, request.params, request.amount, true);
+}
+
+void StakeClient::sendGameAction(Game game, const QString &endpoint, const QJsonObject &body,
+                                 const QJsonObject &params, double requestedAmount)
+{
+    QString why;
+    if (!m_transport || !m_transport->isReady(&why)) {
+        const LiveBetResult r = failed(m_transport ? why : tr("No transport configured."), {}, true, false);
+        QTimer::singleShot(0, this, [this, r] { emit diceFinished(r); });
+        return;
+    }
+    postGameBet(game, endpoint, body, params, requestedAmount, false);
+}
+
+LiveBetResult StakeClient::gameResult(Game game, const QJsonObject &bet, const QJsonObject &params,
+                                      double requestedAmount) const
+{
+    LiveBetResult r;
+    r.ok = true;
+    r.bet = bet;
+    r.amount = bet.contains(QStringLiteral("amount")) ? numberOf(bet.value(QStringLiteral("amount")))
+                                                      : requestedAmount;
+    r.multiplier = numberOf(bet.value(QStringLiteral("payoutMultiplier")));
+    r.payout = numberOf(bet.value(QStringLiteral("payout")));
+    r.betId = bet.value(QStringLiteral("id")).toString();
+    r.nonce = bet.contains(QStringLiteral("nonce")) ? qint64(numberOf(bet.value(QStringLiteral("nonce")))) : -1;
+    r.active = StakeGames::isUnfinished(game, bet);
+    const StakeGames::Summary sum = StakeGames::summarize(game, bet, params);
+    r.roll = sum.roll;
+    r.targetText = sum.targetText;
+    r.rollText = sum.rollText;
+    r.win = !r.active && BotConstants::isWinMultiplier(r.multiplier);
+    return r;
+}
+
+void StakeClient::postGameBet(Game game, const QString &endpoint, const QJsonObject &body,
+                              const QJsonObject &params, double requestedAmount, bool firstRequest)
+{
+    m_transport->post(endpoint, body, [this, game, params, requestedAmount, firstRequest](const TransportReply &reply) {
+        if (!reply.ok) {
+            // Same policy as dice: a timeout is retried, a 5xx may have gone through.
+            const bool isTimeout = (reply.status == 0);
+            const bool unknown = (reply.status >= 500);
+            if (reply.status == 0)
+                emit sessionLost(reply.error);
+            emit diceFinished(failed(reply.error, {}, isTimeout, unknown));
+            return;
+        }
+
+        QString type;
+        const QString apiError = firstErrorText(reply.json, &type);
+        if (!apiError.isEmpty()) {
+            // A game of this kind is still open (left over from an earlier run or a lost
+            // answer): fetch it so the engine can finish it first.
+            if (firstRequest && (containsCI(type, "existingGame") || containsCI(apiError, "existing game"))
+                && !StakeGames::activeBetSlug(game).isEmpty()) {
+                fetchActiveGame(game, params, requestedAmount);
+                return;
+            }
+            LiveBetResult r = failed(apiError, type, isRetryable(type, apiError), false);
+            r.retryDelayMs = fastRetryDelayMs(type, apiError);
+            emit diceFinished(r);
+            return;
+        }
+
+        const QJsonObject bet = findBetObject(reply.json);
+        if (bet.isEmpty()) {
+            const QString raw = QString::fromUtf8(QJsonDocument(reply.json).toJson(QJsonDocument::Compact)).left(400);
+            emit diceFinished(failed(tr("Unexpected %1 response (no bet object): %2")
+                                         .arg(gameDisplayName(game), raw),
+                                     {}, false, true));
+            return;
+        }
+        emit diceFinished(gameResult(game, bet, params, requestedAmount));
+    });
+}
+
+void StakeClient::fetchActiveGame(Game game, const QJsonObject &params, double requestedAmount)
+{
+    const QString slug = StakeGames::activeBetSlug(game);
+    m_transport->post(QStringLiteral("_api/casino/active-bet/%1").arg(slug), QJsonObject(),
+                      [this, game, params, requestedAmount](const TransportReply &reply) {
+        const QJsonObject bet = reply.json.value(QStringLiteral("user")).toObject()
+                                    .value(QStringLiteral("activeCasinoBet")).toObject();
+        if (!reply.ok || bet.isEmpty()) {
+            // Nothing open after all (it may have just finished): place the bet again.
+            LiveBetResult r = failed(tr("%1: an earlier game was still open; retrying.")
+                                         .arg(gameDisplayName(game)),
+                                     QStringLiteral("existingGame"), true, false);
+            r.retryDelayMs = 500;
+            emit diceFinished(r);
+            return;
+        }
+        LiveBetResult r = gameResult(game, bet, params, requestedAmount);
+        r.active = true; // continue it with the next move
+        r.win = false;
+        emit diceFinished(r);
+    });
 }
 
 // Shared by dice and limbo: both answer with {"<game>Bet"/"diceRoll": {...}}.

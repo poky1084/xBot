@@ -1,6 +1,7 @@
 #include "bot/BotEngine.h"
 
 #include "bot/StakeClient.h"
+#include "bot/StakeGames.h"
 
 #include <QRandomGenerator>
 
@@ -17,6 +18,7 @@ constexpr int kConnectPollMs = 300;
 constexpr int kSeedRotationRetries = 3;
 constexpr int kSeedRotationRetryDelayMs = 500;
 constexpr int kAutoClientSeedLength = 10;
+constexpr int kMaxGameSteps = 200; // moves of one hilo / blackjack / ... bet before giving up
 
 // The amount actually bet: 8 decimals, cut (not rounded up). The tiny epsilon keeps
 // values such as 0.000000029999999 from dropping a satoshi.
@@ -108,6 +110,27 @@ void BotEngine::requestLiveBet(const BotConfig &cfg, double betSize, bool manual
     // The row of this bet names the casino it went to, even if the casino is switched before
     // its result arrives (Casino menu / script).
     m_inFlightCasino = m_casinoGetter ? m_casinoGetter().trimmed().toLower() : QString();
+    m_gameSteps = 0;
+    m_gameFallback = 0;
+    m_gameBet = QJsonObject();
+    m_gameChoice = QJsonValue(QJsonValue::Undefined);
+    {
+        // Baccarat amounts / roulette chips with amounts fix the stake (the base bet is not used).
+        bool fixed = false;
+        const double stake = StakeGames::fixedStake(cfg.game, cfg.gameParams, &fixed);
+        if (fixed)
+            betSize = stake;
+    }
+    m_gameAmount = betSize;
+
+    if (!isDiceOrLimbo(cfg.game)) {
+        GameBetRequest req;
+        req.game = cfg.game;
+        req.amount = betSize;
+        req.params = cfg.gameParams;
+        m_live->placeGame(req);
+        return;
+    }
 
     if (cfg.game == Game::Limbo) {
         LimboBetRequest req;
@@ -124,10 +147,92 @@ void BotEngine::requestLiveBet(const BotConfig &cfg, double betSize, bool manual
     m_live->placeDice(req);
 }
 
-void BotEngine::onLiveFinished(const LiveBetResult &r)
+bool BotEngine::continueGame(const LiveBetResult &r, QString *error)
+{
+    const Game game = m_inFlightCfg.game;
+    if (++m_gameSteps > kMaxGameSteps) {
+        if (error)
+            *error = tr("no result after %1 moves").arg(kMaxGameSteps);
+        return false;
+    }
+    m_gameBet = r.bet;
+    if (r.amount > 0.0)
+        m_gameAmount = r.amount;
+    m_gameFallback = 0;
+    m_gameChoice = QJsonValue(QJsonValue::Undefined);
+    // Hilo / blackjack: the script's round() decides the move (the reference bot's contract).
+    // Without a script (or a round() function) the game's built-in play is used.
+    if (StakeGames::usesRoundFunction(game) && m_scriptActive && m_script && m_script->isLoaded()) {
+        QJsonValue choice;
+        if (m_script->callRound(r.bet, choice) == ScriptStrategy::Status::Error) {
+            const QString err = m_script->lastError();
+            emit scriptOutput(err, true);
+            emit scriptError(err);
+        } else {
+            m_gameChoice = choice;
+        }
+    }
+    return sendGameStep(error);
+}
+
+bool BotEngine::sendGameStep(QString *error)
+{
+    const Game game = m_inFlightCfg.game;
+    StakeGames::Action act;
+    if (!StakeGames::nextAction(game, m_gameBet, m_inFlightCfg.gameParams, m_gameChoice,
+                                m_gameFallback, &act, error))
+        return false;
+    if (m_inFlightManual || game == Game::VideoPoker)
+        emit logMessage(act.description, false);
+    m_live->sendGameAction(game, act.endpoint, act.body, m_inFlightCfg.gameParams, m_gameAmount);
+    return true;
+}
+
+void BotEngine::onLiveFinished(const LiveBetResult &result)
 {
     if (!m_inFlight)
         return; // not a bet this engine asked for
+
+    LiveBetResult r = result;
+    if (!isDiceOrLimbo(m_inFlightCfg.game) && m_live) {
+        const Game game = m_inFlightCfg.game;
+        if (r.ok && r.active) {
+            // Not settled yet (hilo / blackjack / video poker / bonus spins): next move. The bet
+            // stays "in flight" until the casino reports it finished.
+            QString err;
+            if (continueGame(r, &err))
+                return;
+            r = LiveBetResult();
+            r.ok = false;
+            r.error = tr("%1: %2 - the game is still open on Stake, finish it there or start again "
+                         "to continue it").arg(gameDisplayName(game), err);
+        } else if (!r.ok && m_gameSteps > 0) {
+            if (game == Game::Blackjack && m_gameFallback < 2
+                && (r.errorType.contains(QLatin1String("InvalidAction"), Qt::CaseInsensitive)
+                    || r.error.contains(QLatin1String("invalid action"), Qt::CaseInsensitive))) {
+                // The move was not allowed (e.g. insurance already decided): like the reference
+                // bot, decline insurance, then stand.
+                ++m_gameFallback;
+                QString err;
+                if (sendGameStep(&err))
+                    return;
+            } else if (r.errorType.contains(QLatin1String("insignificantBet"), Qt::CaseInsensitive)
+                       && m_gameAmount <= 0.0) {
+                // A 0 bet that cannot be cashed out / continued: record it as settled at 0.
+                r = LiveBetResult();
+                r.ok = true;
+                r.bet = m_gameBet;
+                r.amount = 0.0;
+                r.payout = 0.0;
+                r.multiplier = 0.0;
+                r.betId = m_gameBet.value(QStringLiteral("id")).toString();
+                const StakeGames::Summary sum = StakeGames::summarize(game, m_gameBet, m_inFlightCfg.gameParams);
+                r.roll = sum.roll;
+                r.targetText = sum.targetText;
+                r.rollText = sum.rollText;
+            }
+        }
+    }
 
     m_inFlight = false;
     // The Casino menu asked for a switch while this bet was in flight: do it now, before
@@ -185,10 +290,18 @@ void BotEngine::onLiveFinished(const LiveBetResult &r)
     if (r.balanceAfter >= 0.0 && liveMode())
         m_stats.balance = r.balanceAfter - (r.payout - r.amount);
     const double casinoTarget = (cfg.game == Game::Dice && m_live) ? m_live->lastDiceTarget() : -1.0;
+    m_lastBetJson = r.bet;
     const BetRecord rec = recordBet(cfg, r.amount, r.roll, r.win, r.multiplier, r.payout,
-                                    r.nonce, r.betId, betCasino, casinoTarget);
+                                    r.nonce, r.betId, betCasino, casinoTarget, r.targetText,
+                                    r.rollText);
     flushPauseLog(); // a pause that came while this bet was in flight: now the numbers are final
     flushStopLog(); // a stop that came while this bet was in flight: now the numbers are final
+
+    // Game settings that stop the run (C# bot): diamonds "Stop on pattern", hilo "Stop on".
+    const QString gameStop = isDiceOrLimbo(cfg.game) ? QString()
+                                                      : StakeGames::stopReason(cfg.game, r.bet, cfg.gameParams);
+    if (!gameStop.isEmpty())
+        emit logMessage(tr("[STOP] %1").arg(gameStop), false);
 
     // A manual roll has no progression/stop logic. If the user pressed Stop
     // while the request was in flight the bet is still recorded (the money has
@@ -198,6 +311,10 @@ void BotEngine::onLiveFinished(const LiveBetResult &r)
         return;
     }
 
+    if (!gameStop.isEmpty()) {
+        stopWithReason(tr("stopped (%1)").arg(gameStop));
+        return;
+    }
     if (advanceProgression(rec.win, cfg)) // the engine's verdict (>= 1x), not the raw reply
         return;
     if (checkStopConditions())
@@ -213,14 +330,7 @@ void BotEngine::finishScriptDrain(bool feedLastBet)
     m_scriptDraining = false;
 
     if (feedLastBet && m_script->isLoaded()) {
-        ScriptStrategy::BetInfo info;
-        info.win = m_lastRec.win;
-        info.bet = m_lastRec.bet;
-        info.profit = m_lastRec.profit;
-        info.payout = m_lastRec.payout;
-        info.roll = m_lastRec.roll;
-        info.balance = m_stats.balance;
-        info.runProfit = m_stats.profit - m_runStartProfit;
+        const ScriptStrategy::BetInfo info = lastBetInfo(m_lastRec.win);
 
         double ignoredBet = 0.0;
         BotConfig ignoredCfg = m_runCfg;
@@ -267,9 +377,12 @@ BetRecord BotEngine::rollOnce(const BotConfig &cfg)
             return {};
         }
         m_rollPending = false;
-        if (cfg.baseBet < 0.0 || cfg.baseBet > m_stats.balance) {
+        bool fixedStake = false;
+        const double stake = StakeGames::fixedStake(cfg.game, cfg.gameParams, &fixedStake);
+        const double amount = fixedStake ? stake : cfg.baseBet;
+        if (amount < 0.0 || amount > m_stats.balance) {
             emit logMessage(tr("Bet %1 exceeds the available balance %2.")
-                                .arg(cfg.baseBet, 0, 'f', 8)
+                                .arg(amount, 0, 'f', 8)
                                 .arg(m_stats.balance, 0, 'f', 8),
                             true);
             return {};
@@ -354,6 +467,13 @@ void BotEngine::start()
     // (amount, chance, side, on-win/on-loss rules, stop limits, condition
     // blocks). Only the start balance (an Options setting) is kept.
     const bool scriptMode = !m_scriptSource.trimmed().isEmpty();
+    if (!scriptMode && !liveMode() && !isDiceOrLimbo(m_config.game)) {
+        const QString err = tr("%1 can only be played live on Stake (turn on live betting in Options).")
+                                .arg(gameDisplayName(m_config.game));
+        emit logMessage(err, true);
+        emit stopped(err);
+        return;
+    }
     if (scriptMode) {
         BotConfig clean;
         clean.startBalance = m_config.startBalance;
@@ -409,7 +529,12 @@ void BotEngine::start()
         }
         m_scriptActive = true;
         emit scriptError(QString()); // clears the editor's status line
-        if (m_runCfg.game == Game::Limbo)
+        if (!isDiceOrLimbo(m_runCfg.game))
+            emit logMessage(tr("%1 strategy active (%2, first bet %3).")
+                                .arg(lang, gameName(m_runCfg.game))
+                                .arg(m_nextBetSize, 0, 'f', 8),
+                            false);
+        else if (m_runCfg.game == Game::Limbo)
             emit logMessage(tr("%1 strategy active (limbo, first bet %2, target %3x).")
                                 .arg(lang)
                                 .arg(m_nextBetSize, 0, 'f', 8)
@@ -706,6 +831,7 @@ void BotEngine::switchGame(const BotConfig &betCfg)
     m_config.target = betCfg.target;
     m_config.side = betCfg.side;
     m_config.multiplierTarget = betCfg.multiplierTarget;
+    m_config.gameParams = betCfg.gameParams;
     if (!m_running)
         return;
 
@@ -713,9 +839,16 @@ void BotEngine::switchGame(const BotConfig &betCfg)
     m_runCfg.target = betCfg.target;
     m_runCfg.side = betCfg.side;
     m_runCfg.multiplierTarget = betCfg.multiplierTarget;
+    m_runCfg.gameParams = betCfg.gameParams;
     m_conditions.setBetBase(m_runCfg);
     m_announcedGame = game;
-    if (game == Game::Limbo)
+    if (!liveMode() && !isDiceOrLimbo(game)) {
+        stopWithReason(tr("halted (%1 can only be played live on Stake)").arg(gameDisplayName(game)));
+        return;
+    }
+    if (!isDiceOrLimbo(game))
+        emit logMessage(tr("Game switched to %1.").arg(gameName(game)), false);
+    else if (game == Game::Limbo)
         emit logMessage(tr("Game switched to limbo (target %1x).")
                             .arg(m_runCfg.multiplierTarget, 0, 'f', 2),
                         false);
@@ -733,7 +866,8 @@ void BotEngine::updateAutoSettings(const BotConfig &cfg, bool condMode, const Bl
 
     const BotConfig old = m_config;
     const bool oddsEdited = old.target != cfg.target || old.side != cfg.side
-                            || old.multiplierTarget != cfg.multiplierTarget;
+                            || old.multiplierTarget != cfg.multiplierTarget
+                            || old.gameParams != cfg.gameParams;
     const auto copyRules = [&cfg](BotConfig &dst) {
         dst.baseBet = cfg.baseBet;
         dst.stopAfterBets = cfg.stopAfterBets;
@@ -746,6 +880,7 @@ void BotEngine::updateAutoSettings(const BotConfig &cfg, bool condMode, const Bl
         dst.target = cfg.target;
         dst.side = cfg.side;
         dst.multiplierTarget = cfg.multiplierTarget;
+        dst.gameParams = cfg.gameParams;
     };
     copyRules(m_config);
     copyOdds(m_config);
@@ -773,7 +908,9 @@ void BotEngine::updateAutoSettings(const BotConfig &cfg, bool condMode, const Bl
     }
 
     if (oddsEdited) {
-        if (m_runCfg.game == Game::Limbo)
+        if (!isDiceOrLimbo(m_runCfg.game))
+            emit logMessage(tr("Auto-bet updated: %1 settings.").arg(gameName(m_runCfg.game)), false);
+        else if (m_runCfg.game == Game::Limbo)
             emit logMessage(tr("Auto-bet updated: limbo target %1x.")
                                 .arg(m_runCfg.multiplierTarget, 0, 'f', 2),
                             false);
@@ -907,10 +1044,28 @@ void BotEngine::scheduleNext()
 
 // ------------------------------------------------------------------- core
 
+ScriptStrategy::BetInfo BotEngine::lastBetInfo(bool win) const
+{
+    ScriptStrategy::BetInfo info;
+    info.win = win;
+    info.bet = m_lastRec.bet;
+    info.profit = m_lastRec.profit;
+    info.payout = m_lastRec.payout;
+    info.roll = m_lastRec.roll;
+    info.balance = m_stats.balance;
+    info.runProfit = m_stats.profit - m_runStartProfit;
+    info.multiplier = m_lastRec.mult;
+    info.betId = m_lastRec.betId;
+    info.game = m_lastRec.game;
+    info.betJson = m_lastBetJson;
+    return info;
+}
+
 BetRecord BotEngine::recordBet(const BotConfig &cfg, double betSize, double roll, bool win,
                                double mult, double payout, qint64 nonce,
                                const QString &betId, const QString &casino,
-                               double casinoTarget)
+                               double casinoTarget, const QString &targetText,
+                               const QString &rollText)
 {
     BetRecord rec;
     rec.nonce = nonce;
@@ -948,8 +1103,11 @@ BetRecord BotEngine::recordBet(const BotConfig &cfg, double betSize, double roll
     rec.time = QDateTime::currentDateTime();
     rec.game = cfg.game;
     rec.bet = betSize;
-    rec.target = cfg.game == Game::Limbo ? cfg.multiplierTarget : cfg.target;
+    rec.target = cfg.game == Game::Limbo ? cfg.multiplierTarget
+                 : cfg.game == Game::Dice ? cfg.target : 0.0;
     rec.casinoTarget = cfg.game == Game::Dice ? casinoTarget : -1.0;
+    rec.targetText = targetText;
+    rec.rollText = rollText;
     rec.side = cfg.side;
     rec.roll = truncate2(roll); // 2 decimals, cut not rounded (history, UI and scripts)
     rec.mult = mult;
@@ -965,6 +1123,16 @@ BetRecord BotEngine::recordBet(const BotConfig &cfg, double betSize, double roll
 
 BetRecord BotEngine::placeBet(const BotConfig &cfg, double betSize)
 {
+    if (!isDiceOrLimbo(cfg.game)) {
+        // The simulation only knows dice and limbo; Stake's other games are played live.
+        const QString err = tr("%1 can only be played live on Stake (turn on live betting in Options).")
+                                .arg(gameDisplayName(cfg.game));
+        emit logMessage(err, true);
+        if (m_running)
+            stopWithReason(tr("halted (%1)").arg(err));
+        return BetRecord();
+    }
+    m_lastBetJson = QJsonObject();
     const qint64 nonce = m_provider->currentNonce();
 
     double roll = 0.0;
@@ -991,14 +1159,7 @@ BetRecord BotEngine::placeBet(const BotConfig &cfg, double betSize)
 bool BotEngine::advanceProgression(bool win, const BotConfig &cfg)
 {
     if (m_scriptActive) {
-        ScriptStrategy::BetInfo info;
-        info.win = win;
-        info.bet = m_lastRec.bet;
-        info.profit = m_lastRec.profit;
-        info.payout = m_lastRec.payout;
-        info.roll = m_lastRec.roll;
-        info.balance = m_stats.balance;
-        info.runProfit = m_stats.profit - m_runStartProfit;
+        const ScriptStrategy::BetInfo info = lastBetInfo(win);
 
         const auto st = m_script->onBet(info, m_nextBetSize, m_runCfg);
         if (st == ScriptStrategy::Status::Error) {
@@ -1081,7 +1242,9 @@ void BotEngine::placeNextBet()
         }
         // Real money: never silently shrink a bet to "whatever is left". If the
         // progression asks for more than the balance, stop instead.
-        const double bet = betAmount(m_nextBetSize);
+        bool fixedStake = false;
+        const double stake = StakeGames::fixedStake(m_runCfg.game, m_runCfg.gameParams, &fixedStake);
+        const double bet = fixedStake ? stake : betAmount(m_nextBetSize);
         if (m_retryNoBalance && bet >= 0.0 && bet > m_stats.balance) {
             // Option "Retry bet when bet higher than balance": keep the run alive and look again in 5 s
             // (the balance is refreshed from the server in the meantime).

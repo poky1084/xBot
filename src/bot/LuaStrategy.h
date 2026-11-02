@@ -12,7 +12,20 @@ struct lua_State;
 //
 //   * The script body runs ONCE when the run starts. Use it to set the first bet:
 //         game    = "dice"          -- optional: "dice" or "limbo" (default: the game
-//                                   -- selected in the Game menu); may be changed in dobet()
+//                                   -- selected in the Game menu); may be changed in dobet().
+//                                   -- On Stake also "keno", "mines", "plinko", "wheel", "hilo",
+//                                   -- "blackjack", "baccarat", "roulette", "dragontower",
+//                                   -- "flip", "rps", "pump", "snakes", "cases", "darts",
+//                                   -- "diamonds", "videopoker", "bluesamurai", "scarabspin",
+//                                   -- "tomeoflife", "bars", "chicken", "tarot", "drill",
+//                                   -- "packs", "moles", "primedice" with the reference bot's
+//                                   -- variables (keno: numbers = {1,2,3} (1 .. 40), risk = "low";
+//                                   -- mines: fields = {1,2} (1 .. 25, 1 = top-left), mines = 3;
+//                                   -- dragontower eggs / moles picks 1-based too; baccarat: nextbet =
+//                                   -- {player = 0, banker = 0.004, tie = 0}; roulette: chips =
+//                                   -- {{value = "colorRed", amount = 0.001}}; hilo / blackjack:
+//                                   -- function round() return HILO_BET_HIGH end, with
+//                                   -- currentBet = the open bet). See StakeGames::scriptVariables().
 //         currency = "btc"          -- optional: currency code to bet in (default: the
 //                                   -- current bet currency); may be changed in dobet().
 //                                   -- Live: the account needs a balance in it; the session
@@ -40,6 +53,11 @@ struct lua_State;
 //         bets, wins, losses, wagered   counters of this run
 //         currentstreak  > 0 = consecutive wins, < 0 = consecutive losses
 //         startbalance   balance when the run started
+//         currentprofit, winstreak, losestreak, lastBet.Roll / payoutMultiplier / win / id,
+//         bet            Stake's bet object of the last bet (bet.state.playerHand, ...)
+//         HILO_BET_HIGH (5), HILO_BET_LOW (4), HILO_BET_EQUAL (2), HILO_SKIP (7), HILO_CASHOUT (3)
+//         checkTargetHit(hand, combos)  video poker: label of the first combo the hand holds
+//         beep()         plays the reference bot's bell tone
 //
 //   * Functions: stop([reason]), print(...) / log(...), os.time(), os.clock(),
 //         resetstats()   resets the session statistics (bets, wins, losses, wagered,
@@ -75,6 +93,7 @@ public:
 
     // Call after every bet. Updates nextBet / runCfg from the script's globals.
     Status onBet(const BetInfo &info, double &nextBet, BotConfig &runCfg) override;
+    Status callRound(const QJsonObject &currentBet, QJsonValue &result) override;
 
     bool isLoaded() const override { return m_L != nullptr; }
     void setGlobalString(const char *name, const QString &value) override;
@@ -91,9 +110,12 @@ private:
     void publish(const char *name, double value);
     void publishInt(const char *name, qint64 value);
     void publishBool(const char *name, bool value);
-    // Sets the global table lastBet = {amount=, roll=, profit=, payout=}.
-    void publishLastBet(double amount, double roll, double profit, double payout);
-    bool callProtected(int nargs, const char *what);
+    // Sets the global table lastBet = {amount=, roll=, Roll=, profit=, payout=, ...}.
+    void publishLastBet(const BetInfo &info);
+    void publishJson(const char *name, const QJsonValue &value);
+    // The value of global `name` as JSON (undefined when nil).
+    QJsonValue readJson(const char *name);
+    bool callProtected(int nargs, const char *what, int nresults = 0);
     void startTimer();
 
     lua_State *m_L = nullptr;

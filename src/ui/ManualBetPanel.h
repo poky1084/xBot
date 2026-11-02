@@ -4,11 +4,14 @@
 
 #include <QWidget>
 
+class QFormLayout;
+class QJsonObject;
 class QLabel;
 class QPushButton;
 class QDoubleSpinBox;
 class QSlider;
 
+class GameParamsWidget;
 class TargetBar;
 
 // "Manual Bet" tab, mirroring the reference app's bet panel.
@@ -31,9 +34,14 @@ public:
     double limboTarget() const { return m_limboTarget; }
     void setTargets(double diceTarget, bool under, double limboTarget);
 
-    // Dice shows the target bar / side button; Limbo shows only the multiplier target.
+    // Dice shows the target bar / side button; Limbo shows only the multiplier target; Stake's
+    // other games show their own settings (risk, numbers, mines, ...).
     void setGame(Game game);
     Game game() const { return m_game; }
+
+    // Settings of Stake's other games, all games at once (saved per window).
+    QJsonObject gameParams() const;
+    void setGameParams(const QJsonObject &all);
 
     void setStartBalance(double balance);
     void setLocked(bool locked);       // disabled while auto-betting
@@ -62,6 +70,8 @@ private:
     void applyGameLayout();
     void updateResultStyle();
 
+    QFormLayout *m_form = nullptr;
+    GameParamsWidget *m_params = nullptr;
     QDoubleSpinBox *m_amountSpin = nullptr;
     QDoubleSpinBox *m_multiplierSpin = nullptr;
     QDoubleSpinBox *m_chanceSpin = nullptr;

@@ -1,5 +1,8 @@
 #include "bot/LuaStrategy.h"
 
+#include "bot/BeepSound.h"
+#include "bot/StakeGames.h"
+
 extern "C" {
 #include "lauxlib.h"
 #include "lua.h"
@@ -8,6 +11,9 @@ extern "C" {
 
 #include <QByteArray>
 #include <QDateTime>
+#include <QJsonArray>
+#include <QJsonObject>
+#include <QStringList>
 #include <QLocale>
 #include <QString>
 
@@ -434,6 +440,146 @@ int l_osclock(lua_State *L)
     return 1;
 }
 
+// ---- JSON <-> Lua ------------------------------------------------------------------
+// Arrays become 1-based sequences, objects tables with string keys (like the reference
+// bot's jsToLua()); whole numbers are pushed as integers so they print as "5", not "5.0".
+void pushJson(lua_State *L, const QJsonValue &v, int depth = 0)
+{
+    if (depth > 32) {
+        lua_pushnil(L);
+        return;
+    }
+    switch (v.type()) {
+    case QJsonValue::Bool:
+        lua_pushboolean(L, v.toBool() ? 1 : 0);
+        break;
+    case QJsonValue::Double: {
+        const double d = v.toDouble();
+        if (std::isfinite(d) && d == std::floor(d) && std::fabs(d) < 9.0e15)
+            lua_pushinteger(L, static_cast<lua_Integer>(d));
+        else
+            lua_pushnumber(L, d);
+        break;
+    }
+    case QJsonValue::String: {
+        const QByteArray b = v.toString().toUtf8();
+        lua_pushlstring(L, b.constData(), size_t(b.size()));
+        break;
+    }
+    case QJsonValue::Array: {
+        const QJsonArray a = v.toArray();
+        lua_createtable(L, int(a.size()), 0);
+        for (int i = 0; i < a.size(); ++i) {
+            pushJson(L, a.at(i), depth + 1);
+            lua_rawseti(L, -2, i + 1);
+        }
+        break;
+    }
+    case QJsonValue::Object: {
+        const QJsonObject o = v.toObject();
+        lua_createtable(L, 0, int(o.size()));
+        for (auto it = o.begin(); it != o.end(); ++it) {
+            pushJson(L, it.value(), depth + 1);
+            const QByteArray k = it.key().toUtf8();
+            lua_setfield(L, -2, k.constData());
+        }
+        break;
+    }
+    default:
+        lua_pushnil(L);
+        break;
+    }
+}
+
+QJsonValue luaToJson(lua_State *L, int idx, int depth = 0)
+{
+    idx = lua_absindex(L, idx);
+    switch (lua_type(L, idx)) {
+    case LUA_TBOOLEAN:
+        return lua_toboolean(L, idx) != 0;
+    case LUA_TNUMBER:
+        return double(lua_tonumber(L, idx));
+    case LUA_TSTRING:
+        return QString::fromUtf8(lua_tostring(L, idx));
+    case LUA_TTABLE: {
+        if (depth > 32)
+            return QJsonValue(QJsonValue::Null);
+        // A sequence 1..n (or an empty table) is an array, anything else an object.
+        const lua_Integer n = static_cast<lua_Integer>(lua_rawlen(L, idx));
+        lua_Integer count = 0;
+        bool sequence = true;
+        lua_pushnil(L);
+        while (lua_next(L, idx) != 0) {
+            ++count;
+            if (!lua_isinteger(L, -2)) {
+                sequence = false;
+            } else {
+                const lua_Integer k = lua_tointeger(L, -2);
+                if (k < 1 || k > n)
+                    sequence = false;
+            }
+            lua_pop(L, 1);
+        }
+        if (sequence && count == n) {
+            QJsonArray a;
+            for (lua_Integer i = 1; i <= n; ++i) {
+                lua_rawgeti(L, idx, i);
+                a.append(luaToJson(L, -1, depth + 1));
+                lua_pop(L, 1);
+            }
+            return a;
+        }
+        QJsonObject o;
+        lua_pushnil(L);
+        while (lua_next(L, idx) != 0) {
+            QString key;
+            if (lua_type(L, -2) == LUA_TSTRING) {
+                key = QString::fromUtf8(lua_tostring(L, -2));
+            } else if (lua_isinteger(L, -2)) {
+                key = QString::number(lua_tointeger(L, -2)); // {[10] = 2} -> "10"
+            } else if (lua_type(L, -2) == LUA_TNUMBER) {
+                key = QString::number(double(lua_tonumber(L, -2)));
+            }
+            if (!key.isEmpty())
+                o.insert(key, luaToJson(L, -1, depth + 1));
+            lua_pop(L, 1);
+        }
+        return o;
+    }
+    default:
+        return QJsonValue(QJsonValue::Null);
+    }
+}
+
+// checkTargetHit(hand, combos): video poker helper of the reference bot. Returns the label of
+// the first combo ({A = 3, K = 2}) the hand holds, or nil.
+int l_checkTargetHit(lua_State *L)
+{
+    const QJsonValue hand = lua_gettop(L) >= 1 ? luaToJson(L, 1) : QJsonValue();
+    const QJsonValue combos = lua_gettop(L) >= 2 ? luaToJson(L, 2) : QJsonValue();
+    const QString hit = StakeGames::checkTargetHit(hand.toArray(), combos);
+    if (hit.isEmpty()) {
+        lua_pushnil(L);
+    } else {
+        const QByteArray b = hit.toUtf8();
+        lua_pushstring(L, b.constData());
+    }
+    return 1;
+}
+
+// ding(): sound effect of the reference bot; accepted silently so its scripts run.
+int l_noop(lua_State *)
+{
+    return 0;
+}
+
+// beep(): plays the reference bot's bell tone (e.g. to signal a hit).
+int l_beep(lua_State *)
+{
+    BeepSound::play();
+    return 0;
+}
+
 // Aborts runaway scripts (while true do end).
 void hook(lua_State *L, lua_Debug *)
 {
@@ -480,16 +626,52 @@ void LuaStrategy::publish(const char *name, double value)
     lua_setglobal(m_L, name);
 }
 
-void LuaStrategy::publishLastBet(double amount, double roll, double profit, double payout)
+void LuaStrategy::publishLastBet(const BetInfo &info)
 {
     lua_newtable(m_L);
     const struct { const char *key; double value; } fields[] = {
-        {"amount", amount}, {"roll", roll}, {"profit", profit}, {"payout", payout}};
+        {"amount", info.bet}, {"profit", info.profit},
+        {"payout", info.payout}, {"payoutMultiplier", info.multiplier}};
     for (const auto &f : fields) {
         lua_pushnumber(m_L, f.value);
         lua_setfield(m_L, -2, f.key);
     }
+    // lastBet.roll / lastBet.Roll (the reference bot's spelling); video poker: the hand's
+    // outcome ("twoPair", "onePair", "royalFlush", ...).
+    for (const char *key : {"roll", "Roll"}) {
+        if (info.game == Game::VideoPoker) {
+            const QByteArray hand = info.betJson.value(QStringLiteral("state")).toObject()
+                                        .value(QStringLiteral("handResult")).toString().toUtf8();
+            lua_pushstring(m_L, hand.constData());
+        } else {
+            lua_pushnumber(m_L, info.roll);
+        }
+        lua_setfield(m_L, -2, key);
+    }
+    lua_pushboolean(m_L, info.win ? 1 : 0);
+    lua_setfield(m_L, -2, "win");
+    const QByteArray id = info.betId.toUtf8();
+    lua_pushstring(m_L, id.constData());
+    lua_setfield(m_L, -2, "id");
+    const QByteArray name = info.betJson.value(QStringLiteral("user")).toObject()
+                                .value(QStringLiteral("name")).toString().toUtf8();
+    lua_pushstring(m_L, name.constData());
+    lua_setfield(m_L, -2, "name");
     lua_setglobal(m_L, "lastBet");
+}
+
+void LuaStrategy::publishJson(const char *name, const QJsonValue &value)
+{
+    pushJson(m_L, value);
+    lua_setglobal(m_L, name);
+}
+
+QJsonValue LuaStrategy::readJson(const char *name)
+{
+    lua_getglobal(m_L, name);
+    const QJsonValue v = lua_isnil(m_L, -1) ? QJsonValue(QJsonValue::Undefined) : luaToJson(m_L, -1);
+    lua_pop(m_L, 1);
+    return v;
 }
 
 void LuaStrategy::publishInt(const char *name, qint64 value)
@@ -504,10 +686,10 @@ void LuaStrategy::publishBool(const char *name, bool value)
     lua_setglobal(m_L, name);
 }
 
-bool LuaStrategy::callProtected(int nargs, const char *what)
+bool LuaStrategy::callProtected(int nargs, const char *what, int nresults)
 {
     startTimer();
-    const int rc = lua_pcall(m_L, nargs, 0, 0);
+    const int rc = lua_pcall(m_L, nargs, nresults, 0);
     m_deadlineMs = 0;
     if (rc != LUA_OK) {
         const char *msg = lua_tostring(m_L, -1);
@@ -535,6 +717,8 @@ void LuaStrategy::onStatsReset(double balance)
     publishInt("losses", 0);
     publish("wagered", 0.0);
     publishInt("currentstreak", 0);
+    publishInt("winstreak", 0);
+    publishInt("losestreak", 0);
 }
 
 LuaStrategy::Status LuaStrategy::init(const QString &source, double balance,
@@ -586,6 +770,18 @@ LuaStrategy::Status LuaStrategy::init(const QString &source, double balance,
     lua_setglobal(m_L, "resetseed");
     lua_pushcfunction(m_L, l_vault);
     lua_setglobal(m_L, "vault");
+    lua_pushcfunction(m_L, l_checkTargetHit);
+    lua_setglobal(m_L, "checkTargetHit");
+    lua_pushcfunction(m_L, l_noop);
+    lua_setglobal(m_L, "ding");
+    lua_pushcfunction(m_L, l_beep);
+    lua_setglobal(m_L, "beep");
+    // Hilo moves returned by round() (same values as the reference bot).
+    publishInt("HILO_BET_EQUAL", 2);
+    publishInt("HILO_SKIP", 7);
+    publishInt("HILO_BET_HIGH", 5);
+    publishInt("HILO_BET_LOW", 4);
+    publishInt("HILO_CASHOUT", 3);
 
     lua_newtable(m_L); // minimal os table
     lua_pushcfunction(m_L, l_ostime);
@@ -617,8 +813,12 @@ LuaStrategy::Status LuaStrategy::init(const QString &source, double balance,
     publish("startbalance", balance);
     publishBool("win", false);
     publish("previousbet", 0.0);
-    publishLastBet(0.0, 0.0, 0.0, 0.0);
+    publishLastBet(BetInfo());
+    publishJson("bet", QJsonObject());
     publish("lastprofit", 0.0);
+    publish("currentprofit", 0.0);
+    publishInt("winstreak", 0);
+    publishInt("losestreak", 0);
     publish("roll", 0.0);
     publish("balance", balance);
     publish("profit", 0.0);
@@ -666,8 +866,12 @@ LuaStrategy::Status LuaStrategy::onBet(const BetInfo &info, double &nextBet, Bot
 
     publishBool("win", info.win);
     publish("previousbet", info.bet);
-    publishLastBet(info.bet, info.roll, info.profit, info.payout);
+    publishLastBet(info);
+    publishJson("bet", info.betJson);
     publish("lastprofit", info.profit);
+    publish("currentprofit", info.profit);
+    publishInt("winstreak", m_streak > 0 ? m_streak : 0);
+    publishInt("losestreak", m_streak < 0 ? -m_streak : 0);
     publish("roll", info.roll);
     publish("balance", info.balance);
     publish("profit", info.runProfit);
@@ -690,6 +894,27 @@ LuaStrategy::Status LuaStrategy::onBet(const BetInfo &info, double &nextBet, Bot
     return readOutputs(nextBet, runCfg) ? Status::Ok : Status::Error;
 }
 
+LuaStrategy::Status LuaStrategy::callRound(const QJsonObject &currentBet, QJsonValue &result)
+{
+    result = QJsonValue(QJsonValue::Undefined);
+    if (!m_L)
+        return Status::Error;
+    publishJson("currentBet", currentBet);
+    lua_getglobal(m_L, "round");
+    if (!lua_isfunction(m_L, -1)) {
+        lua_pop(m_L, 1);
+        return Status::Ok; // no round(): the game's built-in play is used
+    }
+    if (!callProtected(0, "round()", 1))
+        return Status::Error;
+    if (lua_type(m_L, -1) == LUA_TNUMBER)
+        result = double(lua_tonumber(m_L, -1));
+    else if (lua_type(m_L, -1) == LUA_TSTRING)
+        result = QString::fromUtf8(lua_tostring(m_L, -1));
+    lua_pop(m_L, 1);
+    return Status::Ok;
+}
+
 // Reads game / nextbet and chance + bethigh (dice) or target (limbo) back from the script.
 bool LuaStrategy::readOutputs(double &nextBet, BotConfig &runCfg)
 {
@@ -699,18 +924,21 @@ bool LuaStrategy::readOutputs(double &nextBet, BotConfig &runCfg)
         // keep the current game
     } else if (lua_type(m_L, -1) == LUA_TSTRING) {
         const QString g = QString::fromUtf8(lua_tostring(m_L, -1)).trimmed().toLower();
-        if (g == QLatin1String("dice")) {
-            runCfg.game = Game::Dice;
-        } else if (g == QLatin1String("limbo")) {
-            runCfg.game = Game::Limbo;
+        Game parsed = Game::Dice;
+        if (gameFromName(g, &parsed)) {
+            runCfg.game = parsed;
         } else {
             lua_pop(m_L, 1);
-            m_error = QStringLiteral("game must be \"dice\" or \"limbo\" (got \"%1\")").arg(g);
+            QStringList names;
+            for (Game known : allGames())
+                names << gameName(known);
+            m_error = QStringLiteral("game \"%1\" is not supported (crash and slide are not available); "
+                                     "use one of: %2").arg(g, names.join(QStringLiteral(", ")));
             return false;
         }
     } else {
         lua_pop(m_L, 1);
-        m_error = QStringLiteral("game must be the string \"dice\" or \"limbo\"");
+        m_error = QStringLiteral("game must be a string such as \"dice\", \"limbo\" or \"keno\"");
         return false;
     }
     lua_pop(m_L, 1);
@@ -752,6 +980,34 @@ bool LuaStrategy::readOutputs(double &nextBet, BotConfig &runCfg)
         return false;
     }
     lua_pop(m_L, 1);
+
+    // ---- Stake's other games: their settings (README variables) and nextbet
+    if (!isDiceOrLimbo(runCfg.game)) {
+        QJsonObject params;
+        for (const QString &name : StakeGames::scriptVariables(runCfg.game)) {
+            const QByteArray key = name.toLatin1();
+            const QJsonValue v = readJson(key.constData());
+            if (!v.isUndefined() && !v.isNull())
+                params.insert(name, v);
+        }
+        // Code mode has no defaults: every variable of the game must be set by the script.
+        lua_getglobal(m_L, "round");
+        const bool hasRound = lua_isfunction(m_L, -1);
+        lua_pop(m_L, 1);
+        const QStringList missing = StakeGames::missingScriptVariables(runCfg.game, params,
+                                                                       readJson("nextbet"), hasRound);
+        if (!missing.isEmpty()) {
+            m_error = QStringLiteral("%1 needs these variables set in the script: %2")
+                          .arg(gameName(runCfg.game), missing.join(QStringLiteral(", ")));
+            return false;
+        }
+        double total = 0.0;
+        if (!StakeGames::finishScriptParams(runCfg.game, readJson("nextbet"), params, total, m_error))
+            return false;
+        runCfg.gameParams = params;
+        nextBet = floor8(total);
+        return true;
+    }
 
     // ---- nextbet
     lua_getglobal(m_L, "nextbet");

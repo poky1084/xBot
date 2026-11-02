@@ -73,7 +73,7 @@ QVariant BetHistoryModel::data(const QModelIndex &index, int role) const
             return {};
         return rec.casino.at(0).toUpper() + rec.casino.mid(1);
     case ColGame:
-        return rec.game == Game::Limbo ? QStringLiteral("limbo") : QStringLiteral("dice");
+        return gameName(rec.game);
     case ColIndex:
         // Newest row on top carries the total bet count, counting down downwards.
         return QString::number(int(rec.index));
@@ -84,6 +84,8 @@ QVariant BetHistoryModel::data(const QModelIndex &index, int role) const
     case ColAmount:
         return formatAmount(rec.bet);
     case ColTarget:
+        if (!isDiceOrLimbo(rec.game))
+            return rec.targetText; // "medium|8", "low|10", cards, ...
         if (rec.game == Game::Limbo)
             return QStringLiteral("≥ %1x").arg(rec.target, 0, 'f', 2);
         // The casino's own target when it differs from the app's (house edge / roll range).
@@ -91,6 +93,8 @@ QVariant BetHistoryModel::data(const QModelIndex &index, int role) const
             .arg(rec.side == BetSide::Under ? QLatin1Char('<') : QLatin1Char('>'))
             .arg(rec.casinoTarget >= 0.0 ? rec.casinoTarget : rec.target, 0, 'f', 2);
     case ColRoll:
+        if (!isDiceOrLimbo(rec.game) && !rec.rollText.isEmpty())
+            return rec.rollText; // "3 hits", "fourOfAKind", ...
         return QString::number(rec.roll, 'f', 2);
     case ColMultiplier:
         return QStringLiteral("%1x").arg(rec.mult, 0, 'f', 4);
@@ -235,7 +239,9 @@ bool BetHistoryModel::passes(const BetRecord &b) const
     const bool passesSearch =
         m_search.isEmpty()
         || QString::number(b.nonce).contains(m_search, Qt::CaseInsensitive)
-        || QString::number(b.roll, 'f', 2).contains(m_search, Qt::CaseInsensitive);
+        || QString::number(b.roll, 'f', 2).contains(m_search, Qt::CaseInsensitive)
+        || b.rollText.contains(m_search, Qt::CaseInsensitive)
+        || gameName(b.game).contains(m_search, Qt::CaseInsensitive);
     return passesFilter && passesSearch;
 }
 

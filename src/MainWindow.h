@@ -151,6 +151,9 @@ private:
     void saveConditions();
 	void updateConnectionStatus();
     void updateCasinoMenu();
+    // Shows only the games the selected casino offers; switches to dice when the current game
+    // is not one of them.
+    void updateGameMenu();
     // Tells the Auto Bet tab which casino's win chance to show (house edge) and the game.
     void updateAutoOdds();
     void updateFairTab();
@@ -159,6 +162,9 @@ private:
     void updateCentralHeight();
     void positionBottomPanel();
     void fitTopDock(bool growPanel = false);
+    // Game switched: the Manual / Auto Bet panel gets the full height of its new content (from
+    // the panel docked above it, or else from the one docked below it).
+    void fitPanelToGame();
     void rememberLogHeight();
     void keepLogHeight();
     void scheduleKeepLogHeight();
@@ -265,8 +271,9 @@ private:
     BotEngine *m_engine = nullptr;
     Game m_game = Game::Dice;
     QActionGroup *m_gameGroup = nullptr;
-    QAction *m_actGameDice = nullptr;
-    QAction *m_actGameLimbo = nullptr;
+    // Game menu: one action per game; only the selected casino's games are shown.
+    QMap<Game, QAction *> m_gameActions;
+    QAction *m_gameSeparator = nullptr; // between dice / limbo and Stake's other games
     SimulatedProvider *m_provider = nullptr;
 	
 	bool m_isLoggedIn = false;

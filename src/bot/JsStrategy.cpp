@@ -1,7 +1,12 @@
 #include "bot/JsStrategy.h"
 
+#include "bot/StakeGames.h"
+
 #include <QJSEngine>
 #include <QJSValue>
+#include <QJsonArray>
+#include <QJsonDocument>
+#include <QStringList>
 
 #include <algorithm>
 #include <chrono>
@@ -112,6 +117,19 @@ const char kPrelude[] = R"JS(
         log: out, info: out, debug: out, warn: out,
         error: function () { host.error(join(arguments)); }
     };
+    // beep(): plays the reference bot's bell tone. Its ding() is accepted silently.
+    g.beep = function () { host.beep(); };
+    g.ding = function () {};
+    // Hilo moves returned by round().
+    g.HILO_BET_EQUAL = 2;
+    g.HILO_SKIP = 7;
+    g.HILO_BET_HIGH = 5;
+    g.HILO_BET_LOW = 4;
+    g.HILO_CASHOUT = 3;
+    // Host helper: any script value as JSON text (wrapped in an array so plain values work too).
+    g.__xbotJson = function (v) {
+        try { return JSON.stringify([v === undefined ? null : v]); } catch (e) { return "[null]"; }
+    };
 })
 )JS";
 
@@ -153,14 +171,54 @@ void JsStrategy::publishBool(const char *name, bool value)
     m_engine->globalObject().setProperty(QString::fromLatin1(name), value);
 }
 
-void JsStrategy::publishLastBet(double amount, double roll, double profit, double payout)
+void JsStrategy::publishLastBet(const BetInfo &info)
 {
     QJSValue o = m_engine->newObject();
-    o.setProperty(QStringLiteral("amount"), amount);
-    o.setProperty(QStringLiteral("roll"), roll);
-    o.setProperty(QStringLiteral("profit"), profit);
-    o.setProperty(QStringLiteral("payout"), payout);
+    o.setProperty(QStringLiteral("amount"), info.bet);
+    if (info.game == Game::VideoPoker) {
+        // Video poker: the hand's outcome ("twoPair", "onePair", "royalFlush", ...).
+        const QString hand = info.betJson.value(QStringLiteral("state")).toObject()
+                                 .value(QStringLiteral("handResult")).toString();
+        o.setProperty(QStringLiteral("roll"), hand);
+        o.setProperty(QStringLiteral("Roll"), hand);
+    } else {
+        o.setProperty(QStringLiteral("roll"), info.roll);
+        o.setProperty(QStringLiteral("Roll"), info.roll); // the reference bot's spelling
+    }
+    o.setProperty(QStringLiteral("profit"), info.profit);
+    o.setProperty(QStringLiteral("payout"), info.payout);
+    o.setProperty(QStringLiteral("payoutMultiplier"), info.multiplier);
+    o.setProperty(QStringLiteral("win"), info.win);
+    o.setProperty(QStringLiteral("id"), info.betId);
+    o.setProperty(QStringLiteral("name"), info.betJson.value(QStringLiteral("user")).toObject()
+                                              .value(QStringLiteral("name")).toString());
     m_engine->globalObject().setProperty(QStringLiteral("lastBet"), o);
+}
+
+void JsStrategy::publishJson(const char *name, const QJsonValue &value)
+{
+    QJsonArray wrap;
+    wrap.append(value);
+    const QString text = QString::fromUtf8(QJsonDocument(wrap).toJson(QJsonDocument::Compact));
+    QJSValue parse = m_engine->globalObject().property(QStringLiteral("JSON")).property(QStringLiteral("parse"));
+    const QJSValue arr = parse.call({QJSValue(text)});
+    m_engine->globalObject().setProperty(QString::fromLatin1(name),
+                                         arr.isError() ? QJSValue() : arr.property(0));
+}
+
+QJsonValue JsStrategy::readJson(const char *name)
+{
+    const QJSValue v = readGlobal(name);
+    if (v.isUndefined())
+        return QJsonValue(QJsonValue::Undefined);
+    QJSValue fn = m_engine->globalObject().property(QStringLiteral("__xbotJson"));
+    if (!fn.isCallable())
+        return QJsonValue(QJsonValue::Undefined);
+    const QJSValue text = fn.call({v});
+    const QJsonDocument doc = QJsonDocument::fromJson(text.toString().toUtf8());
+    if (!doc.isArray() || doc.array().isEmpty())
+        return QJsonValue(QJsonValue::Undefined);
+    return doc.array().at(0);
 }
 
 template <typename Fn>
@@ -230,6 +288,8 @@ void JsStrategy::onStatsReset(double balance)
     publish("losses", 0);
     publish("wagered", 0.0);
     publish("currentstreak", 0);
+    publish("winstreak", 0);
+    publish("losestreak", 0);
 }
 
 JsStrategy::Status JsStrategy::init(const QString &source, double balance, double &nextBet,
@@ -263,6 +323,15 @@ JsStrategy::Status JsStrategy::init(const QString &source, double balance, doubl
         return Status::Error;
     }
 
+    // The reference bot's video poker helpers (getOptimalHold, getTargetedHold, checkTargetHit,
+    // evaluateHand) for video poker scripts.
+    {
+        QJSValue poker = m_engine->evaluate(QString::fromLatin1(StakeGames::pokerHelpersJs()),
+                                            QStringLiteral("poker"));
+        if (poker.isCallable())
+            poker.call({m_engine->globalObject()});
+    }
+
     m_engine->globalObject().setProperty(QStringLiteral("game"), gameName(runCfg.game));
     if (!runCfg.casino.isEmpty())
         m_engine->globalObject().setProperty(QStringLiteral("casino"), runCfg.casino);
@@ -271,8 +340,12 @@ JsStrategy::Status JsStrategy::init(const QString &source, double balance, doubl
     publish("startbalance", balance);
     publishBool("win", false);
     publish("previousbet", 0.0);
-    publishLastBet(0.0, 0.0, 0.0, 0.0);
+    publishLastBet(BetInfo());
+    publishJson("bet", QJsonObject());
     publish("lastprofit", 0.0);
+    publish("currentprofit", 0.0);
+    publish("winstreak", 0);
+    publish("losestreak", 0);
     publish("roll", 0.0);
     publish("balance", balance);
     publish("profit", 0.0);
@@ -315,8 +388,12 @@ JsStrategy::Status JsStrategy::onBet(const BetInfo &info, double &nextBet, BotCo
 
     publishBool("win", info.win);
     publish("previousbet", info.bet);
-    publishLastBet(info.bet, info.roll, info.profit, info.payout);
+    publishLastBet(info);
+    publishJson("bet", info.betJson);
     publish("lastprofit", info.profit);
+    publish("currentprofit", info.profit);
+    publish("winstreak", double(m_streak > 0 ? m_streak : 0));
+    publish("losestreak", double(m_streak < 0 ? -m_streak : 0));
     publish("roll", info.roll);
     publish("balance", info.balance);
     publish("profit", info.runProfit);
@@ -337,6 +414,28 @@ JsStrategy::Status JsStrategy::onBet(const BetInfo &info, double &nextBet, BotCo
     return readOutputs(nextBet, runCfg) ? Status::Ok : Status::Error;
 }
 
+JsStrategy::Status JsStrategy::callRound(const QJsonObject &currentBet, QJsonValue &result)
+{
+    result = QJsonValue(QJsonValue::Undefined);
+    if (!m_engine)
+        return Status::Error;
+    publishJson("currentBet", currentBet);
+    QJSValue roundFn = readGlobal("round");
+    if (!roundFn.isCallable())
+        return Status::Ok; // no round(): the game's built-in play is used
+    QJSValue ret;
+    if (!runGuarded("round()", [&] {
+            ret = roundFn.call();
+            return ret;
+        }))
+        return Status::Error;
+    if (ret.isNumber())
+        result = ret.toNumber();
+    else if (ret.isString())
+        result = ret.toString();
+    return Status::Ok;
+}
+
 // Reads game / nextbet and chance + bethigh (dice) or target (limbo) back from the script.
 bool JsStrategy::readOutputs(double &nextBet, BotConfig &runCfg)
 {
@@ -346,16 +445,19 @@ bool JsStrategy::readOutputs(double &nextBet, BotConfig &runCfg)
         // keep the current game
     } else if (game.isString()) {
         const QString g = game.toString().trimmed().toLower();
-        if (g == QLatin1String("dice")) {
-            runCfg.game = Game::Dice;
-        } else if (g == QLatin1String("limbo")) {
-            runCfg.game = Game::Limbo;
+        Game parsed = Game::Dice;
+        if (gameFromName(g, &parsed)) {
+            runCfg.game = parsed;
         } else {
-            m_error = QStringLiteral("game must be \"dice\" or \"limbo\" (got \"%1\")").arg(g);
+            QStringList names;
+            for (Game known : allGames())
+                names << gameName(known);
+            m_error = QStringLiteral("game \"%1\" is not supported (crash and slide are not available); "
+                                     "use one of: %2").arg(g, names.join(QStringLiteral(", ")));
             return false;
         }
     } else {
-        m_error = QStringLiteral("game must be the string \"dice\" or \"limbo\"");
+        m_error = QStringLiteral("game must be a string such as \"dice\", \"limbo\" or \"keno\"");
         return false;
     }
 
@@ -395,6 +497,34 @@ bool JsStrategy::readOutputs(double &nextBet, BotConfig &runCfg)
     static const char *kDeclHint =
         " (assign it as a plain global, e.g. `nextbet = 0.0001;` or `var nextbet = 0.0001;` - "
         "top-level let / const are not visible to the bot)";
+
+    // ---- Stake's other games: their settings (README variables) and nextbet
+    if (!isDiceOrLimbo(runCfg.game)) {
+        QJsonObject params;
+        for (const QString &name : StakeGames::scriptVariables(runCfg.game)) {
+            const QByteArray key = name.toLatin1();
+            const QJsonValue v = readJson(key.constData());
+            if (!v.isUndefined() && !v.isNull())
+                params.insert(name, v);
+        }
+        // Code mode has no defaults: every variable of the game must be set by the script.
+        const QStringList missing = StakeGames::missingScriptVariables(
+            runCfg.game, params, readJson("nextbet"), readGlobal("round").isCallable());
+        if (!missing.isEmpty()) {
+            m_error = QStringLiteral("%1 needs these variables set in the script: %2")
+                          .arg(gameName(runCfg.game), missing.join(QStringLiteral(", ")));
+            return false;
+        }
+        double total = 0.0;
+        if (!StakeGames::finishScriptParams(runCfg.game, readJson("nextbet"), params, total, m_error)) {
+            if (m_error.startsWith(QLatin1String("nextbet must be set")))
+                m_error += QString::fromLatin1(kDeclHint);
+            return false;
+        }
+        runCfg.gameParams = params;
+        nextBet = floor8(total);
+        return true;
+    }
 
     // ---- nextbet
     double bet = 0.0;
