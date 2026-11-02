@@ -43,19 +43,6 @@ QString hiloMultText(double m)
                                                        .remove(QRegularExpression(QStringLiteral("\\.?0+$"))));
 }
 
-QString hiloGuessSymbol(const QString &guess)
-{
-    if (guess.startsWith(QLatin1String("higher")))
-        return QString(QChar(0x2191)); // ↑
-    if (guess.startsWith(QLatin1String("lower")))
-        return QString(QChar(0x2193)); // ↓
-    if (guess == QLatin1String("equal"))
-        return QStringLiteral("=");
-    if (guess == QLatin1String("skip"))
-        return QString(QChar(0x00BB)); // »
-    return {};
-}
-
 QString suitSymbol(const QString &suit)
 {
     const char16_t ch = suit.isEmpty() ? u'\0' : suit.at(0).toUpper().unicode();
@@ -258,7 +245,8 @@ public:
         QString suit;
         QString caption;
         bool bust = false;
-        bool skipped = false; // the player skipped this card: drawn faded
+        bool skipped = false; // drawn by a skip: grey card, as on Stake
+        QString guess;        // the guess that drew this card: badge before it, as on Stake
     };
 
     explicit HiloCardStrip(QWidget *parent = nullptr) : QWidget(parent) { updateSize(); }
@@ -301,7 +289,6 @@ protected:
         }
         for (int i = 0; i < m_cards.size(); ++i) {
             const Card &c = m_cards.at(i);
-            p.setOpacity(c.skipped ? 0.45 : 1.0);
             const QRectF card(kMargin + i * (kCardW + kGap) + 0.5, kMargin + 0.5, kCardW - 1, kCardH - 1);
             const bool last = i == m_cards.size() - 1;
             QColor border(0xc8, 0xc8, 0xc8);
@@ -314,7 +301,7 @@ protected:
             }
             QPainterPath path;
             path.addRoundedRect(card, 6, 6);
-            p.fillPath(path, Qt::white);
+            p.fillPath(path, c.skipped ? QColor(0x7d, 0x87, 0x8c) : QColor(Qt::white));
             p.setPen(QPen(border, width));
             p.drawPath(path);
 
@@ -339,9 +326,61 @@ protected:
             p.drawText(QRectF(card.left() - kGap / 2.0, card.bottom() + 2, kCardW + kGap, kCaptionH - 2),
                        Qt::AlignHCenter | Qt::AlignTop, c.caption);
         }
+        // Guess / skip badges on top, straddling the gap before each drawn card (as on Stake).
+        for (int i = 1; i < m_cards.size(); ++i)
+            drawBadge(p, QPointF(kMargin + i * (kCardW + kGap) - kGap / 2.0, kMargin + kCardH * 0.45),
+                      m_cards.at(i).guess);
     }
 
 private:
+    // White rounded square with the guess: green ˄ / ˅ (with a bar for "or same"), green =
+    // for equal, orange » for skip.
+    static void drawBadge(QPainter &p, const QPointF &centre, const QString &guess)
+    {
+        if (guess.isEmpty())
+            return;
+        const QRectF box(centre.x() - kBadge / 2.0, centre.y() - kBadge / 2.0, kBadge, kBadge);
+        QPainterPath path;
+        path.addRoundedRect(box, 4, 4);
+        p.fillPath(path, Qt::white);
+        p.setPen(QPen(QColor(0xb1, 0xba, 0xd3), 1.5));
+        p.drawPath(path);
+
+        const qreal cx = box.center().x();
+        const qreal cy = box.center().y();
+        const qreal w = kBadge * 0.22; // half width of a chevron
+        const qreal h = kBadge * 0.13; // half height
+        QPen pen(QColor(0x1f, 0xc8, 0x1f), 1.8, Qt::SolidLine, Qt::RoundCap, Qt::RoundJoin);
+        p.setBrush(Qt::NoBrush);
+        if (guess.startsWith(QLatin1String("higher")) || guess.startsWith(QLatin1String("lower"))) {
+            const bool up = guess.startsWith(QLatin1String("higher"));
+            const bool orEqual = guess.endsWith(QLatin1String("Equal"));
+            const qreal y0 = orEqual ? cy - 2 : cy;
+            p.setPen(pen);
+            QPainterPath chevron;
+            chevron.moveTo(cx - w, up ? y0 + h : y0 - h);
+            chevron.lineTo(cx, up ? y0 - h : y0 + h);
+            chevron.lineTo(cx + w, up ? y0 + h : y0 - h);
+            p.drawPath(chevron);
+            if (orEqual) // the "or same" bar
+                p.drawLine(QPointF(cx - w, y0 + h + 4), QPointF(cx + w, y0 + h + 4));
+        } else if (guess == QLatin1String("equal")) {
+            p.setPen(pen);
+            p.drawLine(QPointF(cx - w, cy - 2.5), QPointF(cx + w, cy - 2.5));
+            p.drawLine(QPointF(cx - w, cy + 2.5), QPointF(cx + w, cy + 2.5));
+        } else if (guess == QLatin1String("skip")) {
+            pen.setColor(QColor(0xff, 0xa5, 0x00));
+            p.setPen(pen);
+            for (const qreal dx : {-3.0, 3.0}) {
+                QPainterPath chevron;
+                chevron.moveTo(cx + dx - h, cy - w);
+                chevron.lineTo(cx + dx + h, cy);
+                chevron.lineTo(cx + dx - h, cy + w);
+                p.drawPath(chevron);
+            }
+        }
+    }
+
     void updateSize()
     {
         setMinimumSize(sizeHint());
@@ -353,6 +392,7 @@ private:
     static constexpr int kGap = 8;
     static constexpr int kMargin = 4;
     static constexpr int kCaptionH = 20;
+    static constexpr int kBadge = 22;
     QVector<Card> m_cards;
     int m_outcome = 0;
 };
@@ -934,11 +974,10 @@ void ManualBetPanel::showHiloRound(const QJsonObject &bet, bool active, bool pla
         const QString guess = round.value(QStringLiteral("guess")).toString();
         current = round.value(QStringLiteral("payoutMultiplier")).toDouble();
         c.bust = current <= 0.0 && guess != QLatin1String("skip");
-        // A round's guess is about the card before it: "skip" means that one was skipped.
-        if (guess == QLatin1String("skip"))
-            cards.last().skipped = true;
-        const QString sym = hiloGuessSymbol(guess);
-        c.caption = sym.isEmpty() ? hiloMultText(current) : sym + QLatin1Char(' ') + hiloMultText(current);
+        // As on Stake: the card a skip drew is shown grey.
+        c.skipped = guess == QLatin1String("skip");
+        c.guess = guess;
+        c.caption = hiloMultText(current); // the guess is shown by the badge
         cards.append(c);
     }
     m_hiloRounds = int(rounds.size());
