@@ -4,7 +4,7 @@ xBot is a desktop dice and limbo betting bot for **Windows**, written in C++ wit
 
 Every new launch starts in **simulation mode**, which uses play money and a provably fair seed generator that works like Stake's. Real-money betting only starts after you turn it on yourself in *Tools → Options → Live betting*.
 
-Source code and exe: <https://bitbucket.org/poky1084/xbot> <br />
+Source code and exe: <https://bitbucket.org/poky1084/xbot/downloads/> <br />
 <b>Donate1:</b> https://cwallet.com/t/87SPDPGG <br />
 <b>Donate2:</b> https://ko-fi.com/poky <br />
 
