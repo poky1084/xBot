@@ -258,6 +258,7 @@ public:
         QString suit;
         QString caption;
         bool bust = false;
+        bool skipped = false; // the player skipped this card: drawn faded
     };
 
     explicit HiloCardStrip(QWidget *parent = nullptr) : QWidget(parent) { updateSize(); }
@@ -300,6 +301,7 @@ protected:
         }
         for (int i = 0; i < m_cards.size(); ++i) {
             const Card &c = m_cards.at(i);
+            p.setOpacity(c.skipped ? 0.45 : 1.0);
             const QRectF card(kMargin + i * (kCardW + kGap) + 0.5, kMargin + 0.5, kCardW - 1, kCardH - 1);
             const bool last = i == m_cards.size() - 1;
             QColor border(0xc8, 0xc8, 0xc8);
@@ -932,6 +934,9 @@ void ManualBetPanel::showHiloRound(const QJsonObject &bet, bool active, bool pla
         const QString guess = round.value(QStringLiteral("guess")).toString();
         current = round.value(QStringLiteral("payoutMultiplier")).toDouble();
         c.bust = current <= 0.0 && guess != QLatin1String("skip");
+        // A round's guess is about the card before it: "skip" means that one was skipped.
+        if (guess == QLatin1String("skip"))
+            cards.last().skipped = true;
         const QString sym = hiloGuessSymbol(guess);
         c.caption = sym.isEmpty() ? hiloMultText(current) : sym + QLatin1Char(' ') + hiloMultText(current);
         cards.append(c);
