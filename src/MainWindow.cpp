@@ -725,6 +725,7 @@ MainWindow::MainWindow(int slot, bool freshWebSession, QWidget *parent)
     });
     connect(m_autoPanel, &AutoBetPanel::startRequested, this, &MainWindow::onStartAuto);
     connect(m_autoPanel, &AutoBetPanel::stopRequested, this, &MainWindow::onStopAuto);
+    connect(m_autoPanel, &AutoBetPanel::settingsEdited, this, &MainWindow::onAutoSettingsEdited);
     connect(m_fairPanel, &FairPanel::seedRotated, this,
             [this](const QString &msg) { onLogMessage(msg, false); });
 
@@ -1468,6 +1469,7 @@ void MainWindow::setGame(Game game)
         m_manualPanel->setGame(game);
     if (m_fairPanel)
         m_fairPanel->setGame(game); // Limbo: verify shows the multiplier
+    updateAutoOdds();
     updateWindowTitle();
 }
 
@@ -1529,9 +1531,29 @@ void MainWindow::updateFairTab()
         m_tabs->setCurrentIndex(0); // leave the disabled tab: back to Manual Bet
 }
 
+void MainWindow::updateAutoOdds()
+{
+    if (!m_autoPanel)
+        return;
+    // What the casino's dice pays per 100 % chance (see the transports in StakeClient.cpp).
+    // Simulation and limbo use the app's own 1 % edge.
+    double rtp = 99.0;
+    bool floorChance = false;
+    if (m_live.enabled && m_game == Game::Dice) {
+        switch (m_live.casino) {
+        case LiveSettings::Casino::Pasino: rtp = 95.0; break;
+        case LiveSettings::Casino::Tower:  rtp = 98.5; floorChance = true; break;
+        case LiveSettings::Casino::Duel:   rtp = 99.9; break;
+        default: break; // Stake, Shuffle, Goated, Wolfbet, Paradice, Winna: 1 % edge
+        }
+    }
+    m_autoPanel->setOddsContext(rtp, floorChance, m_game == Game::Dice);
+}
+
 void MainWindow::updateCasinoMenu()
 {
     updateFairTab();
+    updateAutoOdds();
     if (!m_actCasinoStake || !m_actCasinoShuffle || !m_actCasinoGoated || !m_actCasinoWolfbet
         || !m_actCasinoDuel || !m_actCasinoParadice || !m_actCasinoPasino
         || !m_actCasinoTower || !m_actCasinoWinna)
@@ -1663,20 +1685,9 @@ void MainWindow::onStartAuto()
         // "Use Condition Builder" ticked: always condition mode, even with no blocks. Of the
         // Auto Bet tab the base bet (first bet and "reset amount") and the multiplier / win
         // chance are used; bet count, on win / on loss and stop on profit / loss are not.
-        // Only the dice side comes from the Manual tab (the Auto Bet tab has no side).
+        // The dice side comes from the Auto Bet tab's Direction box (set by applyOddsTo()).
         const bool condMode = m_autoPanel->useConditions();
-        BotConfig cfg;
-        if (condMode) {
-            cfg = m_manualPanel->config();
-            cfg.game = m_game;
-            cfg.startBalance = m_startBalance;
-            BotConfig autoCfg;
-            m_autoPanel->applyTo(autoCfg);
-            cfg.baseBet = autoCfg.baseBet;
-            m_autoPanel->applyOddsTo(cfg);
-        } else {
-            cfg = currentConfig();
-        }
+        const BotConfig cfg = autoRunConfig(condMode);
 
         m_engine->setConfig(cfg);
         m_engine->setConditionMode(condMode);
@@ -4239,6 +4250,7 @@ void MainWindow::updateModeWidgets()
     }
 
     updateFairTab();
+    updateAutoOdds();
     m_actRotate->setEnabled(!m_rotatingSeed);
 	updateConnectionStatus(); 
     updateWindowTitle();
@@ -4255,8 +4267,15 @@ void MainWindow::onAbout()
            "statistics.</p>"
            "<p>Simulation mode never places real bets; live betting must be "
            "enabled explicitly in Options.</p>"
-		   "source code and exe is here: <a href='https://bitbucket.org/poky1084/xbot'>"
-           "https://bitbucket.org/poky1084/xbot</a>"
+		   "<p>My Discord: @fisk_992</p>"
+		   "<p>My Telegram: <a href='https://t.me/poky_1084'>"
+           "https://t.me/poky_1084</a></p>"
+		   "<p>source code and exe is here: <a href='https://bitbucket.org/poky1084/xbot'>"
+           "https://bitbucket.org/poky1084/xbot</a></p>"
+		   "<p>Donate1: <a href='https://cwallet.com/t/87SPDPGG'>"
+           "https://cwallet.com/t/87SPDPGG</a></p>"
+		   "<p>Donate2: <a href='https://ko-fi.com/poky'>"
+           "https://ko-fi.com/poky</a></p>"
            "<p>Icons are taken from the qBittorrent project "
            "(<a href='https://github.com/qbittorrent/qBittorrent'>"
            "github.com/qbittorrent/qBittorrent</a>, GPLv2).</p>"));
@@ -4271,6 +4290,32 @@ BotConfig MainWindow::currentConfig() const
     cfg.startBalance = m_startBalance;
     m_autoPanel->applyTo(cfg);
     return cfg;
+}
+
+BotConfig MainWindow::autoRunConfig(bool condMode) const
+{
+    if (!condMode)
+        return currentConfig();
+    BotConfig cfg = m_manualPanel->config();
+    cfg.game = m_game;
+    cfg.startBalance = m_startBalance;
+    BotConfig autoCfg;
+    m_autoPanel->applyTo(autoCfg);
+    cfg.baseBet = autoCfg.baseBet;
+    m_autoPanel->applyOddsTo(cfg);
+    return cfg;
+}
+
+void MainWindow::onAutoSettingsEdited()
+{
+    // Only a run started with Start (rules / Condition Builder) follows the tab; script runs
+    // ignore it. updateAutoSettings() applies the edit from the next bet on (direction, odds,
+    // base bet, rules, stops, "Use Condition Builder").
+    if (m_luaRunning || !(m_engine->isRunning() || m_engine->startPending()))
+        return;
+    const bool condMode = m_autoPanel->useConditions();
+    m_engine->updateAutoSettings(autoRunConfig(condMode), condMode,
+                                 condMode ? m_conditions : BlockList());
 }
 
 BotConfig MainWindow::manualConfig() const
@@ -4741,6 +4786,14 @@ void MainWindow::loadSettings()
         const QVariant chance = settings.value(QStringLiteral("AutoBet/winChance"));
         if (mult.isValid() && chance.isValid())
             m_autoPanel->setOdds(mult.toDouble(), chance.toDouble());
+        // Auto-bet dice side; when missing (older settings) the Manual tab's side is taken over.
+        const QVariant dir = settings.value(QStringLiteral("AutoBet/direction"));
+        if (dir.isValid())
+            m_autoPanel->setSide(dir.toString().compare(QLatin1String("under"), Qt::CaseInsensitive) == 0
+                                     ? BetSide::Under : BetSide::Over);
+        else
+            m_autoPanel->setSide(m_manualPanel->side());
+        updateAutoOdds();
     }
     m_autoPanel->setConditionCount(m_conditions.size());
     m_autoPanel->setUseConditions(settings.value(QStringLiteral("AutoBet/useConditions"), false).toBool());
@@ -4871,6 +4924,9 @@ void MainWindow::saveSettings()
     settings.setValue(QStringLiteral("stopLoss"), cfg.stopLoss);
     settings.setValue(QStringLiteral("multiplier"), m_autoPanel->multiplier());
     settings.setValue(QStringLiteral("winChance"), m_autoPanel->winChance());
+    settings.setValue(QStringLiteral("direction"),
+                      m_autoPanel->side() == BetSide::Under ? QStringLiteral("under")
+                                                            : QStringLiteral("over"));
     settings.remove(QStringLiteral("delayMs")); // old auto-bet panel delay, no longer used
     settings.setValue(QStringLiteral("useConditions"), m_autoPanel->useConditions());
     settings.endGroup();

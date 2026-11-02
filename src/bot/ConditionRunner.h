@@ -39,6 +39,8 @@ public:
         m_base.side = cfg.side;
         m_base.multiplierTarget = cfg.multiplierTarget;
     }
+    // The Auto Bet tab's base bet was edited mid-run: "reset amount" now goes back to it.
+    void setBaseBet(double baseBet) { m_base.baseBet = baseBet; }
 
 private:
     bool matches(const ConditionBlockData &b, bool win, double profit, double balance) const;

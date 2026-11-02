@@ -7,6 +7,7 @@
 #include <QGridLayout>
 #include <QHBoxLayout>
 #include <QLabel>
+#include <QAbstractSpinBox>
 #include <QPushButton>
 #include <QSpinBox>
 #include <QVBoxLayout>
@@ -73,7 +74,7 @@ AutoBetPanel::AutoBetPanel(QWidget *parent)
     grid->addWidget(m_betCountSpin, 0, 3);
 
     // Left column, under the base bet: the odds the auto-bet plays at. The two boxes are
-    // linked (win chance = 99 / multiplier, 1% house edge).
+    // linked (win chance = the casino's rtp / multiplier, see setOddsContext()).
     m_multiplierSpin = new QDoubleSpinBox;
     m_multiplierSpin->setRange(0.99, BotConstants::kMaxLimboTarget);
     m_multiplierSpin->setDecimals(4);
@@ -91,13 +92,32 @@ AutoBetPanel::AutoBetPanel(QWidget *parent)
     m_chanceSpin->setKeyboardTracking(false);
     m_chanceSpin->setSuffix(QStringLiteral(" %"));
     m_chanceSpin->setValue(49.5);
+
+    // Dice side of the auto-bet (the Manual tab's side is only used by manual bets).
+    m_directionCombo = new QComboBox;
+    m_directionCombo->addItem(tr("Over"), int(BetSide::Over));
+    m_directionCombo->addItem(tr("Under"), int(BetSide::Under));
+    m_directionCombo->setCurrentIndex(0);
+    m_directionCombo->setToolTip(
+        tr("Dice side of the auto-bet: roll Over or Under the target.\n"
+           "Can be changed while the auto-bet runs (applies from the next bet).\n"
+           "Only used by the auto-bet (also with the Condition Builder);\n"
+           "manual bets use the Manual tab's side. Not used by Limbo."));
+
+    auto *chanceRow = new QHBoxLayout;
+    chanceRow->setSpacing(4);
+    chanceRow->setContentsMargins(0, 0, 0, 0);
+    chanceRow->addWidget(m_chanceSpin, 1);
+    chanceRow->addWidget(new QLabel(tr("Direction:")));
+    chanceRow->addWidget(m_directionCombo, 1);
     grid->addWidget(new QLabel(tr("Win chance %:")), 2, 0);
-    grid->addWidget(m_chanceSpin, 2, 1);
+    grid->addLayout(chanceRow, 2, 1);
 
     const QString oddsTip =
-        tr("The odds the auto-bet plays at. Changing one updates the other\n"
-           "(win chance = 99 / multiplier). Dice keeps the Under / Over side of the\n"
-           "Manual tab; Limbo uses the multiplier as its target.\n"
+        tr("The odds the auto-bet plays at. Changing one updates the other.\n"
+           "The win chance is the current casino's real chance for the multiplier\n"
+           "(its own house edge: 2x = 49.50 % on Stake, 47.50 % on Pasino, 49.25 % on Tower).\n"
+           "Dice plays the Direction set next to it; Limbo uses the multiplier as its target.\n"
            "Only used by the auto-bet; manual bets use the Manual tab.");
     m_multiplierSpin->setToolTip(oddsTip);
     m_chanceSpin->setToolTip(oddsTip);
@@ -150,8 +170,8 @@ AutoBetPanel::AutoBetPanel(QWidget *parent)
     m_useConditions = new QCheckBox;
     m_useConditions->setToolTip(
         tr("Ticked: the Condition Builder always runs the auto-bet (even with no blocks).\n"
-           "Base bet (first bet and \"reset amount\"), multiplier and win chance are used;\n"
-           "the other settings are ignored. Dice side comes from the Manual tab.\n"
+           "Base bet (first bet and \"reset amount\"), multiplier, win chance and direction\n"
+           "are used; the other settings are ignored.\n"
            "Unticked: the settings above are used."));
     // Left column, under the win chance (the right column runs two rows longer).
     grid->addWidget(m_useConditions, 3, 0, 1, 2);
@@ -187,7 +207,8 @@ AutoBetPanel::AutoBetPanel(QWidget *parent)
                        static_cast<QWidget *>(m_onLossMode), static_cast<QWidget *>(m_onLossPct)})
         w->setToolTip(ruleTip);
 
-    m_startBtn->setToolTip(tr("Settings are locked in when you press Start."));
+    m_startBtn->setToolTip(tr("Every setting can be changed while the auto-bet runs;\n"
+                              "the change applies from the next bet on."));
 
     // CRUCIAL: Absorbs extra vertical space when dragging the splitter down,
     // keeping all widgets pinned neatly to the top.
@@ -207,7 +228,19 @@ AutoBetPanel::AutoBetPanel(QWidget *parent)
         w->setSizePolicy(sp);
     }
 
+    // Live edits go to a running auto-bet: a spin box only reports its value once the edit
+    // is finished (Enter, leaving the box, the arrows), never a half-typed amount.
+    for (QWidget *w : std::as_const(m_editWidgets))
+        if (auto *spin = qobject_cast<QAbstractSpinBox *>(w))
+            spin->setKeyboardTracking(false);
+
     // Lock the vertical height of the buttons as well
+    {
+        QSizePolicy sp = m_directionCombo->sizePolicy();
+        sp.setHorizontalPolicy(QSizePolicy::Expanding);
+        sp.setVerticalPolicy(QSizePolicy::Fixed);
+        m_directionCombo->setSizePolicy(sp);
+    }
     for (QPushButton *b : {m_startBtn, m_stopBtn}) {
         b->setSizePolicy(QSizePolicy::Preferred, QSizePolicy::Fixed);
     }
@@ -233,16 +266,27 @@ AutoBetPanel::AutoBetPanel(QWidget *parent)
         if (mult <= 0.0)
             return;
         const QSignalBlocker b(m_chanceSpin);
-        m_chanceSpin->setValue(std::clamp(99.0 / mult, BotConstants::kMinChance,
-                                          BotConstants::kMaxChance));
+        m_chanceSpin->setValue(casinoChanceFor(mult));
     });
     connect(m_chanceSpin, &QDoubleSpinBox::valueChanged, this, [this](double chance) {
         if (chance <= 0.0)
             return;
+        // The box holds the casino's chance: its multiplier is the casino's rtp / chance.
         const QSignalBlocker b(m_multiplierSpin);
-        m_multiplierSpin->setValue(std::floor(99.0 / chance * 10000.0) / 10000.0);
+        m_multiplierSpin->setValue(std::floor(m_rtp / chance * 10000.0 + 1e-6) / 10000.0);
     });
     connect(m_useConditions, &QCheckBox::toggled, this, [this](bool) { updateRuleWidgets(); });
+
+    // Every edit is reported once all linked boxes are in step (the multiplier / chance and
+    // percentage / mode handlers above are connected first, so they have already run).
+    const auto edited = [this] { emit settingsEdited(); };
+    for (QDoubleSpinBox *spin : {m_baseBetSpin, m_multiplierSpin, m_chanceSpin, m_onWinPct,
+                                 m_onLossPct, m_stopProfitSpin, m_stopLossSpin})
+        connect(spin, &QDoubleSpinBox::valueChanged, this, edited);
+    connect(m_betCountSpin, &QSpinBox::valueChanged, this, edited);
+    for (QComboBox *combo : {m_onWinMode, m_onLossMode, m_directionCombo})
+        connect(combo, &QComboBox::currentIndexChanged, this, edited);
+    connect(m_useConditions, &QCheckBox::toggled, this, edited);
 
     updateRuleWidgets();
 }
@@ -260,9 +304,11 @@ void AutoBetPanel::applyTo(BotConfig &cfg) const
 
 void AutoBetPanel::applyOddsTo(BotConfig &cfg) const
 {
-    // Odds: dice keeps the side already in cfg (from the Manual tab) and gets its target
-    // from the win chance; limbo uses the multiplier as its target.
-    const double chance = std::round(m_chanceSpin->value() * 100.0) / 100.0;
+    // Odds: dice gets its side from the Direction box and its target from the win chance;
+    // limbo uses the multiplier as its target. The box shows the casino's chance; the config
+    // holds the app's (1 % edge) chance, which the casino's transport converts back.
+    cfg.side = side();
+    const double chance = winChance();
     const double diceTarget = cfg.side == BetSide::Under ? chance : 100.0 - chance;
     cfg.target = std::clamp(diceTarget, BotConstants::kMinChance, BotConstants::kMaxChance);
     cfg.multiplierTarget = std::clamp(m_multiplierSpin->value(), BotConstants::kMinLimboTarget,
@@ -276,7 +322,13 @@ double AutoBetPanel::multiplier() const
 
 double AutoBetPanel::winChance() const
 {
-    return m_chanceSpin->value();
+    // The box shows the casino's chance; the config wants the app's (1 % edge). Same edge:
+    // the box as it is. Another edge: from the multiplier the box is linked to (Pasino
+    // 47.50 % = 2x -> 49.50 %), which also undoes Tower's rounded-down chance exactly.
+    const double appChance = m_rtp == 99.0 ? m_chanceSpin->value()
+                                           : 99.0 / m_multiplierSpin->value();
+    return std::clamp(std::round(appChance * 100.0) / 100.0, BotConstants::kMinChance,
+                      BotConstants::kMaxChance);
 }
 
 void AutoBetPanel::setOdds(double multiplier, double chance)
@@ -284,7 +336,47 @@ void AutoBetPanel::setOdds(double multiplier, double chance)
     const QSignalBlocker b1(m_multiplierSpin);
     const QSignalBlocker b2(m_chanceSpin);
     m_multiplierSpin->setValue(multiplier);
-    m_chanceSpin->setValue(chance);
+    // `chance` is the app's (1 % edge) chance: shown as the casino's.
+    m_chanceSpin->setValue(std::clamp(std::round(chance * m_rtp / 99.0 * 100.0) / 100.0,
+                                      BotConstants::kMinChance, BotConstants::kMaxChance));
+}
+
+BetSide AutoBetPanel::side() const
+{
+    return BetSide(m_directionCombo->currentData().toInt());
+}
+
+void AutoBetPanel::setSide(BetSide side)
+{
+    const int i = m_directionCombo->findData(int(side));
+    if (i >= 0)
+        m_directionCombo->setCurrentIndex(i);
+}
+
+double AutoBetPanel::casinoChanceFor(double multiplier) const
+{
+    if (multiplier <= 0.0)
+        return BotConstants::kMaxChance;
+    const double raw = m_rtp / multiplier;
+    const double chance = m_floorChance ? std::floor(raw * 100.0 + 1e-6) / 100.0
+                                        : std::round(raw * 100.0) / 100.0;
+    return std::clamp(chance, BotConstants::kMinChance, BotConstants::kMaxChance);
+}
+
+void AutoBetPanel::setOddsContext(double rtp, bool floorChance, bool dice)
+{
+    m_dice = dice;
+    const bool changed = rtp > 0.0 && (rtp != m_rtp || floorChance != m_floorChance);
+    if (rtp > 0.0) {
+        m_rtp = rtp;
+        m_floorChance = floorChance;
+    }
+    if (changed) {
+        // Keep the multiplier; show the new casino's chance for it.
+        const QSignalBlocker b(m_chanceSpin);
+        m_chanceSpin->setValue(casinoChanceFor(m_multiplierSpin->value()));
+    }
+    updateRuleWidgets();
 }
 
 void AutoBetPanel::setFrom(const BotConfig &cfg)
@@ -352,9 +444,10 @@ void AutoBetPanel::loadRulePreset(const OnResultRule &onWin, const OnResultRule 
 
 void AutoBetPanel::updateRuleWidgets()
 {
-    // The settings are always editable, also during a run and with "Use Condition Builder"
-    // ticked (they are read when Start is pressed; in condition mode only the base bet
-    // takes effect). Only the mode checkbox is locked while a run is going.
+    // Every setting is editable, also during a run (MainWindow applies the edit to the run
+    // through settingsEdited()) and with "Use Condition Builder" ticked.
     for (QWidget *w : std::as_const(m_editWidgets))
-        w->setEnabled(w == m_useConditions ? !m_running : true);
+        w->setEnabled(true);
+    // The side only matters for dice.
+    m_directionCombo->setEnabled(m_dice);
 }

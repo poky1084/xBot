@@ -85,6 +85,13 @@ public:
     // `game` variable is set and its next dobet() decides target / chance for the new game.
     // A bet already in flight finishes with the old game.
     void switchGame(const BotConfig &betCfg);
+
+    // The Auto Bet tab was edited while the auto-bet runs (or its start is pending): base bet,
+    // bet count, on win / on loss, stop on profit / loss, multiplier / win chance / direction,
+    // "Use Condition Builder" and the blocks apply from the next bet on. The odds only replace
+    // the running ones when they were edited (a condition may have changed the chance). Script
+    // runs are not touched.
+    void updateAutoSettings(const BotConfig &cfg, bool condMode, const BlockList &blocks);
     bool isPaused() const { return m_paused; }
 
     // Runs a single bet immediately (manual "Roll Dice"); no session needed.

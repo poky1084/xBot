@@ -120,7 +120,12 @@ private:
     void createStatusBar();
     void createLogDock();
     void createLuaDock();
-    BotConfig currentConfig() const; // auto-bet: Auto Bet tab settings (side from the Manual tab)
+    BotConfig currentConfig() const; // auto-bet: Auto Bet tab settings (side from its Direction box)
+    // What Start hands the engine: condition mode = Manual tab + the Auto Bet tab's base bet
+    // and odds / direction; otherwise currentConfig().
+    BotConfig autoRunConfig(bool condMode) const;
+    // Auto Bet tab edited: passes the settings to a running (or starting) non-script auto-bet.
+    void onAutoSettingsEdited();
     BotConfig manualConfig() const;  // manual roll: Manual Bet tab only
     void updateSessionWidgets();
     void updateRunTime();
@@ -146,6 +151,8 @@ private:
     void saveConditions();
 	void updateConnectionStatus();
     void updateCasinoMenu();
+    // Tells the Auto Bet tab which casino's win chance to show (house edge) and the game.
+    void updateAutoOdds();
     void updateFairTab();
     bool betListStacked() const;
     int bottomPanelHeight() const;

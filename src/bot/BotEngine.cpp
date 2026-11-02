@@ -726,6 +726,69 @@ void BotEngine::switchGame(const BotConfig &betCfg)
                         false);
 }
 
+void BotEngine::updateAutoSettings(const BotConfig &cfg, bool condMode, const BlockList &blocks)
+{
+    if (m_scriptActive || !m_scriptSource.trimmed().isEmpty())
+        return; // script runs ignore the Auto Bet tab
+
+    const BotConfig old = m_config;
+    const bool oddsEdited = old.target != cfg.target || old.side != cfg.side
+                            || old.multiplierTarget != cfg.multiplierTarget;
+    const auto copyRules = [&cfg](BotConfig &dst) {
+        dst.baseBet = cfg.baseBet;
+        dst.stopAfterBets = cfg.stopAfterBets;
+        dst.onWin = cfg.onWin;
+        dst.onLoss = cfg.onLoss;
+        dst.stopProfit = cfg.stopProfit;
+        dst.stopLoss = cfg.stopLoss;
+    };
+    const auto copyOdds = [&cfg](BotConfig &dst) {
+        dst.target = cfg.target;
+        dst.side = cfg.side;
+        dst.multiplierTarget = cfg.multiplierTarget;
+    };
+    copyRules(m_config);
+    copyOdds(m_config);
+    const bool condModeChanged = condMode != m_condMode;
+    m_condMode = condMode;
+    m_condBlocks = blocks;
+    if (!m_running)
+        return; // a pending start picks everything up from m_config
+
+    copyRules(m_runCfg);
+    if (oddsEdited)
+        copyOdds(m_runCfg);
+    // Sitting at the base bet: the next bet is the new base bet. Otherwise the progression
+    // carries on and the new base is used at its next reset.
+    if (std::abs(m_nextBetSize - old.baseBet) < 1e-12)
+        m_nextBetSize = cfg.baseBet;
+
+    m_conditions.setBlocks(blocks);
+    m_conditions.setEnabled(condMode);
+    if (condModeChanged && condMode) {
+        m_conditions.reset(m_config); // fresh streaks / counters for the conditions
+    } else {
+        m_conditions.setBetBase(m_config);
+        m_conditions.setBaseBet(m_config.baseBet);
+    }
+
+    if (oddsEdited) {
+        if (m_runCfg.game == Game::Limbo)
+            emit logMessage(tr("Auto-bet updated: limbo target %1x.")
+                                .arg(m_runCfg.multiplierTarget, 0, 'f', 2),
+                            false);
+        else
+            emit logMessage(tr("Auto-bet updated: dice chance %1%, %2.")
+                                .arg(m_runCfg.chance(), 0, 'f', 2)
+                                .arg(m_runCfg.side == BetSide::Over ? tr("over") : tr("under")),
+                            false);
+    }
+    if (condModeChanged)
+        emit logMessage(condMode ? tr("Auto-bet updated: Condition Builder on.")
+                                 : tr("Auto-bet updated: Condition Builder off (on win / on loss rules)."),
+                        false);
+}
+
 void BotEngine::notifyGameChange()
 {
     if (m_runCfg.game == m_announcedGame)
