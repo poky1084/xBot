@@ -567,13 +567,7 @@ int l_checkTargetHit(lua_State *L)
     return 1;
 }
 
-// ding(): sound effect of the reference bot; accepted silently so its scripts run.
-int l_noop(lua_State *)
-{
-    return 0;
-}
-
-// beep(): plays the reference bot's bell tone (e.g. to signal a hit).
+// beep() / ding(): play the reference bot's bell tone (e.g. to signal a hit).
 int l_beep(lua_State *)
 {
     BeepSound::play();
@@ -638,11 +632,12 @@ void LuaStrategy::publishLastBet(const BetInfo &info)
     }
     // lastBet.roll / lastBet.Roll (the reference bot's spelling); video poker: the hand's
     // outcome ("twoPair", "onePair", "royalFlush", ...).
+    // Mines: the mine positions, keno: the drawn numbers (1-based tables).
+    const QJsonValue special = info.betJson.isEmpty() ? QJsonValue(QJsonValue::Undefined)
+                                                      : StakeGames::scriptRoll(info.game, info.betJson);
     for (const char *key : {"roll", "Roll"}) {
-        if (info.game == Game::VideoPoker) {
-            const QByteArray hand = info.betJson.value(QStringLiteral("state")).toObject()
-                                        .value(QStringLiteral("handResult")).toString().toUtf8();
-            lua_pushstring(m_L, hand.constData());
+        if (!special.isUndefined()) {
+            pushJson(m_L, special);
         } else {
             lua_pushnumber(m_L, info.roll);
         }
@@ -772,7 +767,7 @@ LuaStrategy::Status LuaStrategy::init(const QString &source, double balance,
     lua_setglobal(m_L, "vault");
     lua_pushcfunction(m_L, l_checkTargetHit);
     lua_setglobal(m_L, "checkTargetHit");
-    lua_pushcfunction(m_L, l_noop);
+    lua_pushcfunction(m_L, l_beep); // ding() plays the same tone as beep()
     lua_setglobal(m_L, "ding");
     lua_pushcfunction(m_L, l_beep);
     lua_setglobal(m_L, "beep");

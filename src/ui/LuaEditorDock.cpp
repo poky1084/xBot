@@ -1061,8 +1061,8 @@ void LuaEditorDock::onHelp()
         "losses, wagered, currentstreak, winstreak, losestreak, startbalance</code><br>"
         "<code>lastBet.amount, lastBet.roll (lastBet.Roll), lastBet.profit, lastBet.payout, "
         "lastBet.payoutMultiplier, lastBet.win, lastBet.id</code> – details of the last bet "
-        "(video poker: <code>lastBet.roll</code> / <code>lastBet.Roll</code> are the hand's outcome, e.g. "
-        "<code>\"twoPair\"</code>, <code>\"onePair\"</code>)<br>"
+        "(<code>lastBet.roll</code> / <code>lastBet.Roll</code>: video poker the hand's outcome, e.g. "
+        "<code>\"twoPair\"</code>; mines the mine positions, keno the drawn numbers, both 1-based lists)<br>"
         "<code>bet</code> – Stake's full bet object of the last bet (e.g. "
         "<code>bet.state.playerHand</code>); <code>checkTargetHit(hand, combos)</code> for video "
         "poker<br><br>"
@@ -1077,7 +1077,7 @@ void LuaEditorDock::onHelp()
         "in flight, the next bet waits for the server)<br>"
         "<code>vault(amount)</code> – deposit <code>amount</code> of the current currency into the vault, "
         "e.g. <code>vault(0.001)</code> (live mode)<br>"
-        "<code>beep()</code> – play a bell tone (the reference bot's beep, e.g. when a target hits)");
+        "<code>beep()</code> / <code>ding()</code> – play a bell tone (the reference bot's beep, e.g. when a target hits)");
 
     QString text = common;
     if (js) {

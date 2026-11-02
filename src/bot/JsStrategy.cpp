@@ -117,9 +117,9 @@ const char kPrelude[] = R"JS(
         log: out, info: out, debug: out, warn: out,
         error: function () { host.error(join(arguments)); }
     };
-    // beep(): plays the reference bot's bell tone. Its ding() is accepted silently.
+    // beep() / ding(): play the reference bot's bell tone.
     g.beep = function () { host.beep(); };
-    g.ding = function () {};
+    g.ding = function () { host.beep(); };
     // Hilo moves returned by round().
     g.HILO_BET_EQUAL = 2;
     g.HILO_SKIP = 7;
@@ -175,12 +175,13 @@ void JsStrategy::publishLastBet(const BetInfo &info)
 {
     QJSValue o = m_engine->newObject();
     o.setProperty(QStringLiteral("amount"), info.bet);
-    if (info.game == Game::VideoPoker) {
-        // Video poker: the hand's outcome ("twoPair", "onePair", "royalFlush", ...).
-        const QString hand = info.betJson.value(QStringLiteral("state")).toObject()
-                                 .value(QStringLiteral("handResult")).toString();
-        o.setProperty(QStringLiteral("roll"), hand);
-        o.setProperty(QStringLiteral("Roll"), hand);
+    const QJsonValue special = info.betJson.isEmpty() ? QJsonValue(QJsonValue::Undefined)
+                                                      : StakeGames::scriptRoll(info.game, info.betJson);
+    if (!special.isUndefined()) {
+        // Video poker: the hand ("twoPair"); mines: the mine positions; keno: the drawn
+        // numbers (1-based lists).
+        o.setProperty(QStringLiteral("roll"), toJs(special));
+        o.setProperty(QStringLiteral("Roll"), toJs(special));
     } else {
         o.setProperty(QStringLiteral("roll"), info.roll);
         o.setProperty(QStringLiteral("Roll"), info.roll); // the reference bot's spelling
@@ -193,6 +194,16 @@ void JsStrategy::publishLastBet(const BetInfo &info)
     o.setProperty(QStringLiteral("name"), info.betJson.value(QStringLiteral("user")).toObject()
                                               .value(QStringLiteral("name")).toString());
     m_engine->globalObject().setProperty(QStringLiteral("lastBet"), o);
+}
+
+QJSValue JsStrategy::toJs(const QJsonValue &value)
+{
+    QJsonArray wrap;
+    wrap.append(value);
+    const QString text = QString::fromUtf8(QJsonDocument(wrap).toJson(QJsonDocument::Compact));
+    QJSValue parse = m_engine->globalObject().property(QStringLiteral("JSON")).property(QStringLiteral("parse"));
+    const QJSValue arr = parse.call({QJSValue(text)});
+    return arr.isError() ? QJSValue() : arr.property(0);
 }
 
 void JsStrategy::publishJson(const char *name, const QJsonValue &value)

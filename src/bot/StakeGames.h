@@ -135,6 +135,11 @@ bool nextAction(Game game, const QJsonObject &bet, const QJsonObject &params,
                 const QJsonValue &scriptChoice, int fallbackLevel, Action *out, QString *error);
 
 // ---- results ---------------------------------------------------------------------------
+// Code mode: what lastBet.roll / lastBet.Roll hold for `game` when it is not the numeric roll:
+// video poker the hand's outcome ("twoPair"), mines the mine positions and keno the drawn
+// numbers (both 1-based, like the inputs). Undefined = use the numeric roll.
+QJsonValue scriptRoll(Game game, const QJsonObject &bet);
+
 struct Summary
 {
     double roll = 0.0;   // numeric "roll" (scripts' lastBet.Roll / roll)

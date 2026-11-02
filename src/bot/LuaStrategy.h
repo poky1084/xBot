@@ -57,7 +57,7 @@ struct lua_State;
 //         bet            Stake's bet object of the last bet (bet.state.playerHand, ...)
 //         HILO_BET_HIGH (5), HILO_BET_LOW (4), HILO_BET_EQUAL (2), HILO_SKIP (7), HILO_CASHOUT (3)
 //         checkTargetHit(hand, combos)  video poker: label of the first combo the hand holds
-//         beep()         plays the reference bot's bell tone
+//         beep(), ding() play the reference bot's bell tone
 //
 //   * Functions: stop([reason]), print(...) / log(...), os.time(), os.clock(),
 //         resetstats()   resets the session statistics (bets, wins, losses, wagered,

@@ -395,7 +395,7 @@ You can also create your own variables (e.g. `basebet`); they persist between `d
 | `previousbet` | Amount of the last bet |
 | `lastprofit`, `currentprofit` | Profit of the last bet (negative on a loss) |
 | `roll` | Roll of the last bet (in limbo: the result multiplier; in Stake's other games: see the per-game table) |
-| `lastBet.amount`, `lastBet.roll` (also `lastBet.Roll`), `lastBet.profit`, `lastBet.payout`, `lastBet.payoutMultiplier`, `lastBet.win`, `lastBet.id`, `lastBet.name` | Details of the last bet. Video poker: `lastBet.roll` / `lastBet.Roll` are the hand's outcome, e.g. `"twoPair"`. |
+| `lastBet.amount`, `lastBet.roll` (also `lastBet.Roll`), `lastBet.profit`, `lastBet.payout`, `lastBet.payoutMultiplier`, `lastBet.win`, `lastBet.id`, `lastBet.name` | Details of the last bet. Video poker: `lastBet.roll` / `lastBet.Roll` are the hand's outcome, e.g. `"twoPair"`; mines: the mine positions; keno: the drawn numbers (both 1-based lists). |
 | `bet` | Stake's full bet object of the last bet (e.g. `bet.payoutMultiplier`, `bet.state.playerHand`, `bet.state.drawnNumbers`). Positions inside it are Stake's own, 0-based. Empty in simulation. |
 | `balance` | Current balance |
 | `profit` | Profit of this run so far |
@@ -417,8 +417,7 @@ You can also create your own variables (e.g. `basebet`); they persist between `d
 | `resetseed([clientseed])` | Rotates the seed pair, e.g. `resetseed("123xcv123")`. Without an argument, a random 10-character client seed is used. Safe to call at any time: in live mode it waits for a bet in flight, and the next bet waits for the server. See *Seeds* under [Supported casinos](#supported-casinos) for what each casino supports (on Winna, xBot reads the active seed first and then rotates it). |
 | `vault(amount)` | Deposits `amount` of the current currency into the vault, e.g. `vault(0.001)`. Live mode only; supported on **Stake, Shuffle, Goated and Winna**. Winna has a minimum deposit (1 USD); a refused deposit shows the site's message in the log. |
 | `os.time()`, `os.clock()` | Lua only: Unix time in seconds, and CPU time |
-| `beep()` | Plays a bell tone (the reference bot's beep), e.g. when a target hits |
-| `ding()` | Accepted so reference-bot scripts run; plays nothing |
+| `beep()`, `ding()` | Play a bell tone (the reference bot's beep), e.g. when a target hits |
 | `round()` | You define it (hilo and blackjack only); called for every move of an open game, see below |
 | `checkTargetHit(hand, combos)` | Video poker: the label of the first combo the hand contains (`"3xA + 2xK"`), else `nil` / `null`. Lua and JavaScript. |
 | `getOptimalHold(hand)`, `getTargetedHold(hand, combos)`, `evaluateHand(hand)` | JavaScript only: the video poker strategy helpers. The first two return `{hold, reason}`. |
@@ -514,10 +513,10 @@ Besides dice and limbo, scripts can play Stake's own games. Set `game` to one of
 - **Positions are 1-based** (1 = the first tile / egg / hole); xBot subtracts 1 before sending them to Stake. The `bet` object you get back still holds Stake's 0-based numbers.
 - **Results:** `win` is true when the payout multiplier is ≥ 1x. `roll` / `lastBet.roll` hold the value in the *Roll* column below; the full result is always in `bet`.
 
-| `game` | Variables the script must set (besides `nextbet`) | `roll` / bet list |
+| `game` | Variables the script must set (besides `nextbet`) | `roll` / `lastBet.roll` / bet list |
 |---|---|---|
-| `"keno"` | `numbers` — 1 to 10 numbers, 1–40 (duplicates and out-of-range numbers are skipped) · `risk` — `"low"`, `"classic"`, `"medium"` or `"high"` | Number of hits |
-| `"mines"` | `fields` — tiles to reveal, 1 (top-left) – 25 (bottom-right), row by row · `mines` — mines count 1–24. A game left open is cashed out. | Payout multiplier (Roll column: `safe` or `mine N`) |
+| `"keno"` | `numbers` — 1 to 10 numbers, 1–40 (duplicates and out-of-range numbers are skipped) · `risk` — `"low"`, `"classic"`, `"medium"` or `"high"` | `roll` = number of hits · `lastBet.roll` = the drawn numbers, 1-based, e.g. `{3, 17, 22, …}` |
+| `"mines"` | `fields` — tiles to reveal, 1 (top-left) – 25 (bottom-right), row by row · `mines` — mines count 1–24. A game left open is cashed out. | `roll` = payout multiplier · `lastBet.roll` = the mine positions, 1-based, e.g. `{4, 12, 25}` (Roll column: `safe` or `mine N`) |
 | `"plinko"` | `rows` — 8–16 · `risk` — `"low"`, `"medium"`, `"high"` or `"expert"` | Payout multiplier |
 | `"wheel"` | `segments` — 10, 20, 30, 40 or 50 · `risk` — `"low"`, `"medium"` or `"high"` | Result segment |
 | `"hilo"` | `startcard` — `{rank = "A", suit = "H"}` (Lua) / `{rank: "A", suit: "H"}` (JS), or text such as `"A"`, `"KH"`, `"10S"` · a `round()` function that decides every move (see below) | Payout multiplier (Target column: the cards) |

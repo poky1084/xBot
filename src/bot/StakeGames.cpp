@@ -1525,6 +1525,27 @@ bool nextAction(Game game, const QJsonObject &bet, const QJsonObject &params,
     return true;
 }
 
+QJsonValue scriptRoll(Game game, const QJsonObject &bet)
+{
+    const QJsonObject st = stateOf(bet);
+    auto oneBased = [](const QJsonValue &v) {
+        QJsonArray out;
+        for (const QJsonValue &n : v.toArray())
+            out.append(n.toInt() + 1);
+        return out;
+    };
+    switch (game) {
+    case Game::VideoPoker:
+        return st.value(QStringLiteral("handResult")).toString();
+    case Game::Mines:
+        return oneBased(st.value(QStringLiteral("mines")));        // 1 (top-left) .. 25
+    case Game::Keno:
+        return oneBased(st.value(QStringLiteral("drawnNumbers"))); // 1 .. 40
+    default:
+        return QJsonValue(QJsonValue::Undefined);
+    }
+}
+
 Summary summarize(Game game, const QJsonObject &bet, const QJsonObject &params)
 {
     Summary s;

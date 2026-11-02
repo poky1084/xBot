@@ -130,6 +130,7 @@ private:
     void publishBool(const char *name, bool value);
     void publishLastBet(const BetInfo &info);
     void publishJson(const char *name, const QJsonValue &value);
+    QJSValue toJs(const QJsonValue &value); // JSON -> script value
     // The script value of global `name` as JSON (undefined when it is not set).
     QJsonValue readJson(const char *name);
 
