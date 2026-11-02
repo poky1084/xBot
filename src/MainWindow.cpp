@@ -1677,9 +1677,6 @@ void MainWindow::onCasinoSelected(LiveSettings::Casino casino)
     // The session (history, balance graph, stats) is kept when the casino changes.
     applyLiveSettings(next);
     updateCasinoMenu();
-    onLogMessage(tr("Casino: %1 — open Tools → Options to enter its credentials and log in.")
-                     .arg(casinoDisplayName(casino)),
-                 false);
 }
 
 void MainWindow::closeHiddenBrowser()
