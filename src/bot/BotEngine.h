@@ -104,9 +104,10 @@ public:
     // result arrives through betPlaced().
     BetRecord rollOnce(const BotConfig &cfg);
 
-    // Manual hilo (Manual Bet tab buttons, like the C# bot): a manual hilo bet is not played
-    // through automatically - it stays open and each move is sent with manualGameMove():
-    // "high", "low", "equal", "skip" or "cashout". manualGameUpdated() reports every state.
+    // Manual hilo / blackjack (Manual Bet tab buttons): a manual bet of these games is not
+    // played through automatically - it stays open and each move is sent with manualGameMove():
+    // hilo "high", "low", "equal", "skip", "cashout"; blackjack "hit", "stand", "double",
+    // "split", "insurance", "noInsurance". manualGameUpdated() reports every state.
     bool manualGameOpen() const { return m_manualGameOpen; }
     void manualGameMove(const QString &move);
 
@@ -172,7 +173,7 @@ signals:
     void vaultRequested(double amount);
     // Manual hilo round: the bet as last reported; active = waiting for the next move.
     void manualGameUpdated(Game game, const QJsonObject &bet, bool active);
-    // A hilo round of an auto-bet / script run (only shown: it is played by the engine).
+    // A hilo / blackjack round of an auto-bet / script run (only shown: the engine plays it).
     void autoGameUpdated(Game game, const QJsonObject &bet, bool active);
 
 private slots:
@@ -287,6 +288,7 @@ private:
     QString m_inFlightCasino; // casino the bet in flight was sent to (its row shows this one)
     // Manual hilo round waiting for a button (see manualGameMove()).
     bool m_manualGameOpen = false;
+    Game m_manualGame = Game::Hilo;
     BotConfig m_manualGameCfg;
     QJsonObject m_manualGameBet;
     double m_manualGameAmount = 0.0;

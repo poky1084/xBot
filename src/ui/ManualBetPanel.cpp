@@ -67,7 +67,185 @@ QString suitSymbol(const QString &suit)
     default:  return suit;
     }
 }
+
+// Draws one playing card (white face, rank top-left, big suit symbol) or its back.
+void drawPlayingCard(QPainter &p, const QFont &base, const QRectF &card, const QString &rank,
+                     const QString &suit, const QColor &border, qreal borderWidth, bool faceDown,
+                     double scale = 1.0)
+{
+    QPainterPath path;
+    path.addRoundedRect(card, 6, 6);
+    if (faceDown) {
+        p.fillPath(path, QColor(0x1e, 0x3a, 0x8a));
+        QPainterPath inner;
+        const qreal in = 5 * scale;
+        inner.addRoundedRect(card.adjusted(in, in, -in, -in), 4, 4);
+        p.setPen(QPen(QColor(0x93, 0xc5, 0xfd), 1.5));
+        p.drawPath(inner);
+        p.setPen(QPen(border, borderWidth));
+        p.drawPath(path);
+        return;
+    }
+    p.fillPath(path, Qt::white);
+    p.setPen(QPen(border, borderWidth));
+    p.drawPath(path);
+    const bool red = suit.compare(QLatin1String("H"), Qt::CaseInsensitive) == 0
+                  || suit.compare(QLatin1String("D"), Qt::CaseInsensitive) == 0;
+    p.setPen(red ? QColor(0xe5, 0x39, 0x35) : QColor(0x1e, 0x1e, 0x1e));
+    QFont rankFont = base;
+    rankFont.setPixelSize(qRound(17 * scale));
+    rankFont.setBold(true);
+    p.setFont(rankFont);
+    p.drawText(card.adjusted(6 * scale, 3 * scale, -4 * scale, 0), Qt::AlignLeft | Qt::AlignTop, rank);
+    QFont suitFont = base;
+    suitFont.setPixelSize(qRound(30 * scale));
+    p.setFont(suitFont);
+    p.drawText(card.adjusted(0, 16 * scale, 0, 0), Qt::AlignCenter, suitSymbol(suit));
+}
 } // namespace
+
+// The blackjack table, in one row: the dealer's cards, then the player's hand(s) next to
+// them (side by side after a split), each with its title ("Dealer 17", "Hand 1  19").
+class BlackjackTable : public QWidget
+{
+public:
+    struct Hand
+    {
+        QString title;
+        QVector<QPair<QString, QString>> cards; // rank, suit
+        QString actions;         // "deal, hit, stand" (the hand's past decisions, as index.js)
+        bool hiddenCard = false; // dealer: a face-down card after the visible one
+        bool current = false;    // the hand the next move is for
+        int outcome = 0;         // 1 won, -1 lost, 2 push, 0 open / unknown
+    };
+
+    explicit BlackjackTable(QWidget *parent = nullptr) : QWidget(parent) { updateSize(); }
+
+    void setRound(const Hand &dealer, const QVector<Hand> &hands)
+    {
+        m_dealer = dealer;
+        m_hands = hands;
+        m_empty = false;
+        updateSize();
+        update();
+    }
+    void clearHighlights()
+    {
+        for (Hand &h : m_hands)
+            h.current = false;
+        update();
+    }
+
+    QSize sizeHint() const override
+    {
+        const int h = kMargin * 2 + kTitleH + cardH() + kActionsH;
+        if (m_empty)
+            return {220, h};
+        int w = groupWidth(m_dealer);
+        for (int i = 0; i < m_hands.size(); ++i) {
+            const int gw = groupWidth(m_hands.at(i));
+            // The last hand's "Actions: ..." line may run past its cards.
+            w += (i == 0 ? kDealerGap : kGroupGap) + (i == m_hands.size() - 1 ? std::max(gw, 170) : gw);
+        }
+        return {kMargin * 2 + std::max(220, w), h};
+    }
+    QSize minimumSizeHint() const override { return sizeHint(); }
+
+protected:
+    void paintEvent(QPaintEvent *) override
+    {
+        QPainter p(this);
+        p.setRenderHint(QPainter::Antialiasing);
+        if (m_empty) {
+            QFont f = font();
+            f.setPixelSize(12);
+            p.setFont(f);
+            p.setPen(QColor(0x73, 0x73, 0x73));
+            p.drawText(rect(), Qt::AlignCenter, QObject::tr("Press Bet Blackjack to deal."));
+            return;
+        }
+        // Each group's "Actions:" line may use the gap after it; the last one the rest.
+        drawGroup(p, m_dealer, kMargin, kMargin, groupWidth(m_dealer) + kDealerGap - 6);
+        int x = kMargin + groupWidth(m_dealer);
+        for (int i = 0; i < m_hands.size(); ++i) {
+            x += i == 0 ? kDealerGap : kGroupGap;
+            const bool last = i == m_hands.size() - 1;
+            const int gw = groupWidth(m_hands.at(i));
+            drawGroup(p, m_hands.at(i), x, kMargin, last ? width() - x - kMargin : gw + kGroupGap - 6);
+            x += gw;
+        }
+    }
+
+private:
+    int groupWidth(const Hand &h) const
+    {
+        const int n = int(h.cards.size()) + (h.hiddenCard ? 1 : 0);
+        return n <= 0 ? cardW() : n * cardW() + (n - 1) * gap();
+    }
+
+    void drawGroup(QPainter &p, const Hand &h, int x, int y, int textWidth) const
+    {
+        const QColor text = palette().color(QPalette::WindowText);
+        QColor accent;
+        switch (h.outcome) {
+        case 1:  accent = QColor(0x2e, 0x9e, 0x46); break;
+        case -1: accent = QColor(0xc9, 0x37, 0x2a); break;
+        case 2:  accent = QColor(0x9e, 0x9e, 0x9e); break;
+        default: accent = h.current ? QColor(0x1e, 0x88, 0xe5) : QColor(); break;
+        }
+        QFont titleFont = font();
+        titleFont.setPixelSize(12);
+        titleFont.setBold(true);
+        p.setFont(titleFont);
+        p.setPen(accent.isValid() ? accent : text);
+        p.drawText(QRectF(x, y, std::max(groupWidth(h), 110), kTitleH - 2),
+                   Qt::AlignLeft | Qt::AlignVCenter, h.title);
+        const QColor border = accent.isValid() ? accent : QColor(0xc8, 0xc8, 0xc8);
+        const qreal width = accent.isValid() ? 2.5 : 1.0;
+        int cx = x;
+        for (const auto &c : h.cards) {
+            drawPlayingCard(p, font(), QRectF(cx + 0.5, y + kTitleH + 0.5, cardW() - 1, cardH() - 1),
+                            c.first, c.second, border, width, false, scale());
+            cx += cardW() + gap();
+        }
+        if (h.hiddenCard)
+            drawPlayingCard(p, font(), QRectF(cx + 0.5, y + kTitleH + 0.5, cardW() - 1, cardH() - 1),
+                            {}, {}, QColor(0xc8, 0xc8, 0xc8), 1.0, true, scale());
+        if (!h.actions.isEmpty()) {
+            QFont actFont = font();
+            actFont.setPixelSize(11);
+            p.setFont(actFont);
+            p.setPen(QColor(0x9a, 0x9a, 0x9a));
+            p.drawText(QRectF(x, y + kTitleH + cardH() + 3, std::max(textWidth, cardW()), kActionsH - 3),
+                       Qt::AlignLeft | Qt::AlignTop | Qt::TextWordWrap,
+                       QObject::tr("Actions: %1").arg(h.actions));
+        }
+    }
+
+    void updateSize()
+    {
+        setMinimumSize(sizeHint());
+        updateGeometry();
+    }
+
+    // Full-size cards; after a split (two hands) they are drawn at kSplitScale.
+    static constexpr int kCardW = 54;
+    static constexpr int kCardH = 76;
+    static constexpr int kGap = 8;
+    static constexpr double kSplitScale = 0.72;
+    double scale() const { return m_hands.size() > 1 ? kSplitScale : 1.0; }
+    int cardW() const { return qRound(kCardW * scale()); }
+    int cardH() const { return qRound(kCardH * scale()); }
+    int gap() const { return qRound(kGap * scale()); }
+    static constexpr int kGroupGap = 24;  // between split hands
+    static constexpr int kDealerGap = 40; // between the dealer and the player
+    static constexpr int kTitleH = 20;
+    static constexpr int kActionsH = 32; // up to two lines of "Actions: ..."
+    static constexpr int kMargin = 4;
+    Hand m_dealer;
+    QVector<Hand> m_hands;
+    bool m_empty = true;
+};
 
 // The hilo card showcase: the start card and every card drawn since, each with the guess
 // and the running multiplier under it (the C# bot's lvHiloCards strip).
@@ -285,7 +463,43 @@ ManualBetPanel::ManualBetPanel(QWidget *parent)
     }
     m_hiloBox->setVisible(false);
 
+    // Blackjack: play the hand by hand (one row, like Stake), insurance row when needed.
+    m_bjBox = new QWidget;
+    {
+        auto *col = new QVBoxLayout(m_bjBox);
+        col->setContentsMargins(0, 0, 0, 0);
+        col->setSpacing(4);
+        const auto makeBtn = [this](const QString &text, const QString &move) {
+            auto *b = new QPushButton(text);
+            b->setObjectName(QStringLiteral("amountBtn"));
+            b->setMinimumHeight(30);
+            connect(b, &QPushButton::clicked, this, [this, move] { emit blackjackMoveRequested(move); });
+            return b;
+        };
+        auto *row = new QHBoxLayout;
+        row->setSpacing(4);
+        m_bjHit = makeBtn(tr("Hit"), QStringLiteral("hit"));
+        m_bjStand = makeBtn(tr("Stand"), QStringLiteral("stand"));
+        m_bjSplit = makeBtn(tr("Split"), QStringLiteral("split"));
+        m_bjDouble = makeBtn(tr("Double"), QStringLiteral("double"));
+        for (QPushButton *b : {m_bjHit, m_bjStand, m_bjSplit, m_bjDouble})
+            row->addWidget(b, 1);
+        col->addLayout(row);
+        m_bjInsRow = new QWidget;
+        auto *ins = new QHBoxLayout(m_bjInsRow);
+        ins->setContentsMargins(0, 0, 0, 0);
+        ins->setSpacing(4);
+        m_bjInsurance = makeBtn(tr("Insurance"), QStringLiteral("insurance"));
+        m_bjNoInsurance = makeBtn(tr("No insurance"), QStringLiteral("noInsurance"));
+        ins->addWidget(m_bjInsurance, 1);
+        ins->addWidget(m_bjNoInsurance, 1);
+        m_bjInsRow->setVisible(false);
+        col->addWidget(m_bjInsRow);
+    }
+    m_bjBox->setVisible(false);
+
     left->addLayout(form);
+    left->addWidget(m_bjBox); // right under the bet amount
     left->addWidget(m_params);
     left->addWidget(m_hiloBox);
     left->addWidget(m_rollBtn);
@@ -343,6 +557,23 @@ ManualBetPanel::ManualBetPanel(QWidget *parent)
     m_hiloStatus->setStyleSheet(QStringLiteral("color:#737373;"));
     m_hiloStatus->setVisible(false);
     right->addWidget(m_hiloStatus);
+
+    // Blackjack table (dealer on top, the hand(s) below).
+    m_bjTable = new BlackjackTable;
+    m_bjScroll = new QScrollArea;
+    m_bjScroll->setWidget(m_bjTable);
+    m_bjScroll->setWidgetResizable(true);
+    m_bjScroll->setFrameShape(QFrame::NoFrame);
+    m_bjScroll->setVerticalScrollBarPolicy(Qt::ScrollBarAlwaysOff);
+    m_bjScroll->setHorizontalScrollBarPolicy(Qt::ScrollBarAsNeeded);
+    m_bjScroll->setFixedHeight(m_bjTable->sizeHint().height()
+                               + m_bjScroll->horizontalScrollBar()->sizeHint().height() + 2);
+    m_bjScroll->setVisible(false);
+    right->addWidget(m_bjScroll);
+    m_bjStatus = new QLabel;
+    m_bjStatus->setStyleSheet(QStringLiteral("color:#737373;"));
+    m_bjStatus->setVisible(false);
+    right->addWidget(m_bjStatus);
 
     m_lastResult = new QLabel(tr("—"));
     QFont big = m_lastResult->font();
@@ -467,7 +698,18 @@ void ManualBetPanel::applyGameLayout()
     m_hiloBox->setVisible(hilo);
     m_hiloScroll->setVisible(hilo);
     m_hiloStatus->setVisible(hilo && !m_hiloStatus->text().isEmpty());
+    const bool blackjack = m_game == Game::Blackjack;
+    m_bjBox->setVisible(blackjack);
+    m_bjScroll->setVisible(blackjack);
+    m_bjStatus->setVisible(blackjack && !m_bjStatus->text().isEmpty());
+    // Blackjack's "actions handled by bot logic" note is for auto-bets; here the buttons play.
+    QStringList hidden = {QStringLiteral("suitMode"), QStringLiteral("hiloPattern")};
+    if (blackjack)
+        hidden << QStringLiteral("note");
+    m_params->setHiddenKeys(hidden);
+    m_params->setVisible(other && m_params->hasFields());
     updateHiloButtons();
+    updateBlackjackButtons();
     updateResultStyle();
 
     m_multiplierSpin->blockSignals(true);
@@ -515,6 +757,130 @@ void ManualBetPanel::setLocked(bool locked)
     m_rollBtn->setEnabled(!locked);
     m_locked = locked;
     updateHiloButtons();
+    updateBlackjackButtons();
+}
+
+void ManualBetPanel::updateBlackjackButtons()
+{
+    const bool play = m_bjActive && !m_locked;
+    m_bjInsRow->setVisible(m_bjActive && m_bjInsurance_);
+    m_bjInsurance->setEnabled(play && m_bjInsurance_);
+    m_bjNoInsurance->setEnabled(play && m_bjInsurance_);
+    const bool moves = play && !m_bjInsurance_; // insurance is decided first
+    m_bjHit->setEnabled(moves);
+    m_bjStand->setEnabled(moves);
+    m_bjSplit->setEnabled(moves && m_bjCanSplit);
+    m_bjDouble->setEnabled(moves && m_bjCanDouble);
+    // A hand is open: finish it before dealing the next one.
+    m_rollBtn->setEnabled(!m_locked && !(m_game == Game::Blackjack && m_bjActive));
+}
+
+namespace
+{
+bool bjHasAction(const QJsonObject &hand, const char *action)
+{
+    for (const QJsonValue &a : hand.value(QStringLiteral("actions")).toArray())
+        if (a.toString() == QLatin1String(action))
+            return true;
+    return false;
+}
+
+bool bjHandDone(const QJsonObject &hand)
+{
+    return bjHasAction(hand, "stand") || bjHasAction(hand, "bust") || bjHasAction(hand, "full")
+        || bjHasAction(hand, "double") || bjHasAction(hand, "blackjack");
+}
+} // namespace
+
+void ManualBetPanel::showBlackjackRound(const QJsonObject &bet, bool active, bool playable)
+{
+    m_bjActive = active && playable;
+    if (bet.isEmpty()) {
+        m_bjTable->clearHighlights();
+        m_bjStatus->clear();
+        m_bjStatus->setVisible(false);
+        m_bjInsurance_ = m_bjCanSplit = m_bjCanDouble = false;
+        updateBlackjackButtons();
+        return;
+    }
+    const QJsonObject state = bet.value(QStringLiteral("state")).toObject();
+    const QJsonArray dealerHands = state.value(QStringLiteral("dealer")).toArray();
+    const QJsonArray playerHands = state.value(QStringLiteral("player")).toArray();
+    const auto cardsOf = [](const QJsonObject &hand) {
+        QVector<QPair<QString, QString>> out;
+        for (const QJsonValue &c : hand.value(QStringLiteral("cards")).toArray()) {
+            const QJsonObject o = c.toObject();
+            out.append({o.value(QStringLiteral("rank")).toString(), o.value(QStringLiteral("suit")).toString()});
+        }
+        return out;
+    };
+    const auto actionsText = [](const QJsonObject &hand) {
+        QStringList list;
+        for (const QJsonValue &a : hand.value(QStringLiteral("actions")).toArray())
+            list << a.toString();
+        return list.join(QStringLiteral(", "));
+    };
+    const auto valueText = [](const QJsonObject &hand) {
+        const QJsonValue v = hand.value(QStringLiteral("value"));
+        return v.isDouble() ? QString::number(v.toInt()) : v.toString();
+    };
+
+    BlackjackTable::Hand dealer;
+    const QJsonObject dealerHand = dealerHands.isEmpty() ? QJsonObject() : dealerHands.first().toObject();
+    dealer.cards = cardsOf(dealerHand);
+    dealer.actions = actionsText(dealerHand);
+    dealer.hiddenCard = active && dealer.cards.size() == 1; // the hole card is still face down
+    dealer.title = dealer.cards.isEmpty() ? tr("Dealer") : tr("Dealer  %1").arg(valueText(dealerHand));
+    const int dealerValue = dealerHand.value(QStringLiteral("value")).toInt();
+
+    QVector<BlackjackTable::Hand> hands;
+    int current = -1;
+    for (int i = 0; i < playerHands.size(); ++i) {
+        const QJsonObject h = playerHands.at(i).toObject();
+        BlackjackTable::Hand hand;
+        hand.cards = cardsOf(h);
+        hand.actions = actionsText(h);
+        const QString name = playerHands.size() > 1 ? tr("Hand %1").arg(i + 1) : tr("Player");
+        hand.title = QStringLiteral("%1  %2").arg(name, valueText(h));
+        if (active && current < 0 && !bjHandDone(h))
+            current = i;
+        if (!active) {
+            const int v = h.value(QStringLiteral("value")).toInt();
+            if (v > 21)
+                hand.outcome = -1;
+            else if (bjHasAction(h, "blackjack") && !(dealerValue == 21 && dealer.cards.size() == 2))
+                hand.outcome = 1;
+            else if (dealerValue > 21 || v > dealerValue)
+                hand.outcome = 1;
+            else if (v == dealerValue)
+                hand.outcome = 2;
+            else
+                hand.outcome = -1;
+        }
+        hands.append(hand);
+    }
+    if (current >= 0 && hands.size() > 1)
+        hands[current].current = true;
+    else if (current >= 0)
+        hands[current].current = playable; // one hand: blue frame while it is your move
+    m_bjTable->setRound(dealer, hands);
+
+    // What the buttons may do now.
+    const QJsonObject first = playerHands.isEmpty() ? QJsonObject() : playerHands.first().toObject();
+    const bool dealerAce = !dealer.cards.isEmpty() && dealer.cards.first().first == QLatin1String("A");
+    m_bjInsurance_ = active && dealerAce && !bjHasAction(first, "insurance")
+                     && !bjHasAction(first, "noInsurance");
+    const QJsonObject cur = current >= 0 ? playerHands.at(current).toObject() : QJsonObject();
+    const QJsonArray curCards = cur.value(QStringLiteral("cards")).toArray();
+    m_bjCanDouble = active && curCards.size() == 2;
+    m_bjCanSplit = active && playerHands.size() == 1 && curCards.size() == 2
+                   && curCards.at(0).toObject().value(QStringLiteral("rank"))
+                          == curCards.at(1).toObject().value(QStringLiteral("rank"));
+
+    // The past decisions show under each hand ("Actions: deal, hit"); no status line.
+    m_bjStatus->clear();
+    m_bjStatus->setVisible(false);
+    updateBlackjackButtons();
 }
 
 void ManualBetPanel::updateHiloButtons()

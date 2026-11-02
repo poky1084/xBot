@@ -197,9 +197,10 @@ void BotEngine::onLiveFinished(const LiveBetResult &result)
     LiveBetResult r = result;
     if (!isDiceOrLimbo(m_inFlightCfg.game) && m_live) {
         const Game game = m_inFlightCfg.game;
-        if (r.ok && r.active && m_inFlightManual && game == Game::Hilo) {
-            // Manual hilo: wait for the Manual Bet tab's buttons instead of playing on.
+        if (r.ok && r.active && m_inFlightManual && (game == Game::Hilo || game == Game::Blackjack)) {
+            // Manual hilo / blackjack: wait for the Manual Bet tab's buttons instead of playing on.
             m_manualGameOpen = true;
+            m_manualGame = game;
             m_manualGameCfg = m_inFlightCfg;
             m_manualGameBet = r.bet;
             m_manualGameAmount = r.amount > 0.0 ? r.amount : m_gameAmount;
@@ -211,7 +212,7 @@ void BotEngine::onLiveFinished(const LiveBetResult &result)
         if (r.ok && r.active) {
             // Not settled yet (hilo / blackjack / video poker / bonus spins): next move. The bet
             // stays "in flight" until the casino reports it finished.
-            if (game == Game::Hilo && !m_inFlightManual)
+            if ((game == Game::Hilo || game == Game::Blackjack) && !m_inFlightManual)
                 emit autoGameUpdated(game, r.bet, true); // the Manual tab's card showcase
             QString err;
             if (continueGame(r, &err))
@@ -221,7 +222,7 @@ void BotEngine::onLiveFinished(const LiveBetResult &result)
             r.error = tr("%1: %2 - the game is still open on Stake, finish it there or start again "
                          "to continue it").arg(gameDisplayName(game), err);
         } else if (!r.ok && m_gameSteps > 0) {
-            if (game == Game::Blackjack && m_gameFallback < 2
+            if (game == Game::Blackjack && !m_inFlightManual && m_gameFallback < 2
                 && (r.errorType.contains(QLatin1String("InvalidAction"), Qt::CaseInsensitive)
                     || r.error.contains(QLatin1String("invalid action"), Qt::CaseInsensitive))) {
                 // The move was not allowed (e.g. insurance already decided): like the reference
@@ -267,14 +268,14 @@ void BotEngine::onLiveFinished(const LiveBetResult &result)
         if (!(r.retryNow && r.retryable && !manual && m_running))
             emit logMessage(tr("Bet failed: %1").arg(r.error), true);
         flushPauseLog(); // no bet was recorded: the numbers are final
-        if (manual && m_manualGameOpen && cfg.game == Game::Hilo) {
+        if (manual && m_manualGameOpen && cfg.game == m_manualGame) {
             // The round is gone on Stake (expired / finished elsewhere): close it here too;
             // otherwise it stays open for another move (e.g. cash out before any guess).
             if (r.errorType.contains(QLatin1String("notFound"), Qt::CaseInsensitive)
                 || r.error.contains(QLatin1String("not found"), Qt::CaseInsensitive))
                 closeManualGame(m_manualGameBet);
             else
-                emit manualGameUpdated(Game::Hilo, m_manualGameBet, true);
+                emit manualGameUpdated(m_manualGame, m_manualGameBet, true);
         }
         if (manual || !m_running) {
             flushStopLog();
@@ -317,10 +318,12 @@ void BotEngine::onLiveFinished(const LiveBetResult &result)
     const BetRecord rec = recordBet(cfg, r.amount, r.roll, r.win, r.multiplier, r.payout,
                                     r.nonce, r.betId, betCasino, casinoTarget, r.targetText,
                                     r.rollText);
-    if (manual && cfg.game == Game::Hilo)
-        closeManualGame(r.bet.isEmpty() ? m_manualGameBet : r.bet); // busted or cashed out
-    else if (cfg.game == Game::Hilo && !r.bet.isEmpty())
+    if (manual && (cfg.game == Game::Hilo || cfg.game == Game::Blackjack)) {
+        m_manualGame = cfg.game;
+        closeManualGame(r.bet.isEmpty() ? m_manualGameBet : r.bet); // settled
+    } else if ((cfg.game == Game::Hilo || cfg.game == Game::Blackjack) && !r.bet.isEmpty()) {
         emit autoGameUpdated(cfg.game, r.bet, false);
+    }
     flushPauseLog(); // a pause that came while this bet was in flight: now the numbers are final
     flushStopLog(); // a stop that came while this bet was in flight: now the numbers are final
 
@@ -437,30 +440,56 @@ void BotEngine::closeManualGame(QJsonObject bet)
     m_manualGameOpen = false;
     m_manualGameBet = QJsonObject();
     if (wasOpen || !bet.isEmpty())
-        emit manualGameUpdated(Game::Hilo, bet, false);
+        emit manualGameUpdated(m_manualGame, bet, false);
 }
 
 void BotEngine::manualGameMove(const QString &move)
 {
+    const QString gameLabel = gameDisplayName(m_manualGame);
     if (m_running) {
-        emit logMessage(tr("Hilo: stop the auto-bet before playing manually."), true);
+        emit logMessage(tr("%1: stop the auto-bet before playing manually.").arg(gameLabel), true);
         return;
     }
     if (!m_manualGameOpen) {
-        emit logMessage(tr("Hilo: no round is open - press New Game first."), true);
+        emit logMessage(tr("No round is open - start one with the bet button first."), true);
         return;
     }
     if (m_inFlight)
         return; // the previous move is still on its way
     if (!liveMode()) {
-        emit logMessage(tr("Hilo: manual play needs live mode."), true);
+        emit logMessage(tr("%1: manual play needs live mode.").arg(gameLabel), true);
         return;
     }
     const QString casino = m_casinoGetter ? m_casinoGetter().trimmed().toLower() : QString();
     if (!m_manualGameCasino.isEmpty() && casino != m_manualGameCasino) {
-        emit logMessage(tr("Hilo: the round is open on %1 - switch back to it to play on.")
-                            .arg(casinoLabel(m_manualGameCasino)),
+        emit logMessage(tr("%1: the round is open on %2 - switch back to it to play on.")
+                            .arg(gameLabel, casinoLabel(m_manualGameCasino)),
                         true);
+        return;
+    }
+
+    if (m_manualGame == Game::Blackjack) {
+        static const QStringList moves = {QStringLiteral("hit"), QStringLiteral("stand"),
+                                          QStringLiteral("double"), QStringLiteral("split"),
+                                          QStringLiteral("insurance"), QStringLiteral("noInsurance")};
+        if (!moves.contains(move)) {
+            emit logMessage(tr("Blackjack: unknown move \"%1\".").arg(move), true);
+            return;
+        }
+        m_inFlight = true;
+        m_inFlightManual = true;
+        m_inFlightCfg = m_manualGameCfg;
+        m_inFlightCasino = m_manualGameCasino;
+        m_gameBet = m_manualGameBet;
+        m_gameAmount = m_manualGameAmount;
+        m_gameSteps = 1;
+        m_gameFallback = 0;
+        m_gameChoice = move; // StakeGames::nextAction() turns it into the blackjack action
+        QString err;
+        if (!sendGameStep(&err)) {
+            m_inFlight = false;
+            emit logMessage(tr("Blackjack: %1").arg(err), true);
+        }
         return;
     }
 

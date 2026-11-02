@@ -13,6 +13,7 @@ class QScrollArea;
 class QSlider;
 
 class GameParamsWidget;
+class BlackjackTable;
 class HiloCardStrip;
 class TargetBar;
 
@@ -57,10 +58,15 @@ public slots:
     // High / Low / Equal / Skip / Cash out buttons while it waits for a move.
     // playable = false: an auto-bet / script round (cards only, the buttons stay off).
     void showHiloRound(const QJsonObject &bet, bool active, bool playable = true);
+    // Blackjack: the dealer's and the player's cards; Hit / Stand / Split / Double (and
+    // Insurance / No insurance when the dealer shows an ace) while a manual hand waits.
+    void showBlackjackRound(const QJsonObject &bet, bool active, bool playable = true);
 
 signals:
     void rollRequested();
     void hiloMoveRequested(const QString &move); // "high", "low", "equal", "skip", "cashout"
+    // "hit", "stand", "double", "split", "insurance", "noInsurance"
+    void blackjackMoveRequested(const QString &move);
     void gameChanged();                // target/side/amount changed
     void amountChanged(double amount); // the bet amount was changed (typed, ½ / 2×, loaded)
 
@@ -77,6 +83,7 @@ private:
     void applyGameLayout();
     void updateResultStyle();
     void updateHiloButtons();
+    void updateBlackjackButtons();
 
     QFormLayout *m_form = nullptr;
     GameParamsWidget *m_params = nullptr;
@@ -109,5 +116,21 @@ private:
     int m_hiloRounds = 0;       // cards drawn after the start card
     QString m_hiloRank;         // the card the next guess is about
     bool m_locked = false;
+    // Blackjack manual play.
+    QWidget *m_bjBox = nullptr;
+    QWidget *m_bjInsRow = nullptr;
+    QPushButton *m_bjHit = nullptr;
+    QPushButton *m_bjStand = nullptr;
+    QPushButton *m_bjSplit = nullptr;
+    QPushButton *m_bjDouble = nullptr;
+    QPushButton *m_bjInsurance = nullptr;
+    QPushButton *m_bjNoInsurance = nullptr;
+    QScrollArea *m_bjScroll = nullptr;
+    BlackjackTable *m_bjTable = nullptr;
+    QLabel *m_bjStatus = nullptr;
+    bool m_bjActive = false;     // a manual hand waits for a move
+    bool m_bjInsurance_ = false; // the dealer shows an ace: insurance has to be decided first
+    bool m_bjCanSplit = false;
+    bool m_bjCanDouble = false;
     double m_startBalance = BotConstants::kStartBalance;
 };

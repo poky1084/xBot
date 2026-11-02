@@ -730,12 +730,21 @@ MainWindow::MainWindow(int slot, bool freshWebSession, QWidget *parent)
             [this](Game game, const QJsonObject &bet, bool active) {
         if (game == Game::Hilo)
             m_manualPanel->showHiloRound(bet, active);
+        else if (game == Game::Blackjack)
+            m_manualPanel->showBlackjackRound(bet, active);
+    });
+    connect(m_manualPanel, &ManualBetPanel::blackjackMoveRequested, this, [this](const QString &move) {
+        if (m_engine->isRunning())
+            return;
+        m_engine->manualGameMove(move);
     });
     // Auto-bet / script hilo rounds show in the same card showcase.
     connect(m_engine, &BotEngine::autoGameUpdated, this,
             [this](Game game, const QJsonObject &bet, bool active) {
         if (game == Game::Hilo)
             m_manualPanel->showHiloRound(bet, active, false);
+        else if (game == Game::Blackjack)
+            m_manualPanel->showBlackjackRound(bet, active, false);
     });
     // The Manual Bet amount is saved as soon as it changes (and again on close), so it
     // survives even when the app does not exit normally.
