@@ -756,10 +756,9 @@ bool BotEngine::applyScriptCurrency()
     m_runCfg.currency = want;
     emit logMessage(tr("Currency switched to %1.").arg(want.toUpper()), false);
     if (liveMode()) {
-        // The session figures were in the old currency: start a fresh session in the new
-        // one. This also republishes balance / startbalance / profit / ... to the script.
+        // The session is kept (bets, profit, history, graph go on); only the balance becomes
+        // the new currency's. The script sees it in `balance` before its next dobet().
         m_stats.balance = balance;
-        m_script->requestResetStats();
     }
     return false;
 }

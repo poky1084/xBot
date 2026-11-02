@@ -29,7 +29,7 @@ struct lua_State;
 //         currency = "btc"          -- optional: currency code to bet in (default: the
 //                                   -- current bet currency); may be changed in dobet().
 //                                   -- Live: the account needs a balance in it; the session
-//                                   -- statistics restart in the new currency
+//                                   -- is kept, only the balance becomes the new currency's
 //         nextbet = 0.00000100      -- required
 //       dice:
 //         chance  = 49.5            -- required

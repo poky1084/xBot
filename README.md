@@ -383,7 +383,7 @@ Scripts don't use the Manual or Auto Bet tabs, or the Options client seed. They 
 | `target` | number | **limbo** | Target multiplier (1.01 – 1,000,000). `chance` and `bethigh` are ignored in limbo. |
 | `game` | string | no | `"dice"` or `"limbo"` (default: the game selected in the Game menu). On Stake also `"keno"`, `"mines"`, `"plinko"`, `"wheel"`, `"hilo"`, `"blackjack"`, `"baccarat"`, `"roulette"`, `"dragontower"`, `"flip"`, `"rps"`, `"pump"`, `"snakes"`, `"cases"`, `"darts"`, `"diamonds"`, `"videopoker"`, `"bluesamurai"`, `"scarabspin"`, `"tomeoflife"`, `"bars"`, `"chicken"`, `"tarot"`, `"drill"`, `"packs"`, `"moles"`, `"primedice"` (Primedice X) — each with its own variables, see [Stake games in code mode](#stake-games-in-code-mode). Can be changed in `dobet()`. |
 | `casino` | string | no | `"stake"`, `"shuffle"`, `"goated"`, `"wolfbet"`, `"duel"`, `"paradice"`, `"pasino"`, `"tower"` or `"winna"`. Switches the casino the next bets go to, **without resetting the session**. The casino must already be logged in in Options. |
-| `currency` | string | no | Currency code, e.g. `"btc"` or `"usdt"` (default: the current bet currency). In live mode the account needs a balance in it, and the session statistics restart in the new currency. |
+| `currency` | string | no | Currency code, e.g. `"btc"` or `"usdt"` (default: the current bet currency). In live mode the account needs a balance in it. The session is kept (bets, profit, history and graph go on); only the balance becomes the new currency's. |
 
 You can also create your own variables (e.g. `basebet`); they persist between `dobet()` calls.
 
