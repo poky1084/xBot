@@ -3,8 +3,10 @@
 #include <QButtonGroup>
 #include <QCheckBox>
 #include <QColor>
+#include <QAbstractItemView>
 #include <QComboBox>
 #include <QDoubleSpinBox>
+#include <QFontMetrics>
 #include <QFormLayout>
 #include <QGridLayout>
 #include <QHBoxLayout>
@@ -184,6 +186,21 @@ void GameParamsWidget::rebuild()
                 combo->setStyleSheet(c.isEmpty() ? QString() : QStringLiteral("QComboBox { color: %1; }").arg(c));
             };
             combo->setCurrentIndex(idx >= 0 ? idx : 0);
+            // Never cut items short ("♦ Diamonds"): the box is as wide as its longest
+            // item and the drop-down list at least as wide as that too.
+            combo->setSizeAdjustPolicy(QComboBox::AdjustToContents);
+            {
+                QAbstractItemView *view = combo->view();
+                view->setTextElideMode(Qt::ElideNone); // "Diamonds", never "Di...onds"
+                // The item width as the style draws it (stylesheet item padding included),
+                // or the bare text width plus room, whichever is larger.
+                int widest = 0;
+                const QFontMetrics fm(view->font());
+                for (int i = 0; i < combo->count(); ++i)
+                    widest = qMax(widest, fm.horizontalAdvance(combo->itemText(i)));
+                const int styled = view->sizeHintForColumn(0);
+                view->setMinimumWidth(qMax(styled, widest + 48) + 24); // + scroll bar / frame
+            }
             if (!colors.isEmpty())
                 paint();
             connect(combo, &QComboBox::currentIndexChanged, this, [this, paint, colors] {
@@ -346,7 +363,7 @@ void GameParamsWidget::rebuild()
                 if (!spec.tip.isEmpty())
                     label->setToolTip(spec.tip);
                 line->addWidget(label);
-                line->addWidget(rowWidget, 1);
+                line->addWidget(rowWidget); // its full width; the host takes the rest
                 m_form->setWidget(row, QFormLayout::FieldRole, pair);
                 host->rowWidget = pair;
                 if (editor)

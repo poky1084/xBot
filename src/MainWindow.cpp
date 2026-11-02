@@ -720,6 +720,23 @@ MainWindow::MainWindow(int slot, bool freshWebSession, QWidget *parent)
     });
 
     connect(m_manualPanel, &ManualBetPanel::rollRequested, this, &MainWindow::onRollOnce);
+    // Manual hilo, played with the Manual Bet tab's buttons (C# bot).
+    connect(m_manualPanel, &ManualBetPanel::hiloMoveRequested, this, [this](const QString &move) {
+        if (m_engine->isRunning())
+            return;
+        m_engine->manualGameMove(move);
+    });
+    connect(m_engine, &BotEngine::manualGameUpdated, this,
+            [this](Game game, const QJsonObject &bet, bool active) {
+        if (game == Game::Hilo)
+            m_manualPanel->showHiloRound(bet, active);
+    });
+    // Auto-bet / script hilo rounds show in the same card showcase.
+    connect(m_engine, &BotEngine::autoGameUpdated, this,
+            [this](Game game, const QJsonObject &bet, bool active) {
+        if (game == Game::Hilo)
+            m_manualPanel->showHiloRound(bet, active, false);
+    });
     // The Manual Bet amount is saved as soon as it changes (and again on close), so it
     // survives even when the app does not exit normally.
     connect(m_manualPanel, &ManualBetPanel::amountChanged, this, [this](double amount) {

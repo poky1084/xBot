@@ -3,6 +3,7 @@
 #include "bot/StakeClient.h"
 #include "bot/StakeGames.h"
 
+#include <QJsonArray>
 #include <QRandomGenerator>
 
 #include <algorithm>
@@ -196,9 +197,22 @@ void BotEngine::onLiveFinished(const LiveBetResult &result)
     LiveBetResult r = result;
     if (!isDiceOrLimbo(m_inFlightCfg.game) && m_live) {
         const Game game = m_inFlightCfg.game;
+        if (r.ok && r.active && m_inFlightManual && game == Game::Hilo) {
+            // Manual hilo: wait for the Manual Bet tab's buttons instead of playing on.
+            m_manualGameOpen = true;
+            m_manualGameCfg = m_inFlightCfg;
+            m_manualGameBet = r.bet;
+            m_manualGameAmount = r.amount > 0.0 ? r.amount : m_gameAmount;
+            m_manualGameCasino = m_inFlightCasino;
+            m_inFlight = false;
+            emit manualGameUpdated(game, r.bet, true);
+            return;
+        }
         if (r.ok && r.active) {
             // Not settled yet (hilo / blackjack / video poker / bonus spins): next move. The bet
             // stays "in flight" until the casino reports it finished.
+            if (game == Game::Hilo && !m_inFlightManual)
+                emit autoGameUpdated(game, r.bet, true); // the Manual tab's card showcase
             QString err;
             if (continueGame(r, &err))
                 return;
@@ -253,6 +267,15 @@ void BotEngine::onLiveFinished(const LiveBetResult &result)
         if (!(r.retryNow && r.retryable && !manual && m_running))
             emit logMessage(tr("Bet failed: %1").arg(r.error), true);
         flushPauseLog(); // no bet was recorded: the numbers are final
+        if (manual && m_manualGameOpen && cfg.game == Game::Hilo) {
+            // The round is gone on Stake (expired / finished elsewhere): close it here too;
+            // otherwise it stays open for another move (e.g. cash out before any guess).
+            if (r.errorType.contains(QLatin1String("notFound"), Qt::CaseInsensitive)
+                || r.error.contains(QLatin1String("not found"), Qt::CaseInsensitive))
+                closeManualGame(m_manualGameBet);
+            else
+                emit manualGameUpdated(Game::Hilo, m_manualGameBet, true);
+        }
         if (manual || !m_running) {
             flushStopLog();
             finishScriptDrain(false);
@@ -294,6 +317,10 @@ void BotEngine::onLiveFinished(const LiveBetResult &result)
     const BetRecord rec = recordBet(cfg, r.amount, r.roll, r.win, r.multiplier, r.payout,
                                     r.nonce, r.betId, betCasino, casinoTarget, r.targetText,
                                     r.rollText);
+    if (manual && cfg.game == Game::Hilo)
+        closeManualGame(r.bet.isEmpty() ? m_manualGameBet : r.bet); // busted or cashed out
+    else if (cfg.game == Game::Hilo && !r.bet.isEmpty())
+        emit autoGameUpdated(cfg.game, r.bet, false);
     flushPauseLog(); // a pause that came while this bet was in flight: now the numbers are final
     flushStopLog(); // a stop that came while this bet was in flight: now the numbers are final
 
@@ -402,6 +429,88 @@ BetRecord BotEngine::rollOnce(const BotConfig &cfg)
     const double bet = std::clamp(cfg.baseBet, 0.0, std::max(0.0, m_stats.balance));
     BetRecord rec = placeBet(cfg, bet);
     return rec;
+}
+
+void BotEngine::closeManualGame(QJsonObject bet)
+{
+    const bool wasOpen = m_manualGameOpen;
+    m_manualGameOpen = false;
+    m_manualGameBet = QJsonObject();
+    if (wasOpen || !bet.isEmpty())
+        emit manualGameUpdated(Game::Hilo, bet, false);
+}
+
+void BotEngine::manualGameMove(const QString &move)
+{
+    if (m_running) {
+        emit logMessage(tr("Hilo: stop the auto-bet before playing manually."), true);
+        return;
+    }
+    if (!m_manualGameOpen) {
+        emit logMessage(tr("Hilo: no round is open - press New Game first."), true);
+        return;
+    }
+    if (m_inFlight)
+        return; // the previous move is still on its way
+    if (!liveMode()) {
+        emit logMessage(tr("Hilo: manual play needs live mode."), true);
+        return;
+    }
+    const QString casino = m_casinoGetter ? m_casinoGetter().trimmed().toLower() : QString();
+    if (!m_manualGameCasino.isEmpty() && casino != m_manualGameCasino) {
+        emit logMessage(tr("Hilo: the round is open on %1 - switch back to it to play on.")
+                            .arg(casinoLabel(m_manualGameCasino)),
+                        true);
+        return;
+    }
+
+    // The card the guess is about: the last one drawn, else the start card.
+    const QJsonObject state = m_manualGameBet.value(QStringLiteral("state")).toObject();
+    const QJsonArray rounds = state.value(QStringLiteral("rounds")).toArray();
+    QString rank = rounds.isEmpty() ? QString()
+                                    : rounds.last().toObject().value(QStringLiteral("card")).toObject()
+                                          .value(QStringLiteral("rank")).toString();
+    if (rank.isEmpty())
+        rank = state.value(QStringLiteral("startCard")).toObject().value(QStringLiteral("rank")).toString();
+    rank = rank.toUpper();
+
+    // As in the C# bot: High on an ace = "higher", Low on a king = "lower", otherwise the
+    // "or equal" guesses; nothing is higher than a king / lower than an ace.
+    QString guess;
+    const QString m = move.trimmed().toLower();
+    if (m == QLatin1String("high")) {
+        if (rank == QLatin1String("K")) {
+            emit logMessage(tr("Hilo: nothing is higher than a King - pick Low, Equal or Skip."), true);
+            return;
+        }
+        guess = rank == QLatin1String("A") ? QStringLiteral("higher") : QStringLiteral("higherEqual");
+    } else if (m == QLatin1String("low")) {
+        if (rank == QLatin1String("A")) {
+            emit logMessage(tr("Hilo: nothing is lower than an Ace - pick High, Equal or Skip."), true);
+            return;
+        }
+        guess = rank == QLatin1String("K") ? QStringLiteral("lower") : QStringLiteral("lowerEqual");
+    } else if (m == QLatin1String("equal") || m == QLatin1String("skip") || m == QLatin1String("cashout")) {
+        guess = m;
+    } else {
+        emit logMessage(tr("Hilo: unknown move \"%1\".").arg(move), true);
+        return;
+    }
+
+    m_inFlight = true;
+    m_inFlightManual = true;
+    m_inFlightCfg = m_manualGameCfg;
+    m_inFlightCasino = m_manualGameCasino;
+    m_gameBet = m_manualGameBet;
+    m_gameAmount = m_manualGameAmount;
+    m_gameSteps = 1; // a move of an open bet (a 0 bet's "insignificantBet" cash out settles at 0)
+    m_gameFallback = 0;
+    m_gameChoice = guess;
+    QString err;
+    if (!sendGameStep(&err)) {
+        m_inFlight = false;
+        emit logMessage(tr("Hilo: %1").arg(err), true);
+    }
 }
 
 // ------------------------------------------------------------------- auto
@@ -555,6 +664,8 @@ void BotEngine::start()
                             .arg(m_config.baseBet, 0, 'f', 8),
                         false);
     m_running = true;
+    if (m_manualGameOpen) // an open manual hilo round is finished by the run (existingGame)
+        closeManualGame(QJsonObject()); // no final state: the panel keeps its cards
     m_paused = false;
 
     if (!scriptMode && !m_conditions.active()) {

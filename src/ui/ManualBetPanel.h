@@ -9,9 +9,11 @@ class QJsonObject;
 class QLabel;
 class QPushButton;
 class QDoubleSpinBox;
+class QScrollArea;
 class QSlider;
 
 class GameParamsWidget;
+class HiloCardStrip;
 class TargetBar;
 
 // "Manual Bet" tab, mirroring the reference app's bet panel.
@@ -51,9 +53,14 @@ public:
 public slots:
     void onBetResult(const BetRecord &record);
     void updateBalance(double balance);
+    // Manual hilo round (BotEngine::manualGameUpdated): shows its cards and enables the
+    // High / Low / Equal / Skip / Cash out buttons while it waits for a move.
+    // playable = false: an auto-bet / script round (cards only, the buttons stay off).
+    void showHiloRound(const QJsonObject &bet, bool active, bool playable = true);
 
 signals:
     void rollRequested();
+    void hiloMoveRequested(const QString &move); // "high", "low", "equal", "skip", "cashout"
     void gameChanged();                // target/side/amount changed
     void amountChanged(double amount); // the bet amount was changed (typed, ½ / 2×, loaded)
 
@@ -69,6 +76,7 @@ private:
     void refreshDerived();
     void applyGameLayout();
     void updateResultStyle();
+    void updateHiloButtons();
 
     QFormLayout *m_form = nullptr;
     GameParamsWidget *m_params = nullptr;
@@ -86,5 +94,20 @@ private:
     double m_limboTarget = 2.0;
     QString m_resultColor;   // css color of the last-result label (green / red)
     QLabel *m_lastResult = nullptr;
+    // Hilo manual play (C# bot): move buttons and the card showcase.
+    QWidget *m_hiloBox = nullptr;
+    QPushButton *m_hiloHigh = nullptr;
+    QPushButton *m_hiloLow = nullptr;
+    QPushButton *m_hiloEqual = nullptr;
+    QPushButton *m_hiloSkip = nullptr;
+    QPushButton *m_hiloCashout = nullptr;
+    QPushButton *m_hiloNewGame = nullptr;
+    QScrollArea *m_hiloScroll = nullptr;
+    HiloCardStrip *m_hiloCards = nullptr;
+    QLabel *m_hiloStatus = nullptr;
+    bool m_hiloActive = false;  // a round waits for a move
+    int m_hiloRounds = 0;       // cards drawn after the start card
+    QString m_hiloRank;         // the card the next guess is about
+    bool m_locked = false;
     double m_startBalance = BotConstants::kStartBalance;
 };

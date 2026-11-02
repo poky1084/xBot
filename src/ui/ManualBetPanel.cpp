@@ -6,11 +6,19 @@
 #include <QSignalBlocker>
 #include <QDoubleSpinBox>
 #include <QFormLayout>
+#include <QGridLayout>
 #include <QHBoxLayout>
+#include <QJsonArray>
 #include <QJsonObject>
 #include <QLabel>
+#include <QPainter>
+#include <QPainterPath>
 #include <QPushButton>
+#include <QRegularExpression>
+#include <QScrollArea>
+#include <QScrollBar>
 #include <QSlider>
+#include <QTimer>
 #include <QVBoxLayout>
 
 #include <algorithm>
@@ -26,7 +34,148 @@ QDoubleSpinBox *makeAmountSpin()
     spin->setKeyboardTracking(false);
     return spin;
 }
+
+// "2.45x", "1234x" (as the C# bot's card strip).
+QString hiloMultText(double m)
+{
+    return m >= 1000.0 ? QStringLiteral("%1x").arg(m, 0, 'f', 0)
+                       : QStringLiteral("%1x").arg(QString::number(m, 'f', 2)
+                                                       .remove(QRegularExpression(QStringLiteral("\\.?0+$"))));
+}
+
+QString hiloGuessSymbol(const QString &guess)
+{
+    if (guess.startsWith(QLatin1String("higher")))
+        return QString(QChar(0x2191)); // ↑
+    if (guess.startsWith(QLatin1String("lower")))
+        return QString(QChar(0x2193)); // ↓
+    if (guess == QLatin1String("equal"))
+        return QStringLiteral("=");
+    if (guess == QLatin1String("skip"))
+        return QString(QChar(0x00BB)); // »
+    return {};
+}
+
+QString suitSymbol(const QString &suit)
+{
+    const char16_t ch = suit.isEmpty() ? u'\0' : suit.at(0).toUpper().unicode();
+    switch (ch) {
+    case 'C': return QString(QChar(0x2663)); // ♣
+    case 'H': return QString(QChar(0x2665)); // ♥
+    case 'D': return QString(QChar(0x2666)); // ♦
+    case 'S': return QString(QChar(0x2660)); // ♠
+    default:  return suit;
+    }
+}
 } // namespace
+
+// The hilo card showcase: the start card and every card drawn since, each with the guess
+// and the running multiplier under it (the C# bot's lvHiloCards strip).
+class HiloCardStrip : public QWidget
+{
+public:
+    struct Card
+    {
+        QString rank;
+        QString suit;
+        QString caption;
+        bool bust = false;
+    };
+
+    explicit HiloCardStrip(QWidget *parent = nullptr) : QWidget(parent) { updateSize(); }
+
+    // outcome: 0 = round open, 1 = cashed out, -1 = lost.
+    void setCards(const QVector<Card> &cards, int outcome)
+    {
+        m_cards = cards;
+        m_outcome = outcome;
+        updateSize();
+        update();
+    }
+    void setOutcome(int outcome)
+    {
+        m_outcome = outcome;
+        update();
+    }
+
+    QSize sizeHint() const override
+    {
+        const int n = int(m_cards.size());
+        const int w = n == 0 ? 220 : kMargin * 2 + n * kCardW + (n - 1) * kGap;
+        return {w, kMargin * 2 + kCardH + kCaptionH};
+    }
+    QSize minimumSizeHint() const override { return sizeHint(); }
+
+protected:
+    void paintEvent(QPaintEvent *) override
+    {
+        QPainter p(this);
+        p.setRenderHint(QPainter::Antialiasing);
+        const QColor text = palette().color(QPalette::WindowText);
+        if (m_cards.isEmpty()) {
+            QFont f = font();
+            f.setPixelSize(12);
+            p.setFont(f);
+            p.setPen(QColor(0x73, 0x73, 0x73));
+            p.drawText(rect(), Qt::AlignCenter, QObject::tr("Press New Game to deal a start card."));
+            return;
+        }
+        for (int i = 0; i < m_cards.size(); ++i) {
+            const Card &c = m_cards.at(i);
+            const QRectF card(kMargin + i * (kCardW + kGap) + 0.5, kMargin + 0.5, kCardW - 1, kCardH - 1);
+            const bool last = i == m_cards.size() - 1;
+            QColor border(0xc8, 0xc8, 0xc8);
+            qreal width = 1.0;
+            if (last) {
+                border = m_outcome < 0 ? QColor(0xc9, 0x37, 0x2a)
+                       : m_outcome > 0 ? QColor(0x2e, 0x9e, 0x46)
+                                       : QColor(0x1e, 0x88, 0xe5);
+                width = 2.5;
+            }
+            QPainterPath path;
+            path.addRoundedRect(card, 6, 6);
+            p.fillPath(path, Qt::white);
+            p.setPen(QPen(border, width));
+            p.drawPath(path);
+
+            const bool red = c.suit.compare(QLatin1String("H"), Qt::CaseInsensitive) == 0
+                          || c.suit.compare(QLatin1String("D"), Qt::CaseInsensitive) == 0;
+            p.setPen(red ? QColor(0xe5, 0x39, 0x35) : QColor(0x1e, 0x1e, 0x1e));
+            QFont rankFont = font();
+            rankFont.setPixelSize(17);
+            rankFont.setBold(true);
+            p.setFont(rankFont);
+            p.drawText(card.adjusted(6, 3, -4, 0), Qt::AlignLeft | Qt::AlignTop, c.rank);
+            QFont suitFont = font();
+            suitFont.setPixelSize(30);
+            p.setFont(suitFont);
+            p.drawText(card.adjusted(0, 16, 0, 0), Qt::AlignCenter, suitSymbol(c.suit));
+
+            QFont capFont = font();
+            capFont.setPixelSize(12);
+            capFont.setBold(true);
+            p.setFont(capFont);
+            p.setPen(c.bust ? QColor(0xc9, 0x37, 0x2a) : text);
+            p.drawText(QRectF(card.left() - kGap / 2.0, card.bottom() + 2, kCardW + kGap, kCaptionH - 2),
+                       Qt::AlignHCenter | Qt::AlignTop, c.caption);
+        }
+    }
+
+private:
+    void updateSize()
+    {
+        setMinimumSize(sizeHint());
+        updateGeometry();
+    }
+
+    static constexpr int kCardW = 54;
+    static constexpr int kCardH = 76;
+    static constexpr int kGap = 8;
+    static constexpr int kMargin = 4;
+    static constexpr int kCaptionH = 20;
+    QVector<Card> m_cards;
+    int m_outcome = 0;
+};
 
 ManualBetPanel::ManualBetPanel(QWidget *parent)
     : QWidget(parent)
@@ -95,12 +244,50 @@ ManualBetPanel::ManualBetPanel(QWidget *parent)
     // Settings of Stake's other games (shown instead of Multiplier / Win chance).
     m_params = new GameParamsWidget;
     // Hilo "Stop on" only matters for auto-bet runs (Auto Bet tab); manual bets play "None".
-    m_params->setHiddenKeys({QStringLiteral("suitMode")});
+    // Hilo "Pattern" too: manual hilo is played with the buttons below.
+    m_params->setHiddenKeys({QStringLiteral("suitMode"), QStringLiteral("hiloPattern")});
     m_params->setVisible(false);
     connect(m_params, &GameParamsWidget::paramsChanged, this, &ManualBetPanel::gameChanged);
 
+    // Hilo: play a round by hand, like the C# bot (New Game deals the start card).
+    m_hiloBox = new QWidget;
+    {
+        auto *grid = new QGridLayout(m_hiloBox);
+        grid->setContentsMargins(0, 0, 0, 0);
+        grid->setHorizontalSpacing(4);
+        grid->setVerticalSpacing(4);
+        const auto makeBtn = [this](const QString &text, const QString &move) {
+            auto *b = new QPushButton(text);
+            b->setObjectName(QStringLiteral("amountBtn")); // no wide padding
+            b->setMinimumHeight(30);
+            connect(b, &QPushButton::clicked, this, [this, move] { emit hiloMoveRequested(move); });
+            return b;
+        };
+        m_hiloHigh = makeBtn(tr("High"), QStringLiteral("high"));
+        m_hiloLow = makeBtn(tr("Low"), QStringLiteral("low"));
+        m_hiloEqual = makeBtn(tr("Equal"), QStringLiteral("equal"));
+        m_hiloSkip = makeBtn(tr("Skip"), QStringLiteral("skip"));
+        m_hiloCashout = makeBtn(tr("Cash out"), QStringLiteral("cashout"));
+        m_hiloNewGame = new QPushButton(tr("New Game"));
+        m_hiloNewGame->setObjectName(QStringLiteral("amountBtn"));
+        m_hiloNewGame->setMinimumHeight(30);
+        QFont bold = m_hiloNewGame->font();
+        bold.setBold(true);
+        m_hiloNewGame->setFont(bold);
+        m_hiloCashout->setFont(bold);
+        connect(m_hiloNewGame, &QPushButton::clicked, this, &ManualBetPanel::rollRequested);
+        grid->addWidget(m_hiloHigh, 0, 0);
+        grid->addWidget(m_hiloLow, 0, 1);
+        grid->addWidget(m_hiloEqual, 0, 2);
+        grid->addWidget(m_hiloSkip, 0, 3);
+        grid->addWidget(m_hiloNewGame, 1, 0, 1, 2);
+        grid->addWidget(m_hiloCashout, 1, 2, 1, 2);
+    }
+    m_hiloBox->setVisible(false);
+
     left->addLayout(form);
     left->addWidget(m_params);
+    left->addWidget(m_hiloBox);
     left->addWidget(m_rollBtn);
     left->addStretch();
     root->addLayout(left);
@@ -139,6 +326,23 @@ ManualBetPanel::ManualBetPanel(QWidget *parent)
     }
     right->addWidget(m_targetSlider);
     right->addWidget(m_scaleWidget);
+
+    // Hilo card showcase (scrolls sideways once the round has more cards than fit).
+    m_hiloCards = new HiloCardStrip;
+    m_hiloScroll = new QScrollArea;
+    m_hiloScroll->setWidget(m_hiloCards);
+    m_hiloScroll->setWidgetResizable(true);
+    m_hiloScroll->setFrameShape(QFrame::NoFrame);
+    m_hiloScroll->setVerticalScrollBarPolicy(Qt::ScrollBarAlwaysOff);
+    m_hiloScroll->setHorizontalScrollBarPolicy(Qt::ScrollBarAsNeeded);
+    m_hiloScroll->setFixedHeight(m_hiloCards->sizeHint().height()
+                                 + m_hiloScroll->horizontalScrollBar()->sizeHint().height() + 2);
+    m_hiloScroll->setVisible(false);
+    right->addWidget(m_hiloScroll);
+    m_hiloStatus = new QLabel;
+    m_hiloStatus->setStyleSheet(QStringLiteral("color:#737373;"));
+    m_hiloStatus->setVisible(false);
+    right->addWidget(m_hiloStatus);
 
     m_lastResult = new QLabel(tr("—"));
     QFont big = m_lastResult->font();
@@ -258,6 +462,12 @@ void ManualBetPanel::applyGameLayout()
     m_params->setGame(m_game);
     m_params->setVisible(other && m_params->hasFields());
     m_rollBtn->setText(dice ? tr("Roll Dice") : tr("Bet %1").arg(gameDisplayName(m_game)));
+    const bool hilo = m_game == Game::Hilo;
+    m_rollBtn->setVisible(!hilo); // hilo: New Game in the button box
+    m_hiloBox->setVisible(hilo);
+    m_hiloScroll->setVisible(hilo);
+    m_hiloStatus->setVisible(hilo && !m_hiloStatus->text().isEmpty());
+    updateHiloButtons();
     updateResultStyle();
 
     m_multiplierSpin->blockSignals(true);
@@ -303,6 +513,87 @@ void ManualBetPanel::setLocked(bool locked)
     for (QWidget *w : lockedWidgets)
         w->setEnabled(!locked);
     m_rollBtn->setEnabled(!locked);
+    m_locked = locked;
+    updateHiloButtons();
+}
+
+void ManualBetPanel::updateHiloButtons()
+{
+    const bool play = m_hiloActive && !m_locked;
+    m_hiloHigh->setEnabled(play && m_hiloRank != QLatin1String("K"));
+    m_hiloLow->setEnabled(play && m_hiloRank != QLatin1String("A"));
+    m_hiloEqual->setEnabled(play);
+    m_hiloSkip->setEnabled(play);
+    m_hiloCashout->setEnabled(play && m_hiloRounds > 0); // Stake: no cash out before a guess
+    // While a round is open it has to be finished first (New Game would only reload it).
+    m_hiloNewGame->setEnabled(!m_locked && !m_hiloActive);
+    // Tool tips with what the buttons guess on the current card.
+    const QString r = m_hiloRank;
+    m_hiloHigh->setToolTip(r == QLatin1String("A") ? tr("Higher than the Ace")
+                                                   : tr("Higher or the same"));
+    m_hiloLow->setToolTip(r == QLatin1String("K") ? tr("Lower than the King")
+                                                  : tr("Lower or the same"));
+}
+
+void ManualBetPanel::showHiloRound(const QJsonObject &bet, bool active, bool playable)
+{
+    m_hiloActive = active && playable;
+    if (bet.isEmpty()) {
+        // Closed without a final state (e.g. an auto-bet took the round over).
+        m_hiloCards->setOutcome(0);
+        m_hiloStatus->clear();
+        m_hiloStatus->setVisible(false);
+        updateHiloButtons();
+        return;
+    }
+    const QJsonObject state = bet.value(QStringLiteral("state")).toObject();
+    const QJsonObject start = state.value(QStringLiteral("startCard")).toObject();
+    const QJsonArray rounds = state.value(QStringLiteral("rounds")).toArray();
+
+    QVector<HiloCardStrip::Card> cards;
+    HiloCardStrip::Card first;
+    first.rank = start.value(QStringLiteral("rank")).toString();
+    first.suit = start.value(QStringLiteral("suit")).toString();
+    first.caption = tr("Start");
+    cards.append(first);
+    double current = 0.0;
+    for (const QJsonValue &v : rounds) {
+        const QJsonObject round = v.toObject();
+        const QJsonObject card = round.value(QStringLiteral("card")).toObject();
+        HiloCardStrip::Card c;
+        c.rank = card.value(QStringLiteral("rank")).toString();
+        c.suit = card.value(QStringLiteral("suit")).toString();
+        const QString guess = round.value(QStringLiteral("guess")).toString();
+        current = round.value(QStringLiteral("payoutMultiplier")).toDouble();
+        c.bust = current <= 0.0 && guess != QLatin1String("skip");
+        const QString sym = hiloGuessSymbol(guess);
+        c.caption = sym.isEmpty() ? hiloMultText(current) : sym + QLatin1Char(' ') + hiloMultText(current);
+        cards.append(c);
+    }
+    m_hiloRounds = int(rounds.size());
+    m_hiloRank = cards.last().rank.toUpper();
+
+    const double finalMult = bet.value(QStringLiteral("payoutMultiplier")).toDouble(current);
+    const int outcome = active ? 0 : (finalMult > 0.0 ? 1 : -1);
+    m_hiloCards->setCards(cards, outcome);
+
+    if (active && !playable)
+        m_hiloStatus->setText(rounds.isEmpty() ? tr("Auto-bet round started.")
+                                               : tr("Auto-bet round — %1.").arg(hiloMultText(current)));
+    else if (active)
+        m_hiloStatus->setText(rounds.isEmpty() ? tr("Round open — pick High, Low, Equal or Skip.")
+                                               : tr("Round open — %1, play on or cash out.")
+                                                     .arg(hiloMultText(current)));
+    else
+        m_hiloStatus->setText(outcome > 0 ? tr("Cashed out at %1.").arg(hiloMultText(finalMult))
+                                          : tr("Lost."));
+    m_hiloStatus->setVisible(m_game == Game::Hilo);
+    updateHiloButtons();
+
+    // Keep the newest card in view.
+    QTimer::singleShot(0, this, [this] {
+        m_hiloScroll->horizontalScrollBar()->setValue(m_hiloScroll->horizontalScrollBar()->maximum());
+    });
 }
 
 void ManualBetPanel::onBetResult(const BetRecord &record)
@@ -312,9 +603,14 @@ void ManualBetPanel::onBetResult(const BetRecord &record)
     if (!isDiceOrLimbo(record.game)) {
         // "3 hits  2.0000x", "fourOfAKind  22.0000x", "1.5000x"
         const QString mult = QStringLiteral("%1x").arg(record.mult, 0, 'f', 4);
-        m_lastResult->setText(record.rollText.isEmpty() || record.rollText == mult
-                                  ? mult
-                                  : QStringLiteral("%1  %2").arg(record.rollText, mult));
+        // A Roll text that is itself the multiplier ("1.6477x": the bet list's figure, cut
+        // rather than rounded) is shown alone, not next to a rounded copy of it.
+        bool rollIsMult = false;
+        if (record.rollText.endsWith(QLatin1Char('x')))
+            record.rollText.chopped(1).toDouble(&rollIsMult);
+        m_lastResult->setText(record.rollText.isEmpty() ? mult
+                              : rollIsMult              ? record.rollText
+                                                        : QStringLiteral("%1  %2").arg(record.rollText, mult));
         m_resultColor = record.win ? QStringLiteral("#2e9e46") : QStringLiteral("#c9372a");
         updateResultStyle();
         return;

@@ -104,6 +104,12 @@ public:
     // result arrives through betPlaced().
     BetRecord rollOnce(const BotConfig &cfg);
 
+    // Manual hilo (Manual Bet tab buttons, like the C# bot): a manual hilo bet is not played
+    // through automatically - it stays open and each move is sent with manualGameMove():
+    // "high", "low", "equal", "skip" or "cashout". manualGameUpdated() reports every state.
+    bool manualGameOpen() const { return m_manualGameOpen; }
+    void manualGameMove(const QString &move);
+
     // Clears the session and restores the starting balance.
     void resetSession(double initialBalance)
     {
@@ -164,6 +170,10 @@ signals:
     void seedRotationRequested(const QString &clientSeed);
     // A script called vault(amount) in live mode (MainWindow sends the deposit).
     void vaultRequested(double amount);
+    // Manual hilo round: the bet as last reported; active = waiting for the next move.
+    void manualGameUpdated(Game game, const QJsonObject &bet, bool active);
+    // A hilo round of an auto-bet / script run (only shown: it is played by the engine).
+    void autoGameUpdated(Game game, const QJsonObject &bet, bool active);
 
 private slots:
     void placeNextBet();
@@ -275,6 +285,13 @@ private:
     double m_gameAmount = 0.0;
     QJsonObject m_lastBetJson;    // the last settled bet (the scripts' `bet` variable)
     QString m_inFlightCasino; // casino the bet in flight was sent to (its row shows this one)
+    // Manual hilo round waiting for a button (see manualGameMove()).
+    bool m_manualGameOpen = false;
+    BotConfig m_manualGameCfg;
+    QJsonObject m_manualGameBet;
+    double m_manualGameAmount = 0.0;
+    QString m_manualGameCasino;
+    void closeManualGame(QJsonObject bet); // by value: may be m_manualGameBet itself
     int m_retryStreak = 0;
 
     // resetseed() in live mode: the next bet waits until the server answered the
