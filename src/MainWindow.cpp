@@ -2,6 +2,7 @@
 
 #include "bot/BotEngine.h"
 #include "bot/SimulatedProvider.h"
+#include "bot/CasinoCurrencies.h"
 #include "bot/StakeGames.h"
 #include "ui/AutoBetPanel.h"
 #include "ui/BalanceGraphWidget.h"
@@ -4281,13 +4282,26 @@ bool MainWindow::switchCurrencyFromScript(const QString &currency, double &balan
         updateStatusWidgets();
         return true;
     }
-    if (!m_balances.contains(cur)) {
-        error = m_balances.isEmpty()
-            ? tr("no balances loaded yet")
-            : tr("this account has no \"%1\" balance (available: %2)")
-                  .arg(cur, m_balances.keys().join(QStringLiteral(", ")));
+    if (cur.isEmpty()) {
+        error = tr("no currency given");
         return false;
     }
+    // Only a currency the casino offers: its currency list (the Options dropdown's, see
+    // bot/CasinoCurrencies.h) or the account's balances. Held at 0 / not held = balance 0.
+    QStringList offered = CasinoCurrencies::cached(m_live.casino);
+    for (auto it = m_balances.constBegin(); it != m_balances.constEnd(); ++it)
+        if (!offered.contains(it.key()))
+            offered << it.key();
+    if (!offered.contains(cur)) {
+        error = offered.isEmpty()
+            ? tr("%1's currency list is not loaded yet (log in first)").arg(casinoDisplayName(m_live.casino))
+            : tr("%1 does not offer \"%2\"").arg(casinoDisplayName(m_live.casino), cur);
+        return false;
+    }
+    if (!m_balances.contains(cur))
+        onLogMessage(tr("Currency %1: no balance on this account - betting with balance 0.")
+                         .arg(cur.toUpper()),
+                     false);
     m_live.currency = cur;
     m_stake->setCurrency(cur);
     refreshShuffleBalanceVar();
@@ -4299,7 +4313,7 @@ bool MainWindow::switchCurrencyFromScript(const QString &currency, double &balan
     refreshWinnaBalanceVar();
     refreshDuelBalanceVar();
     refreshStakeBalanceVar();
-    balance = m_balances.value(cur);
+    balance = m_balances.value(cur, 0.0); // not held: 0
     m_stake->fetchBalances(); // refresh the figure for the new currency
     return true;
 }
