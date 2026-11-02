@@ -998,6 +998,13 @@ void ManualBetPanel::showHiloRound(const QJsonObject &bet, bool active, bool pla
         m_hiloStatus->setText(outcome > 0 ? tr("Cashed out at %1.").arg(hiloMultText(finalMult))
                                           : tr("Lost."));
     m_hiloStatus->setVisible(m_game == Game::Hilo);
+    if (active && m_game == Game::Hilo) {
+        // The round's multiplier so far, where the final one is shown when it ends
+        // (neutral color until then; 1x before the first guess).
+        m_lastResult->setText(QStringLiteral("%1x").arg(rounds.isEmpty() ? 1.0 : current, 0, 'f', 4));
+        m_resultColor.clear();
+        updateResultStyle();
+    }
     updateHiloButtons();
 
     // Keep the newest card in view.
