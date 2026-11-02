@@ -193,6 +193,14 @@ void BotEngine::onLiveFinished(const LiveBetResult &result)
 {
     if (!m_inFlight)
         return; // not a bet this engine asked for
+    if (m_loadingOpenGame) {
+        m_loadingOpenGame = false;
+        if (!(result.ok && result.active)) {
+            m_inFlight = false; // nothing open: no error, nothing recorded
+            return;
+        }
+        // An open round: shown below like a manual bet waiting for its next move.
+    }
 
     LiveBetResult r = result;
     if (!isDiceOrLimbo(m_inFlightCfg.game) && m_live) {
@@ -432,6 +440,30 @@ BetRecord BotEngine::rollOnce(const BotConfig &cfg)
     const double bet = std::clamp(cfg.baseBet, 0.0, std::max(0.0, m_stats.balance));
     BetRecord rec = placeBet(cfg, bet);
     return rec;
+}
+
+void BotEngine::loadOpenGame(const BotConfig &cfg)
+{
+    if (cfg.game != Game::Hilo && cfg.game != Game::Blackjack)
+        return;
+    if (!liveMode() || !m_live->isStake() || m_running || m_inFlight || m_startPending || m_rollPending)
+        return;
+    if (!liveReady(nullptr))
+        return;
+    if (m_manualGameOpen && m_manualGame == cfg.game) {
+        emit manualGameUpdated(m_manualGame, m_manualGameBet, true); // already known
+        return;
+    }
+    m_inFlight = true;
+    m_inFlightManual = true;
+    m_inFlightCfg = cfg;
+    m_inFlightCasino = m_casinoGetter ? m_casinoGetter().trimmed().toLower() : QString();
+    m_gameSteps = 0;
+    m_gameFallback = 0;
+    m_gameBet = QJsonObject();
+    m_gameAmount = cfg.baseBet;
+    m_loadingOpenGame = true;
+    m_live->fetchActiveGame(cfg.game, cfg.gameParams, cfg.baseBet);
 }
 
 void BotEngine::closeManualGame(QJsonObject bet)

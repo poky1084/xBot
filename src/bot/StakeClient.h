@@ -126,6 +126,10 @@ public:
     // bet's stake (used when the answer does not repeat it).
     void sendGameAction(Game game, const QString &endpoint, const QJsonObject &body,
                         const QJsonObject &params, double requestedAmount);
+    // Fetches the open bet of `game` (_api/casino/active-bet/<slug>): through diceFinished()
+    // as an `active` result, or a retryable "existingGame" failure when nothing is open.
+    // Used after "existingGame" and to show an unfinished hilo / blackjack round.
+    void fetchActiveGame(Game game, const QJsonObject &params, double requestedAmount);
     // The roll target the casino got for the last dice bet, in the roll's own scale (Pasino
     // "High > 5249" -> 52.49, Tower ">50750" -> 50.75). It differs from the app's target where the casino has another house edge or range. < 0 = the app's
     // target was sent as it is (and for limbo bets).
@@ -171,8 +175,6 @@ private:
     // placeGame() / sendGameAction(): posts and turns the answer into a LiveBetResult.
     void postGameBet(Game game, const QString &endpoint, const QJsonObject &body,
                      const QJsonObject &params, double requestedAmount, bool firstRequest);
-    // "existingGame": fetches the open bet of `game` (_api/casino/active-bet/<slug>).
-    void fetchActiveGame(Game game, const QJsonObject &params, double requestedAmount);
     LiveBetResult gameResult(Game game, const QJsonObject &bet, const QJsonObject &params,
                              double requestedAmount) const;
     void placeShuffleDice(const DiceBetRequest &request);

@@ -110,6 +110,10 @@ public:
     // "split", "insurance", "noInsurance". manualGameUpdated() reports every state.
     bool manualGameOpen() const { return m_manualGameOpen; }
     void manualGameMove(const QString &move);
+    // The Manual Bet tab shows hilo / blackjack: load a round still open on Stake (from an
+    // earlier session or the website) so it can be finished with the buttons. Quiet when
+    // nothing is open or the connection is not ready.
+    void loadOpenGame(const BotConfig &cfg);
 
     // Clears the session and restores the starting balance.
     void resetSession(double initialBalance)
@@ -288,6 +292,7 @@ private:
     QString m_inFlightCasino; // casino the bet in flight was sent to (its row shows this one)
     // Manual hilo round waiting for a button (see manualGameMove()).
     bool m_manualGameOpen = false;
+    bool m_loadingOpenGame = false; // loadOpenGame()'s request is in flight
     Game m_manualGame = Game::Hilo;
     BotConfig m_manualGameCfg;
     QJsonObject m_manualGameBet;

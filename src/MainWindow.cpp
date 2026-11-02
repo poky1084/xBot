@@ -1524,6 +1524,17 @@ void MainWindow::setGame(Game game)
     updateAutoOdds();
     updateWindowTitle();
     fitPanelToGame();
+    loadOpenGameIfShown();
+}
+
+// Hilo / blackjack on the Manual Bet tab: show a round still open on Stake.
+void MainWindow::loadOpenGameIfShown()
+{
+    if (!m_engine || !m_tabs || m_tabs->currentWidget() != m_manualPanel)
+        return;
+    if (m_game != Game::Hilo && m_game != Game::Blackjack)
+        return;
+    m_engine->loadOpenGame(manualConfig());
 }
 
 void MainWindow::fitPanelToGame()
@@ -2304,6 +2315,7 @@ void MainWindow::onTabChanged(int index)
 {
     if (!m_tabs->widget(index))
         return;
+    loadOpenGameIfShown(); // Manual Bet tab with hilo / blackjack: an unfinished round
     // Size the panel to the new tab's content (again once the layout has settled, for late
     // size hints). Docked panels are never resized for it - only the user resizes those.
     updateCentralHeight();
@@ -3801,6 +3813,11 @@ void MainWindow::onBalancesReady(const QMap<QString, double> &reported)
         updateConnectionStatus(); // Shuffle: not logged in until its currencies are loaded
         return;
     }
+    if (!m_isLoggedIn) {
+        // Just logged in: show a hilo / blackjack round still open on Stake (once the
+        // engine has this balance, below).
+        QTimer::singleShot(0, this, [this] { loadOpenGameIfShown(); });
+    }
     m_isLoggedIn = true;
 
     if (!m_live.enabled)
@@ -4166,8 +4183,11 @@ bool MainWindow::loadCachedCasinoBalance()
         m_balances.insert(cur, 0.0);
     m_engine->syncBalance(m_balances.value(cur));
     // Credentials are set and the account was logged in before: stay logged in.
-    if (m_stake->transport() && m_stake->transport()->isReady())
+    if (m_stake->transport() && m_stake->transport()->isReady()) {
+        if (!m_isLoggedIn)
+            QTimer::singleShot(0, this, [this] { loadOpenGameIfShown(); });
         m_isLoggedIn = true;
+    }
     m_manualPanel->setStartBalance(m_engine->stats().balance);
     updateSessionWidgets();
     updateStatusWidgets();

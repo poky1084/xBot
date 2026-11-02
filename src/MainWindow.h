@@ -171,6 +171,7 @@ private:
     void setupFloatingDocks();
     void detachFloatingDock(QDockWidget *dock, bool bringToFront = false);
     static QString casinoDisplayName(LiveSettings::Casino casino);
+    void loadOpenGameIfShown();
     QAction *casinoAction(LiveSettings::Casino casino) const;
     void closeHiddenBrowser();
     void ensureHiddenBrowser(const LiveSettings &s);
