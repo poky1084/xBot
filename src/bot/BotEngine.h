@@ -65,10 +65,13 @@ public:
     //             if that is not possible.
     using CasinoGetter = std::function<QString()>;
     using CasinoSwitcher = std::function<bool(const QString &casino, QString &error)>;
-    void setCasinoHooks(CasinoGetter getter, CasinoSwitcher switcher)
+    //   label:    display name of a casino ("stake" -> "Stake") for log messages.
+    using CasinoLabel = std::function<QString(const QString &casino)>;
+    void setCasinoHooks(CasinoGetter getter, CasinoSwitcher switcher, CasinoLabel label = {})
     {
         m_casinoGetter = std::move(getter);
         m_casinoSwitcher = std::move(switcher);
+        m_casinoLabel = std::move(label);
     }
 
     const SessionStats &stats() const { return m_stats; }
@@ -222,6 +225,9 @@ private:
     QElapsedTimer m_awaitTimer;
     CasinoGetter m_casinoGetter;
     CasinoSwitcher m_casinoSwitcher;
+    CasinoLabel m_casinoLabel;
+    QString casinoLabel(const QString &casino) const; // display name for log messages
+    QString currentCasinoLabel() const;
     CurrencyGetter m_currencyGetter;
     CurrencySwitcher m_currencySwitcher;
     bool m_scriptDraining = false; // stopped, waiting for the last in-flight scripted bet

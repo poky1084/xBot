@@ -38,7 +38,7 @@ BotEngine::BotEngine(QObject *parent)
     connect(&m_seedWaitTimer, &QTimer::timeout, this, [this] {
         if (!m_seedRotationPending)
             return;
-        emit logMessage(tr("No answer to the seed rotation - continuing."), true);
+        emit logMessage(tr("%1: no answer to the seed rotation - continuing.").arg(currentCasinoLabel()), true);
         seedRotationFinished(true); // no retry after a timeout
     });
 }
@@ -621,7 +621,7 @@ void BotEngine::rotateSeedFromScript(const QString &clientSeed)
     m_seedRotationRetries = 0;
     if (m_inFlight) {
         m_seedRotationQueued = true;
-        emit logMessage(tr("Seed rotation waits for the bet in flight."), false);
+        emit logMessage(tr("%1: seed rotation waits for the bet in flight.").arg(currentCasinoLabel()), false);
         return;
     }
     dispatchSeedRotation();
@@ -656,7 +656,8 @@ void BotEngine::seedRotationFinished(bool ok)
 
     if (!ok && m_running && m_seedRotationRetries < kSeedRotationRetries) {
         ++m_seedRotationRetries;
-        emit logMessage(tr("Seed rotation failed - retrying (%1/%2)…")
+        emit logMessage(tr("%1: seed rotation failed - retrying (%2/%3)…")
+                            .arg(currentCasinoLabel())
                             .arg(m_seedRotationRetries)
                             .arg(kSeedRotationRetries),
                         false);
@@ -694,7 +695,8 @@ bool BotEngine::applyScriptCasino()
 
     QString err;
     if (!m_casinoSwitcher(want, err)) {
-        const QString msg = tr("cannot switch casino to %1: %2").arg(want, err);
+        const QString msg = tr("cannot switch casino from %1 to %2: %3")
+                                .arg(casinoLabel(have), casinoLabel(want), err);
         emit scriptOutput(msg, true);
         emit scriptError(msg);
         if (m_running) {
@@ -721,8 +723,9 @@ bool BotEngine::applyScriptCasino()
             m_script->setGlobalString("currency", m_runCfg.currency);
     }
     emit logMessage(m_runCfg.currency.isEmpty()
-                        ? tr("Casino switched to %1.").arg(want)
-                        : tr("Casino switched to %1 (currency: %2).").arg(want, m_runCfg.currency.toUpper()),
+                        ? tr("Casino switched from %1 to %2.").arg(casinoLabel(have), casinoLabel(want))
+                        : tr("Casino switched from %1 to %2 (currency: %3).")
+                              .arg(casinoLabel(have), casinoLabel(want), m_runCfg.currency.toUpper()),
                     false);
     return false;
 }
@@ -770,7 +773,7 @@ void BotEngine::switchCasino(const QString &casino)
         return;
     m_pendingCasino = want;
     if (m_inFlight) {
-        emit logMessage(tr("Casino switch to %1 waits for the bet in flight.").arg(want), false);
+        emit logMessage(tr("Casino switch to %1 waits for the bet in flight.").arg(casinoLabel(want)), false);
         return;
     }
     applyPendingCasino();
@@ -790,7 +793,7 @@ void BotEngine::applyPendingCasino()
     QString err;
     if (!m_casinoSwitcher(want, err)) {
         // From the menu: report it and keep betting on the current casino.
-        emit logMessage(tr("Cannot switch casino to %1: %2").arg(want, err), true);
+        emit logMessage(tr("Cannot switch casino to %1: %2").arg(casinoLabel(want), err), true);
         return;
     }
 
@@ -806,7 +809,21 @@ void BotEngine::applyPendingCasino()
         if (!m_runCfg.currency.isEmpty())
             m_script->setGlobalString("currency", m_runCfg.currency);
     }
-    emit logMessage(tr("Casino switched to %1.").arg(want), false);
+    emit logMessage(have.isEmpty() ? tr("Casino switched to %1.").arg(casinoLabel(want))
+                                   : tr("Casino switched from %1 to %2.").arg(casinoLabel(have), casinoLabel(want)),
+                    false);
+}
+
+QString BotEngine::casinoLabel(const QString &casino) const
+{
+    if (casino.isEmpty())
+        return tr("Casino");
+    return m_casinoLabel ? m_casinoLabel(casino) : casino;
+}
+
+QString BotEngine::currentCasinoLabel() const
+{
+    return casinoLabel(m_casinoGetter ? m_casinoGetter().trimmed().toLower() : QString());
 }
 
 void BotEngine::switchGame(const BotConfig &betCfg)

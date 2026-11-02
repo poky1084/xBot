@@ -342,6 +342,7 @@ private:
     // Auto-bet running time (excludes paused periods)
     QTimer *m_runClock = nullptr;
     bool m_rotatingSeed = false;   // live seed rotation request in flight
+    LiveSettings::Casino m_rotatingCasino = LiveSettings::Casino::Stake; // casino it was sent to
 
     // Client seed for manual / auto bets (Options -> Game). Scripts never use it.
     QString m_clientSeed;

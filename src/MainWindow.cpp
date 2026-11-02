@@ -633,11 +633,12 @@ MainWindow::MainWindow(int slot, bool freshWebSession, QWidget *parent)
         m_rotatingSeed = false;
         m_actRotate->setEnabled(true);
         if (clientSeed.isEmpty() && !hash.isEmpty()) // Wolfbet: only the server seed is renewed
-            onLogMessage(tr("Seed pair rotated — server seed hash: %1").arg(hash), false);
+            onLogMessage(tr("%1: seed pair rotated — server seed hash: %2").arg(casinoDisplayName(m_rotatingCasino), hash), false);
         else if (hash.isEmpty()) // defensive: no hash in the reply
-            onLogMessage(tr("Seed has been reset — client seed: %1").arg(clientSeed), false);
+            onLogMessage(tr("%1: seed has been reset — client seed: %2").arg(casinoDisplayName(m_rotatingCasino), clientSeed), false);
         else
-            onLogMessage(tr("Seed pair rotated — client seed: %1, nonce: %2, server seed hash: %3%4")
+            onLogMessage(tr("%1: seed pair rotated — client seed: %2, nonce: %3, server seed hash: %4%5")
+                             .arg(casinoDisplayName(m_rotatingCasino))
                              .arg(clientSeed)
                              .arg(nonce)
                              .arg(hash,
@@ -653,7 +654,7 @@ MainWindow::MainWindow(int slot, bool freshWebSession, QWidget *parent)
     connect(m_stake, &StakeClient::seedRotateFailed, this, [this](const QString &error) {
         m_rotatingSeed = false;
         m_actRotate->setEnabled(true);
-        onLogMessage(tr("Seed rotation failed: %1").arg(error), true);
+        onLogMessage(tr("%1: seed rotation failed: %2").arg(casinoDisplayName(m_rotatingCasino), error), true);
         m_engine->seedRotationFinished(false);
         if (m_afterSeedRotation) {
             m_afterSeedRotation = nullptr;
@@ -706,7 +707,8 @@ MainWindow::MainWindow(int slot, bool freshWebSession, QWidget *parent)
     // `currency = "btc"` in a Lua / JavaScript strategy
     m_engine->setCasinoHooks(
         [this]() { return m_live.casinoName(); },
-        [this](const QString &casino, QString &err) { return switchCasinoFromScript(casino, err); });
+        [this](const QString &casino, QString &err) { return switchCasinoFromScript(casino, err); },
+        [](const QString &casino) { return casinoDisplayName(LiveSettings::fromName(casino)); });
     m_engine->setCurrencyHooks(
         [this]() { return m_engine->liveMode() ? m_live.currency : m_currencyTag.toLower(); },
         [this](const QString &cur, double &balance, QString &err) {
@@ -1747,7 +1749,8 @@ void MainWindow::applyClientSeed(const std::function<void()> &then)
         m_rotatingSeed = true;
         m_actRotate->setEnabled(false);
         m_afterSeedRotation = then;
-        onLogMessage(tr("Setting client seed %1…").arg(seed), false);
+        m_rotatingCasino = m_live.casino;
+        onLogMessage(tr("%1: setting client seed %2…").arg(casinoDisplayName(m_live.casino), seed), false);
         m_stake->rotateSeedPair(seed); // answer: seedRotated / seedRotateFailed
         return;
     }
@@ -1942,7 +1945,8 @@ void MainWindow::rotateSeed(bool fromScript, const QString &clientSeed)
         QString seed = seedToUse;
         if (seed.isEmpty())
             seed = StakeClient::randomClientSeed(10);
-        onLogMessage(tr("Rotating seed pair (new client seed: %1)…").arg(seed), false);
+        m_rotatingCasino = m_live.casino;
+        onLogMessage(tr("%1: rotating seed pair (new client seed: %2)…").arg(casinoDisplayName(m_live.casino), seed), false);
         m_stake->rotateSeedPair(seed);
         return;
     }
@@ -1956,10 +1960,10 @@ void MainWindow::rotateSeed(bool fromScript, const QString &clientSeed)
         m_provider->setClientSeed(seedToUse);
     m_fairPanel->refresh();
     if (fromScript)
-        onLogMessage(tr("Seed pair rotated by script (client seed: %1)").arg(m_provider->clientSeed()),
+        onLogMessage(tr("%1 (simulation): seed pair rotated by script (client seed: %2)").arg(casinoDisplayName(m_live.casino), m_provider->clientSeed()),
                      false);
     else if (!seedToUse.isEmpty())
-        onLogMessage(tr("Seed pair rotated (client seed: %1)").arg(m_provider->clientSeed()), false);
+        onLogMessage(tr("%1 (simulation): seed pair rotated (client seed: %2)").arg(casinoDisplayName(m_live.casino), m_provider->clientSeed()), false);
 }
 
 void MainWindow::onEngineStarted()
