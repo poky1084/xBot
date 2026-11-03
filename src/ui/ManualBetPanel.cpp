@@ -1153,3 +1153,8 @@ void ManualBetPanel::refreshDerived()
 
     m_profitOnWin->setText(QString::number(amount() * mult - amount(), 'f', 8));
 }
+
+void ManualBetPanel::setCasino(const QString &casinoKey)
+{
+    m_params->setCasino(casinoKey);
+}

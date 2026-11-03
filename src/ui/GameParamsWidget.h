@@ -26,6 +26,9 @@ public:
     // Inputs this tab does not show (e.g. hilo "suitMode" on the Manual Bet tab: "Stop on" only
     // matters for runs). They keep their default value.
     void setHiddenKeys(const QStringList &keys);
+    // The selected casino ("stake", "shuffle", ...): choices it does not offer are left out
+    // (StakeGames::unsupportedChoices) and a saved one falls back to the default.
+    void setCasino(const QString &casinoKey);
     Game game() const { return m_game; }
     // The game shows something here (inputs or a note).
     bool hasFields() const { return m_hasRows; }
@@ -63,4 +66,5 @@ private:
     bool m_building = false;
     bool m_hasRows = false;
     QStringList m_hiddenKeys;
+    QString m_casino;
 };

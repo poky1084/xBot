@@ -1656,6 +1656,10 @@ void MainWindow::updateGameMenu()
     if (m_gameActions.isEmpty())
         return;
     const QString site = LiveSettings::nameOf(m_live.casino);
+    if (m_manualPanel)
+        m_manualPanel->setCasino(site); // e.g. no plinko "expert" risk on Shuffle
+    if (m_autoPanel)
+        m_autoPanel->setCasino(site);
     bool stakeGames = false;
     for (auto it = m_gameActions.begin(); it != m_gameActions.end(); ++it) {
         const bool offered = StakeGames::casinoSupports(site, it.key());

@@ -20,6 +20,9 @@ namespace StakeGames
 // Paradice only dice, the other casinos dice and limbo.
 QList<Game> gamesForCasino(const QString &casinoKey);
 bool casinoSupports(const QString &casinoKey, Game game);
+// Choices of a game input that a casino does not offer (Shuffle plinko: no "expert" risk).
+// The Manual / Auto Bet tabs leave them out while that casino is selected.
+QStringList unsupportedChoices(const QString &casinoKey, Game game, const QString &key);
 
 // ---- settings of a game -----------------------------------------------------------------
 enum class ParamType {

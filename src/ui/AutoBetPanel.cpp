@@ -508,3 +508,7 @@ void AutoBetPanel::updateRuleWidgets()
     m_multiplierSpin->setEnabled(m_oddsUsed);
     m_chanceSpin->setEnabled(m_oddsUsed);
 }
+void AutoBetPanel::setCasino(const QString &casinoKey)
+{
+    m_params->setCasino(casinoKey);
+}

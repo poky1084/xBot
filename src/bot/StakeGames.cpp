@@ -554,8 +554,17 @@ QList<Game> gamesForCasino(const QString &casinoKey)
     if (k == QLatin1String("paradice"))
         return {Game::Dice};
     if (k == QLatin1String("shuffle"))
-        return {Game::Dice, Game::Limbo, Game::Hilo, Game::Blackjack};
+        return {Game::Dice, Game::Limbo, Game::Keno, Game::Mines, Game::Plinko, Game::Wheel, Game::Hilo,
+                Game::Blackjack};
     return {Game::Dice, Game::Limbo}; // Goated, Wolfbet, Duel, Pasino, Tower, Winna
+}
+
+QStringList unsupportedChoices(const QString &casinoKey, Game game, const QString &key)
+{
+    if (casinoKey.trimmed().compare(QLatin1String("shuffle"), Qt::CaseInsensitive) == 0
+        && game == Game::Plinko && key == QLatin1String("risk"))
+        return {QStringLiteral("expert")};
+    return {};
 }
 
 bool casinoSupports(const QString &casinoKey, Game game)

@@ -189,6 +189,17 @@ private:
                               const QString &resultKey, const QJsonObject &params, double requestedAmount,
                               bool firstRequest);
     QString shuffleWindowId();
+    // Shuffle keno (KenoPlay GraphQL), answered in Stake's keno shape.
+    void placeShuffleKeno(const GameBetRequest &request);
+    // Shuffle mines (MinesAutoBet: all tiles revealed in one request, like Stake's mines bet).
+    void placeShuffleMines(const GameBetRequest &request);
+    // Shuffle plinko (PlinkoPlay GraphQL), answered in Stake's plinko shape.
+    void placeShufflePlinko(const GameBetRequest &request);
+    // Shuffle wheel (WheelPlay GraphQL), answered in Stake's wheel shape.
+    void placeShuffleWheel(const GameBetRequest &request);
+    QJsonObject shuffleAutoBetInfo(); // the autoBetInfo the site sends with auto bets
+    QString m_shuffleAutoSessionId; // autoBetInfo.sessionId (one per app session)
+    int m_shuffleAutoBetCount = 0;  // autoBetInfo.currentBetCount
     // Shuffle hilo (HiloStart / HiloNext / HiloActiveBet), also turned into Stake's shape.
     void placeShuffleHilo(const GameBetRequest &request);
     void sendShuffleHilo(const QString &endpoint, const QJsonObject &stakeBody, const QJsonObject &params,

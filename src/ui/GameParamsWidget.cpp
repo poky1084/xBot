@@ -105,8 +105,9 @@ QJsonObject GameParamsWidget::valuesFor(Game game) const
     QJsonObject values = StakeGames::defaultParams(game);
     const QJsonObject saved = m_values.value(gameName(game));
     for (auto it = saved.begin(); it != saved.end(); ++it)
-        if (values.contains(it.key()) && !m_hiddenKeys.contains(it.key()))
-            values.insert(it.key(), it.value()); // hidden inputs keep their default
+        if (values.contains(it.key()) && !m_hiddenKeys.contains(it.key())
+            && !StakeGames::unsupportedChoices(m_casino, game, it.key()).contains(it.value().toString()))
+            values.insert(it.key(), it.value()); // hidden inputs / choices the casino lacks: default
     return values;
 }
 
@@ -115,6 +116,15 @@ void GameParamsWidget::setGame(Game game)
     if (game == m_game && !m_fields.isEmpty())
         return;
     m_game = game;
+    rebuild();
+}
+
+void GameParamsWidget::setCasino(const QString &casinoKey)
+{
+    const QString key = casinoKey.trimmed().toLower();
+    if (key == m_casino)
+        return;
+    m_casino = key;
     rebuild();
 }
 
@@ -163,12 +173,15 @@ void GameParamsWidget::rebuild()
         case ParamType::Choice: {
             auto *combo = new QComboBox; // fixed choices, like the C# panels
             // Each item shows its label (e.g. "♥ Hearts") and carries its value ("H").
+            const QStringList lacking = StakeGames::unsupportedChoices(m_casino, m_game, spec.key);
             for (int i = 0; i < spec.choices.size(); ++i) {
+                if (lacking.contains(spec.choices.at(i)))
+                    continue; // not offered by the selected casino
                 const QString shown = i < spec.choiceLabels.size() ? spec.choiceLabels.at(i) : spec.choices.at(i);
                 combo->addItem(shown, spec.choices.at(i));
                 const QString color = i < spec.choiceColors.size() ? spec.choiceColors.at(i) : QString();
                 if (!color.isEmpty())
-                    combo->setItemData(i, QColor(color), Qt::ForegroundRole);
+                    combo->setItemData(combo->count() - 1, QColor(color), Qt::ForegroundRole);
             }
             // A number saved earlier (wheel segments used to be a spin box) picks its item too.
             const QString want = v.isString() ? v.toString()

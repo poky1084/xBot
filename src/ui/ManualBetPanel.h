@@ -40,6 +40,8 @@ public:
     // Dice shows the target bar / side button; Limbo shows only the multiplier target; Stake's
     // other games show their own settings (risk, numbers, mines, ...).
     void setGame(Game game);
+    // Leaves out the game choices the selected casino does not offer (GameParamsWidget::setCasino).
+    void setCasino(const QString &casinoKey);
     Game game() const { return m_game; }
 
     // Settings of Stake's other games, all games at once (saved per window).

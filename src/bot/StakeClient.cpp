@@ -1234,6 +1234,22 @@ void StakeClient::placeGame(const GameBetRequest &request)
         placeShuffleHilo(request);
         return;
     }
+    if (isShuffle() && request.game == Game::Keno) {
+        placeShuffleKeno(request);
+        return;
+    }
+    if (isShuffle() && request.game == Game::Mines) {
+        placeShuffleMines(request);
+        return;
+    }
+    if (isShuffle() && request.game == Game::Plinko) {
+        placeShufflePlinko(request);
+        return;
+    }
+    if (isShuffle() && request.game == Game::Wheel) {
+        placeShuffleWheel(request);
+        return;
+    }
     if (!isStake()) {
         failLater(failed(tr("%1 is only available on Stake - switch the casino to Stake or pick "
                             "another game.").arg(gameDisplayName(request.game))));
@@ -1548,6 +1564,433 @@ void StakeClient::postShuffleBlackjack(const QString &operation, const QString &
             if (after.isString() || after.isDouble())
                 r.balanceAfter = numberOf(after);
         }
+        emit diceFinished(r);
+    });
+}
+
+// ---------------------------------------------------------------- Shuffle keno
+void StakeClient::placeShuffleKeno(const GameBetRequest &request)
+{
+    // Numbers and risk as Stake's request would have them (the tab's 1..40 tiles or a script's
+    // numbers). Stake takes them 0-based; Shuffle numbers its keno board 1..40
+    // (KENO_SELECTED_BOUNDS for a 0), so they go back up by one.
+    QString endpoint;
+    QJsonObject stakeBody;
+    QString err;
+    if (!StakeGames::buildBetRequest(Game::Keno, request.amount, m_currency, request.params,
+                                     &endpoint, &stakeBody, &err)) {
+        const LiveBetResult r = failed(err);
+        QTimer::singleShot(0, this, [this, r] { emit diceFinished(r); });
+        return;
+    }
+    QJsonObject data;
+    data.insert(QStringLiteral("amount"), QString::number(request.amount, 'f', 8));
+    data.insert(QStringLiteral("currency"), ShuffleTransport::apiCurrency(m_currency));
+    // Shuffle's risk names: CLASSIC, LOW_RISK, MEDIUM_RISK, HIGH_RISK.
+    const QString risk = stakeBody.value(QStringLiteral("risk")).toString().toUpper();
+    data.insert(QStringLiteral("risk"), risk == QLatin1String("CLASSIC") ? risk : risk + QStringLiteral("_RISK"));
+    QJsonArray selected;
+    for (const QJsonValue &n : stakeBody.value(QStringLiteral("numbers")).toArray())
+        selected.append(n.toInt() + 1);
+    data.insert(QStringLiteral("selected"), selected);
+    data.insert(QStringLiteral("windowId"), shuffleWindowId());
+    data.insert(QStringLiteral("usdAmount"), 0);
+
+    QJsonObject body;
+    body.insert(QStringLiteral("operationName"), QStringLiteral("KenoPlay"));
+    body.insert(QStringLiteral("variables"), QJsonObject{{QStringLiteral("data"), data}});
+    body.insert(QStringLiteral("query"), QStringLiteral(
+        "mutation KenoPlay($data: KenoPlayInput!) {\n  kenoPlay(data: $data) {\n    id\n    amount\n"
+        "    multiplier\n    currency\n    jackpot\n    payout\n    afterBalance\n"
+        "    shuffleOriginalActions {\n      id\n      action {\n        keno {\n          results\n"
+        "          risk\n          multiplier\n          selected\n          __typename\n        }\n"
+        "        __typename\n      }\n      __typename\n    }\n    __typename\n  }\n}"));
+
+    const QJsonObject params = request.params;
+    const double requestedAmount = request.amount;
+    m_transport->post(QStringLiteral("main-api/graphql/api/graphql"), body,
+                      [this, params, requestedAmount](const TransportReply &reply) {
+        if (!reply.ok) {
+            const bool isTimeout = (reply.status == 0);
+            const bool unknown = (reply.status >= 500);
+            if (reply.status == 0)
+                emit sessionLost(reply.error);
+            emit diceFinished(failed(reply.error, {}, isTimeout, unknown));
+            return;
+        }
+        QString type;
+        const QString apiError = firstErrorText(reply.json, &type);
+        if (!apiError.isEmpty()) {
+            LiveBetResult r = failed(apiError, type, isRetryable(type, apiError), false);
+            r.retryDelayMs = fastRetryDelayMs(type, apiError);
+            emit diceFinished(r);
+            return;
+        }
+        const QJsonObject play = reply.json.value(QStringLiteral("data")).toObject()
+                                     .value(QStringLiteral("kenoPlay")).toObject();
+        const QJsonArray steps = play.value(QStringLiteral("shuffleOriginalActions")).toArray();
+        const QJsonObject keno = steps.isEmpty()
+            ? QJsonObject()
+            : steps.first().toObject().value(QStringLiteral("action")).toObject()
+                  .value(QStringLiteral("keno")).toObject();
+        if (play.isEmpty() || keno.isEmpty()) {
+            emit diceFinished(failed(tr("Unexpected Shuffle keno response (no kenoPlay result)."), {}, true, false));
+            return;
+        }
+        // Stake's keno shape: state {risk, selectedNumbers, drawnNumbers}, 0-based like Stake's
+        // (Shuffle answers 1..40).
+        const auto zeroBased = [](const QJsonValue &v) {
+            QJsonArray out;
+            for (const QJsonValue &n : v.toArray())
+                out.append(n.toInt() - 1);
+            return out;
+        };
+        QJsonObject state;
+        QString risk = keno.value(QStringLiteral("risk")).toString().toLower(); // "low_risk" -> "low"
+        if (risk.endsWith(QLatin1String("_risk")))
+            risk.chop(5);
+        state.insert(QStringLiteral("risk"), risk);
+        state.insert(QStringLiteral("selectedNumbers"), zeroBased(keno.value(QStringLiteral("selected"))));
+        state.insert(QStringLiteral("drawnNumbers"), zeroBased(keno.value(QStringLiteral("results"))));
+        const QJsonValue m = play.value(QStringLiteral("multiplier"));
+        const double mult = (m.isNull() || m.isUndefined()) ? numberOf(keno.value(QStringLiteral("multiplier")))
+                                                            : numberOf(m);
+        QJsonObject bet;
+        bet.insert(QStringLiteral("id"), play.value(QStringLiteral("id")).toString());
+        bet.insert(QStringLiteral("amount"), numberOf(play.value(QStringLiteral("amount"))));
+        bet.insert(QStringLiteral("payout"), numberOf(play.value(QStringLiteral("payout"))));
+        bet.insert(QStringLiteral("payoutMultiplier"), mult);
+        bet.insert(QStringLiteral("active"), false);
+        bet.insert(QStringLiteral("currency"), play.value(QStringLiteral("currency")).toString().toLower());
+        bet.insert(QStringLiteral("game"), QStringLiteral("keno"));
+        bet.insert(QStringLiteral("state"), state);
+        LiveBetResult r = gameResult(Game::Keno, bet, params, requestedAmount);
+        const QJsonValue after = play.value(QStringLiteral("afterBalance"));
+        if (after.isString() || after.isDouble())
+            r.balanceAfter = numberOf(after);
+        emit diceFinished(r);
+    });
+}
+
+// ---------------------------------------------------------------- Shuffle auto-bet info
+QJsonObject StakeClient::shuffleAutoBetInfo()
+{
+    if (m_shuffleAutoSessionId.isEmpty()) {
+        static const char chars[] = "abcdefghijklmnopqrstuvwxyz0123456789";
+        for (int i = 0; i < 10; ++i)
+            m_shuffleAutoSessionId += QLatin1Char(chars[QRandomGenerator::global()->bounded(36)]);
+    }
+    QJsonObject info;
+    info.insert(QStringLiteral("sessionId"), m_shuffleAutoSessionId);
+    info.insert(QStringLiteral("totalPnl"), QStringLiteral("0"));
+    info.insert(QStringLiteral("currentBetCount"), ++m_shuffleAutoBetCount);
+    info.insert(QStringLiteral("metadata"), QStringLiteral(
+        "{\"config\":{\"betCount\":\"0\",\"onWinMode\":\"reset\",\"onLossMode\":\"reset\","
+        "\"onWinPercentage\":\"0.00\",\"onLossPercentage\":\"0.00\",\"stopOnProfit\":\"0.00\","
+        "\"stopOnLoss\":\"0.00\"}}"));
+    return info;
+}
+
+// ---------------------------------------------------------------- Shuffle wheel
+void StakeClient::placeShuffleWheel(const GameBetRequest &request)
+{
+    QString endpoint;
+    QJsonObject stakeBody;
+    QString err;
+    if (!StakeGames::buildBetRequest(Game::Wheel, request.amount, m_currency, request.params,
+                                     &endpoint, &stakeBody, &err)) {
+        const LiveBetResult r = failed(err);
+        QTimer::singleShot(0, this, [this, r] { emit diceFinished(r); });
+        return;
+    }
+    // Shuffle writes the segment count as a word (TEN .. FIFTY) and the risk in capitals.
+    static const QMap<int, QString> words = {{10, QStringLiteral("TEN")}, {20, QStringLiteral("TWENTY")},
+                                             {30, QStringLiteral("THIRTY")}, {40, QStringLiteral("FORTY")},
+                                             {50, QStringLiteral("FIFTY")}};
+    const int segments = stakeBody.value(QStringLiteral("segments")).toInt(10);
+    if (!words.contains(segments)) {
+        const LiveBetResult r = failed(tr("Wheel: segments must be 10, 20, 30, 40 or 50."));
+        QTimer::singleShot(0, this, [this, r] { emit diceFinished(r); });
+        return;
+    }
+    QJsonObject data;
+    data.insert(QStringLiteral("amount"), QString::number(request.amount, 'f', 8));
+    data.insert(QStringLiteral("currency"), ShuffleTransport::apiCurrency(m_currency));
+    data.insert(QStringLiteral("risk"), stakeBody.value(QStringLiteral("risk")).toString().toUpper());
+    data.insert(QStringLiteral("segments"), words.value(segments));
+    data.insert(QStringLiteral("windowId"), shuffleWindowId());
+    data.insert(QStringLiteral("autoBetInfo"), shuffleAutoBetInfo());
+    data.insert(QStringLiteral("usdAmount"), 0);
+
+    QJsonObject body;
+    body.insert(QStringLiteral("operationName"), QStringLiteral("WheelPlay"));
+    body.insert(QStringLiteral("variables"), QJsonObject{{QStringLiteral("data"), data}});
+    body.insert(QStringLiteral("query"), QStringLiteral(
+        "mutation WheelPlay($data: WheelPlayInput!) {\n  wheelPlay(data: $data) {\n    id\n    currency\n"
+        "    amount\n    payout\n    createdAt\n    shuffleOriginalActions {\n      id\n      action {\n"
+        "        wheel {\n          resultRaw\n          resultSegment\n          risk\n          segments\n"
+        "          __typename\n        }\n        __typename\n      }\n      __typename\n    }\n"
+        "    afterBalance\n    multiplier\n    __typename\n  }\n}"));
+
+    const QJsonObject params = request.params;
+    const double requestedAmount = request.amount;
+    m_transport->post(QStringLiteral("main-api/graphql/api/graphql"), body,
+                      [this, params, requestedAmount](const TransportReply &reply) {
+        if (!reply.ok) {
+            const bool isTimeout = (reply.status == 0);
+            const bool unknown = (reply.status >= 500);
+            if (reply.status == 0)
+                emit sessionLost(reply.error);
+            emit diceFinished(failed(reply.error, {}, isTimeout, unknown));
+            return;
+        }
+        QString type;
+        const QString apiError = firstErrorText(reply.json, &type);
+        if (!apiError.isEmpty()) {
+            LiveBetResult r = failed(apiError, type, isRetryable(type, apiError), false);
+            r.retryDelayMs = fastRetryDelayMs(type, apiError);
+            emit diceFinished(r);
+            return;
+        }
+        const QJsonObject play = reply.json.value(QStringLiteral("data")).toObject()
+                                     .value(QStringLiteral("wheelPlay")).toObject();
+        const QJsonArray steps = play.value(QStringLiteral("shuffleOriginalActions")).toArray();
+        const QJsonObject wheel = steps.isEmpty()
+            ? QJsonObject()
+            : steps.last().toObject().value(QStringLiteral("action")).toObject()
+                  .value(QStringLiteral("wheel")).toObject();
+        if (play.isEmpty() || wheel.isEmpty()) {
+            emit diceFinished(failed(tr("Unexpected Shuffle wheel response (no wheelPlay result)."), {}, true, false));
+            return;
+        }
+        // Stake's wheel shape: state {risk, segments (number), result (segment index)}.
+        static const QMap<QString, int> numbers = {{QStringLiteral("TEN"), 10}, {QStringLiteral("TWENTY"), 20},
+                                                   {QStringLiteral("THIRTY"), 30}, {QStringLiteral("FORTY"), 40},
+                                                   {QStringLiteral("FIFTY"), 50}};
+        QJsonObject state;
+        state.insert(QStringLiteral("risk"), wheel.value(QStringLiteral("risk")).toString().toLower());
+        state.insert(QStringLiteral("segments"),
+                     numbers.value(wheel.value(QStringLiteral("segments")).toString().toUpper(), 0));
+        state.insert(QStringLiteral("result"), wheel.value(QStringLiteral("resultSegment")).toInt());
+        const double mult = numberOf(play.value(QStringLiteral("multiplier")));
+        QJsonObject bet;
+        bet.insert(QStringLiteral("id"), play.value(QStringLiteral("id")).toString());
+        bet.insert(QStringLiteral("amount"), numberOf(play.value(QStringLiteral("amount"))));
+        bet.insert(QStringLiteral("payout"), numberOf(play.value(QStringLiteral("payout"))));
+        bet.insert(QStringLiteral("payoutMultiplier"), mult);
+        bet.insert(QStringLiteral("active"), false);
+        bet.insert(QStringLiteral("currency"), play.value(QStringLiteral("currency")).toString().toLower());
+        bet.insert(QStringLiteral("game"), QStringLiteral("wheel"));
+        bet.insert(QStringLiteral("state"), state);
+        LiveBetResult r = gameResult(Game::Wheel, bet, params, requestedAmount);
+        const QJsonValue after = play.value(QStringLiteral("afterBalance"));
+        if (after.isString() || after.isDouble())
+            r.balanceAfter = numberOf(after);
+        emit diceFinished(r);
+    });
+}
+
+// ---------------------------------------------------------------- Shuffle plinko
+void StakeClient::placeShufflePlinko(const GameBetRequest &request)
+{
+    // Rows and risk as Stake's request would have them.
+    QString endpoint;
+    QJsonObject stakeBody;
+    QString err;
+    if (!StakeGames::buildBetRequest(Game::Plinko, request.amount, m_currency, request.params,
+                                     &endpoint, &stakeBody, &err)) {
+        const LiveBetResult r = failed(err);
+        QTimer::singleShot(0, this, [this, r] { emit diceFinished(r); });
+        return;
+    }
+    const QJsonObject vars = stakeBody.value(QStringLiteral("variables")).toObject();
+    if (vars.value(QStringLiteral("risk")).toString().compare(QLatin1String("expert"), Qt::CaseInsensitive) == 0) {
+        const LiveBetResult r = failed(tr("Shuffle plinko has no expert risk - use low, medium or high."));
+        QTimer::singleShot(0, this, [this, r] { emit diceFinished(r); });
+        return;
+    }
+    QJsonObject data;
+    data.insert(QStringLiteral("amount"), QString::number(request.amount, 'f', 8));
+    data.insert(QStringLiteral("currency"), ShuffleTransport::apiCurrency(m_currency));
+    // Shuffle's risk names: LOW_RISK, MEDIUM_RISK, HIGH_RISK (it has no expert risk).
+    data.insert(QStringLiteral("risk"), vars.value(QStringLiteral("risk")).toString().toUpper()
+                                            + QStringLiteral("_RISK"));
+    data.insert(QStringLiteral("rows"), vars.value(QStringLiteral("rows")).toInt(8));
+    data.insert(QStringLiteral("autoBetInfo"), shuffleAutoBetInfo());
+    data.insert(QStringLiteral("windowId"), shuffleWindowId());
+    data.insert(QStringLiteral("usdAmount"), 0);
+
+    QJsonObject body;
+    body.insert(QStringLiteral("operationName"), QStringLiteral("PlinkoPlay"));
+    body.insert(QStringLiteral("variables"), QJsonObject{{QStringLiteral("data"), data}});
+    body.insert(QStringLiteral("query"), QStringLiteral(
+        "mutation PlinkoPlay($data: PlinkoPlayInput!) {\n  plinkoPlay(data: $data) {\n    id\n    currency\n"
+        "    amount\n    multiplier\n    payout\n    shuffleOriginalActions {\n      id\n      action {\n"
+        "        plinko {\n          risk\n          results\n          rows\n          multiplier\n"
+        "          __typename\n        }\n        __typename\n      }\n      updatedAt\n      createdAt\n"
+        "      __typename\n    }\n    afterBalance\n    __typename\n  }\n}"));
+
+    const QJsonObject params = request.params;
+    const double requestedAmount = request.amount;
+    m_transport->post(QStringLiteral("main-api/graphql/api/graphql"), body,
+                      [this, params, requestedAmount](const TransportReply &reply) {
+        if (!reply.ok) {
+            const bool isTimeout = (reply.status == 0);
+            const bool unknown = (reply.status >= 500);
+            if (reply.status == 0)
+                emit sessionLost(reply.error);
+            emit diceFinished(failed(reply.error, {}, isTimeout, unknown));
+            return;
+        }
+        QString type;
+        const QString apiError = firstErrorText(reply.json, &type);
+        if (!apiError.isEmpty()) {
+            LiveBetResult r = failed(apiError, type, isRetryable(type, apiError), false);
+            r.retryDelayMs = fastRetryDelayMs(type, apiError);
+            emit diceFinished(r);
+            return;
+        }
+        const QJsonObject play = reply.json.value(QStringLiteral("data")).toObject()
+                                     .value(QStringLiteral("plinkoPlay")).toObject();
+        const QJsonArray steps = play.value(QStringLiteral("shuffleOriginalActions")).toArray();
+        const QJsonObject plinko = steps.isEmpty()
+            ? QJsonObject()
+            : steps.last().toObject().value(QStringLiteral("action")).toObject()
+                  .value(QStringLiteral("plinko")).toObject();
+        if (play.isEmpty() || plinko.isEmpty()) {
+            emit diceFinished(failed(tr("Unexpected Shuffle plinko response (no plinkoPlay result)."), {}, true, false));
+            return;
+        }
+        // Stake's plinko shape: state {risk, rows, path} (path: Shuffle's 0 = left / 1 = right
+        // per row, as "L" / "R").
+        QString risk = plinko.value(QStringLiteral("risk")).toString().toLower();
+        if (risk.endsWith(QLatin1String("_risk")))
+            risk.chop(5);
+        QJsonArray path;
+        for (const QJsonValue &v : plinko.value(QStringLiteral("results")).toArray())
+            path.append(v.toInt() ? QStringLiteral("R") : QStringLiteral("L"));
+        QJsonObject state;
+        state.insert(QStringLiteral("risk"), risk);
+        state.insert(QStringLiteral("rows"), plinko.value(QStringLiteral("rows")).toInt());
+        state.insert(QStringLiteral("path"), path);
+        const QJsonValue m = play.value(QStringLiteral("multiplier"));
+        const double mult = (m.isNull() || m.isUndefined()) ? numberOf(plinko.value(QStringLiteral("multiplier")))
+                                                            : numberOf(m);
+        QJsonObject bet;
+        bet.insert(QStringLiteral("id"), play.value(QStringLiteral("id")).toString());
+        bet.insert(QStringLiteral("amount"), numberOf(play.value(QStringLiteral("amount"))));
+        bet.insert(QStringLiteral("payout"), numberOf(play.value(QStringLiteral("payout"))));
+        bet.insert(QStringLiteral("payoutMultiplier"), mult);
+        bet.insert(QStringLiteral("active"), false);
+        bet.insert(QStringLiteral("currency"), play.value(QStringLiteral("currency")).toString().toLower());
+        bet.insert(QStringLiteral("game"), QStringLiteral("plinko"));
+        bet.insert(QStringLiteral("state"), state);
+        LiveBetResult r = gameResult(Game::Plinko, bet, params, requestedAmount);
+        const QJsonValue after = play.value(QStringLiteral("afterBalance"));
+        if (after.isString() || after.isDouble())
+            r.balanceAfter = numberOf(after);
+        emit diceFinished(r);
+    });
+}
+
+// ---------------------------------------------------------------- Shuffle mines
+void StakeClient::placeShuffleMines(const GameBetRequest &request)
+{
+    // Tiles and mines count as Stake's request would have them (1..25 tiles sent 0-based:
+    // Shuffle numbers the board 0 (top-left) .. 24 too).
+    QString endpoint;
+    QJsonObject stakeBody;
+    QString err;
+    if (!StakeGames::buildBetRequest(Game::Mines, request.amount, m_currency, request.params,
+                                     &endpoint, &stakeBody, &err)) {
+        const LiveBetResult r = failed(err);
+        QTimer::singleShot(0, this, [this, r] { emit diceFinished(r); });
+        return;
+    }
+    // The site sends its auto-bet bookkeeping with every MinesAutoBet; the same defaults here.
+    const QJsonObject autoInfo = shuffleAutoBetInfo();
+
+    QJsonObject data;
+    data.insert(QStringLiteral("selected"), stakeBody.value(QStringLiteral("fields")).toArray());
+    data.insert(QStringLiteral("amount"), QString::number(request.amount, 'f', 8));
+    data.insert(QStringLiteral("currency"), ShuffleTransport::apiCurrency(m_currency));
+    data.insert(QStringLiteral("minesCount"), stakeBody.value(QStringLiteral("minesCount")).toInt(1));
+    data.insert(QStringLiteral("autoBetInfo"), autoInfo);
+
+    QJsonObject body;
+    body.insert(QStringLiteral("operationName"), QStringLiteral("MinesAutoBet"));
+    body.insert(QStringLiteral("variables"), QJsonObject{{QStringLiteral("data"), data}});
+    body.insert(QStringLiteral("query"), QStringLiteral(
+        "mutation MinesAutoBet($data: MinesBetInput!) {\n  minesAuto(data: $data) {\n"
+        "    ...MinesBetFields\n    __typename\n  }\n}\n\n"
+        "fragment MinesBetFields on Bet {\n  id\n  amount\n  payout\n  currency\n  multiplier\n"
+        "  game {\n    id\n    name\n    slug\n    edge\n    __typename\n  }\n"
+        "  shuffleOriginalActions {\n    id\n    updatedAt\n    createdAt\n    action {\n"
+        "      mines {\n        minesResult\n        minesCount\n        winMultiplier\n"
+        "        selected\n        __typename\n      }\n      __typename\n    }\n    __typename\n  }\n"
+        "  gameSeedNonce\n  afterBalance\n  __typename\n}"));
+
+    const QJsonObject params = request.params;
+    const double requestedAmount = request.amount;
+    m_transport->post(QStringLiteral("main-api/graphql/api/graphql"), body,
+                      [this, params, requestedAmount](const TransportReply &reply) {
+        if (!reply.ok) {
+            const bool isTimeout = (reply.status == 0);
+            const bool unknown = (reply.status >= 500);
+            if (reply.status == 0)
+                emit sessionLost(reply.error);
+            emit diceFinished(failed(reply.error, {}, isTimeout, unknown));
+            return;
+        }
+        QString type;
+        const QString apiError = firstErrorText(reply.json, &type);
+        if (!apiError.isEmpty()) {
+            LiveBetResult r = failed(apiError, type, isRetryable(type, apiError), false);
+            r.retryDelayMs = fastRetryDelayMs(type, apiError);
+            emit diceFinished(r);
+            return;
+        }
+        const QJsonObject play = reply.json.value(QStringLiteral("data")).toObject()
+                                     .value(QStringLiteral("minesAuto")).toObject();
+        const QJsonArray steps = play.value(QStringLiteral("shuffleOriginalActions")).toArray();
+        const QJsonObject mines = steps.isEmpty()
+            ? QJsonObject()
+            : steps.last().toObject().value(QStringLiteral("action")).toObject()
+                  .value(QStringLiteral("mines")).toObject();
+        if (play.isEmpty() || mines.isEmpty()) {
+            emit diceFinished(failed(tr("Unexpected Shuffle mines response (no minesAuto result)."), {}, true, false));
+            return;
+        }
+        // Stake's mines shape: state {mines, minesCount, rounds: [{field, payoutMultiplier}]}.
+        const QJsonValue m = play.value(QStringLiteral("multiplier"));
+        const double mult = (m.isNull() || m.isUndefined()) ? numberOf(mines.value(QStringLiteral("winMultiplier")))
+                                                            : numberOf(m);
+        QJsonArray rounds;
+        for (const QJsonValue &f : mines.value(QStringLiteral("selected")).toArray()) {
+            QJsonObject round;
+            round.insert(QStringLiteral("field"), f.toInt());
+            round.insert(QStringLiteral("payoutMultiplier"), mult);
+            rounds.append(round);
+        }
+        QJsonObject state;
+        state.insert(QStringLiteral("mines"), mines.value(QStringLiteral("minesResult")).toArray());
+        state.insert(QStringLiteral("minesCount"), mines.value(QStringLiteral("minesCount")).toInt());
+        state.insert(QStringLiteral("rounds"), rounds);
+        QJsonObject bet;
+        bet.insert(QStringLiteral("id"), play.value(QStringLiteral("id")).toString());
+        bet.insert(QStringLiteral("amount"), numberOf(play.value(QStringLiteral("amount"))));
+        bet.insert(QStringLiteral("payout"), numberOf(play.value(QStringLiteral("payout"))));
+        bet.insert(QStringLiteral("payoutMultiplier"), mult);
+        bet.insert(QStringLiteral("active"), false);
+        bet.insert(QStringLiteral("currency"), play.value(QStringLiteral("currency")).toString().toLower());
+        bet.insert(QStringLiteral("game"), QStringLiteral("mines"));
+        bet.insert(QStringLiteral("state"), state);
+        LiveBetResult r = gameResult(Game::Mines, bet, params, requestedAmount);
+        if (play.contains(QStringLiteral("gameSeedNonce")))
+            r.nonce = qint64(numberOf(play.value(QStringLiteral("gameSeedNonce"))));
+        const QJsonValue after = play.value(QStringLiteral("afterBalance"));
+        if (after.isString() || after.isDouble())
+            r.balanceAfter = numberOf(after);
         emit diceFinished(r);
     });
 }

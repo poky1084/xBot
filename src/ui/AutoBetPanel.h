@@ -35,6 +35,8 @@ public:
     // The game being played: dice / limbo show Multiplier / Win chance / Direction, Stake's
     // other games their own settings (risk, numbers, mines, ...) in that place.
     void setGame(Game game);
+    // Leaves out the game choices the selected casino does not offer (GameParamsWidget::setCasino).
+    void setCasino(const QString &casinoKey);
     // Settings of Stake's other games for the auto-bet, all games at once (saved per window).
     QJsonObject gameParams() const;
     void setGameParams(const QJsonObject &all);
