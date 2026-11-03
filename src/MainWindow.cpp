@@ -760,6 +760,13 @@ MainWindow::MainWindow(int slot, bool freshWebSession, QWidget *parent)
         ScopedSettings settings(settingsGroup());
         settings.setValue(QStringLiteral("Manual/betAmount"), amount);
     });
+    // Insurance row shown / hidden, a split widening the table: fit the tab to it again.
+    connect(m_manualPanel, &ManualBetPanel::contentHeightChanged, this, [this] {
+        QTimer::singleShot(0, this, [this] {
+            if (m_tabs && m_tabs->currentWidget() == m_manualPanel && bottomPanelHeight() != m_panelHeight)
+                updateCentralHeight();
+        });
+    });
     // Multiplier / Win chance (stored as the dice target + side and the limbo target) are
     // saved per window as soon as they change, like the amount. Not before they were loaded:
     // the panel's defaults would overwrite the saved values.
@@ -2367,11 +2374,20 @@ int MainWindow::bottomPanelHeight() const
     if (QLayout *l = page->layout())
         l->activate();
     const int tabBarH = m_tabs->tabBar()->sizeHint().height();
-    const int contentH = std::max({page->sizeHint().height(),
-                                   page->minimumSizeHint().height(),
-                                   page->minimumHeight(),
-                                   80});
-    int needed = contentH + tabBarH + 8; // small buffer for the pane border
+    int contentH = std::max({page->sizeHint().height(),
+                             page->minimumSizeHint().height(),
+                             page->minimumHeight(),
+                             80});
+    int buffer = 8; // small buffer for the pane border
+    // Manual Bet: exactly as tall as the controls it shows (its size hint keeps room for
+    // hidden rows / card strip scroll bars, which left an empty band above the tab bar).
+    if (page == m_manualPanel) {
+        if (const int fitted = m_manualPanel->contentHeight(); fitted > 0) {
+            contentH = fitted;
+            buffer = 0;
+        }
+    }
+    int needed = contentH + tabBarH + buffer;
     if (auto *holder = dynamic_cast<FixedWidthHolder *>(m_tabs->parentWidget()))
         needed += holder->scrollBarHeight();
     return needed;

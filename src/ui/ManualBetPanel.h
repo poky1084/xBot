@@ -53,6 +53,11 @@ public:
     // Live betting needs crypto-sized amounts (e.g. 8 decimals, min 1e-8).
     void setBetPrecision(int decimals, double minBet);
 
+    // Height the visible controls actually take (top margin to the lowest visible control,
+    // plus the bottom margin), so the tab can be just as tall as its content. 0 = not laid
+    // out yet (use sizeHint()).
+    int contentHeight() const;
+
 public slots:
     void onBetResult(const BetRecord &record);
     void updateBalance(double balance);
@@ -71,6 +76,8 @@ signals:
     void blackjackMoveRequested(const QString &move);
     void gameChanged();                // target/side/amount changed
     void amountChanged(double amount); // the bet amount was changed (typed, ½ / 2×, loaded)
+    // Something shown / hidden that can change contentHeight() (e.g. the insurance row).
+    void contentHeightChanged();
 
 private slots:
     void onTargetSlider(int value);

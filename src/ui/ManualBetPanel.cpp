@@ -16,6 +16,7 @@
 #include <QPushButton>
 #include <QRegularExpression>
 #include <QScrollArea>
+#include <QLayout>
 #include <QScrollBar>
 #include <QSlider>
 #include <QTimer>
@@ -744,6 +745,9 @@ void ManualBetPanel::applyGameLayout()
     m_bjBox->setVisible(blackjack);
     m_bjScroll->setVisible(blackjack);
     m_bjStatus->setVisible(blackjack && !m_bjStatus->text().isEmpty());
+    // Blackjack (every casino): no big result line ("D 17  2.0000x") under the table,
+    // the table already shows the dealer's and player's hands.
+    m_lastResult->setVisible(!blackjack);
     // Blackjack's "actions handled by bot logic" note is for auto-bets; here the buttons play.
     QStringList hidden = {QStringLiteral("suitMode"), QStringLiteral("hiloPattern")};
     if (blackjack)
@@ -802,10 +806,42 @@ void ManualBetPanel::setLocked(bool locked)
     updateBlackjackButtons();
 }
 
+int ManualBetPanel::contentHeight() const
+{
+    if (!isVisible())
+        return 0; // not laid out: the caller falls back to sizeHint()
+    if (QLayout *l = layout())
+        l->activate();
+    // Both columns end in a stretch, so the visible controls are packed at the top: the
+    // lowest one's bottom edge is where the content ends, however tall the page is.
+    int bottom = 0;
+    for (QObject *o : children()) {
+        auto *w = qobject_cast<QWidget *>(o);
+        if (!w || w->isHidden() || w->isWindow())
+            continue;
+        int b = w->geometry().bottom() + 1;
+        // Card strips: up to the cards' own bottom, plus the scroll bar only while it shows
+        // (their fixed height keeps room for it, which is empty space otherwise).
+        if (auto *area = qobject_cast<QScrollArea *>(w); area && area->widget()) {
+            const QScrollBar *bar = area->horizontalScrollBar();
+            const bool barShown = bar && bar->isVisibleTo(area);
+            b = w->geometry().top() + area->frameWidth() * 2 + area->widget()->sizeHint().height()
+                + (barShown ? bar->height() : 0);
+        }
+        bottom = std::max(bottom, b);
+    }
+    if (bottom <= 0)
+        return 0;
+    return bottom + (layout() ? layout()->contentsMargins().bottom() : 0);
+}
+
 void ManualBetPanel::updateBlackjackButtons()
 {
     const bool play = m_bjActive && !m_locked;
+    const bool insWasShown = !m_bjInsRow->isHidden();
     m_bjInsRow->setVisible(m_bjActive && m_bjInsurance_);
+    if (insWasShown != !m_bjInsRow->isHidden())
+        emit contentHeightChanged();
     m_bjInsurance->setEnabled(play && m_bjInsurance_);
     m_bjNoInsurance->setEnabled(play && m_bjInsurance_);
     const bool moves = play && !m_bjInsurance_; // insurance is decided first
@@ -944,6 +980,7 @@ void ManualBetPanel::showBlackjackRound(const QJsonObject &bet, bool active, boo
     m_bjStatus->clear();
     m_bjStatus->setVisible(false);
     updateBlackjackButtons();
+    emit contentHeightChanged(); // a split can bring up the table's scroll bar
 }
 
 void ManualBetPanel::updateHiloButtons()
