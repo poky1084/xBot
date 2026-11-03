@@ -710,6 +710,9 @@ void ManualBetPanel::setGame(Game game)
     if (m_game == game)
         return;
     m_game = game;
+    // A new game starts with an empty result line, not the previous game's last result.
+    m_lastResult->clear();
+    m_resultColor.clear();
     applyGameLayout();
     refreshDerived();
     emit gameChanged();
@@ -740,14 +743,14 @@ void ManualBetPanel::applyGameLayout()
     m_rollBtn->setVisible(!hilo); // hilo: New Game in the button box
     m_hiloBox->setVisible(hilo);
     m_hiloScroll->setVisible(hilo);
-    m_hiloStatus->setVisible(hilo && !m_hiloStatus->text().isEmpty());
+    m_hiloStatus->setVisible(false); // hilo: no status line ("Cashed out at 3.7x.")
     const bool blackjack = m_game == Game::Blackjack;
     m_bjBox->setVisible(blackjack);
     m_bjScroll->setVisible(blackjack);
     m_bjStatus->setVisible(blackjack && !m_bjStatus->text().isEmpty());
-    // Blackjack (every casino): no big result line ("D 17  2.0000x") under the table,
-    // the table already shows the dealer's and player's hands.
-    m_lastResult->setVisible(!blackjack);
+    // Blackjack and hilo (every casino): no big result line ("D 17  2.0000x", "3.6990x")
+    // under the cards, which already show the round.
+    m_lastResult->setVisible(!blackjack && !hilo);
     // Blackjack's "actions handled by bot logic" note is for auto-bets; here the buttons play.
     QStringList hidden = {QStringLiteral("suitMode"), QStringLiteral("hiloPattern")};
     if (blackjack)
@@ -1055,14 +1058,7 @@ void ManualBetPanel::showHiloRound(const QJsonObject &bet, bool active, bool pla
     else
         m_hiloStatus->setText(outcome > 0 ? tr("Cashed out at %1.").arg(hiloMultText(finalMult))
                                           : tr("Lost."));
-    m_hiloStatus->setVisible(m_game == Game::Hilo);
-    if (active && m_game == Game::Hilo) {
-        // The round's multiplier so far, where the final one is shown when it ends
-        // (neutral color until then; 1x before the first guess).
-        m_lastResult->setText(QStringLiteral("%1x").arg(rounds.isEmpty() ? 1.0 : current, 0, 'f', 4));
-        m_resultColor.clear();
-        updateResultStyle();
-    }
+    m_hiloStatus->setVisible(false); // no status line under the hilo cards
     updateHiloButtons();
 
     // Keep the newest card in view.
@@ -1075,6 +1071,10 @@ void ManualBetPanel::onBetResult(const BetRecord &record)
 {
     if (record.game == Game::Dice)
         m_targetBar->setLastRoll(record.roll);
+    // Blackjack and hilo show no result line (the cards show the round), so their bets leave
+    // the label alone: otherwise "D 20  0.0000x" turned up after switching to another game.
+    if (record.game == Game::Blackjack || record.game == Game::Hilo)
+        return;
     if (!isDiceOrLimbo(record.game)) {
         // "3 hits  2.0000x", "fourOfAKind  22.0000x", "1.5000x"
         const QString mult = QStringLiteral("%1x").arg(record.mult, 0, 'f', 4);
