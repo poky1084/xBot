@@ -193,6 +193,26 @@ void GoatedTransport::post(const QString &path, const QJsonObject &body, Transpo
     send("POST", path, QJsonDocument(body).toJson(QJsonDocument::Compact), true, std::move(cb));
 }
 
+void GoatedTransport::get(const QString &path, TransportCallback cb)
+{
+    QString why;
+    if (!isReady(&why)) {
+        QTimer::singleShot(0, this, [cb, why] { cb(failure(why)); });
+        return;
+    }
+    send("GET", path, QByteArray(), false, std::move(cb));
+}
+
+void GoatedTransport::patch(const QString &path, const QJsonObject &body, TransportCallback cb)
+{
+    QString why;
+    if (!isReady(&why)) {
+        QTimer::singleShot(0, this, [cb, why] { cb(failure(why)); });
+        return;
+    }
+    send("PATCH", path, QJsonDocument(body).toJson(QJsonDocument::Compact), true, std::move(cb));
+}
+
 void GoatedTransport::requestBalances()
 {
     QString why;

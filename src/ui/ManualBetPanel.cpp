@@ -809,8 +809,8 @@ void ManualBetPanel::updateBlackjackButtons()
     m_bjInsurance->setEnabled(play && m_bjInsurance_);
     m_bjNoInsurance->setEnabled(play && m_bjInsurance_);
     const bool moves = play && !m_bjInsurance_; // insurance is decided first
-    m_bjHit->setEnabled(moves);
-    m_bjStand->setEnabled(moves);
+    m_bjHit->setEnabled(moves && m_bjCanHit);
+    m_bjStand->setEnabled(moves && m_bjCanStand);
     m_bjSplit->setEnabled(moves && m_bjCanSplit);
     m_bjDouble->setEnabled(moves && m_bjCanDouble);
     // A hand is open: finish it before dealing the next one.
@@ -926,6 +926,19 @@ void ManualBetPanel::showBlackjackRound(const QJsonObject &bet, bool active, boo
     };
     m_bjCanSplit = active && playerHands.size() == 1 && curCards.size() == 2
                    && cardValue(curCards.at(0)) == cardValue(curCards.at(1));
+    m_bjCanHit = m_bjCanStand = true;
+    // Goated reports the moves it allows ("allowedActions", Stake's names): use those.
+    if (active && bet.value(QStringLiteral("allowedActions")).isArray()) {
+        QStringList allowed;
+        for (const QJsonValue &a : bet.value(QStringLiteral("allowedActions")).toArray())
+            allowed << a.toString();
+        m_bjCanHit = allowed.contains(QStringLiteral("hit"));
+        m_bjCanStand = allowed.contains(QStringLiteral("stand"));
+        m_bjCanDouble = allowed.contains(QStringLiteral("double"));
+        m_bjCanSplit = allowed.contains(QStringLiteral("split"));
+        if (allowed.contains(QStringLiteral("insurance")) || allowed.contains(QStringLiteral("noInsurance")))
+            m_bjInsurance_ = true;
+    }
 
     // The past decisions show under each hand ("Actions: deal, hit"); no status line.
     m_bjStatus->clear();

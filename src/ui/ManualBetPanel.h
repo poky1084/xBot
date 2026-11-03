@@ -134,5 +134,7 @@ private:
     bool m_bjInsurance_ = false; // the dealer shows an ace: insurance has to be decided first
     bool m_bjCanSplit = false;
     bool m_bjCanDouble = false;
+    bool m_bjCanHit = true;   // false only when the casino's allowed actions leave it out
+    bool m_bjCanStand = true;
     double m_startBalance = BotConstants::kStartBalance;
 };

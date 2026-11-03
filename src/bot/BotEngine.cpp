@@ -197,6 +197,10 @@ void BotEngine::onLiveFinished(const LiveBetResult &result)
         m_loadingOpenGame = false;
         if (!(result.ok && result.active)) {
             m_inFlight = false; // nothing open: no error, nothing recorded
+            // A round shown as open (finished elsewhere, or on the casino switched away from)
+            // is closed: its buttons go off.
+            if (m_manualGameOpen && m_manualGame == m_inFlightCfg.game)
+                closeManualGame(QJsonObject());
             return;
         }
         // An open round: shown below like a manual bet waiting for its next move.
@@ -448,14 +452,12 @@ void BotEngine::loadOpenGame(const BotConfig &cfg)
         return;
     if (!liveMode() || m_running || m_inFlight || m_startPending || m_rollPending)
         return;
-    if (!m_live->isStake() && !m_live->isShuffle())
-        return; // hilo and blackjack: Stake and Shuffle
+    if (!m_live->isStake() && !m_live->isShuffle() && !m_live->isGoated())
+        return; // hilo and blackjack: Stake, Shuffle and Goated
     if (!liveReady(nullptr))
         return;
-    if (m_manualGameOpen && m_manualGame == cfg.game) {
-        emit manualGameUpdated(m_manualGame, m_manualGameBet, true); // already known
-        return;
-    }
+    // Always ask the casino (the round may have been played on, or finished, on the website
+    // or on another casino meanwhile); the answer replaces what the Manual tab shows.
     m_inFlight = true;
     m_inFlightManual = true;
     m_inFlightCfg = cfg;

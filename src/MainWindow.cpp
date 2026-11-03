@@ -1718,6 +1718,7 @@ void MainWindow::onCasinoSelected(LiveSettings::Casino casino)
     // The session (history, balance graph, stats) is kept when the casino changes.
     applyLiveSettings(next);
     updateCasinoMenu();
+    loadOpenGameIfShown(); // the new casino's open hilo / blackjack round (once logged in)
 }
 
 void MainWindow::closeHiddenBrowser()

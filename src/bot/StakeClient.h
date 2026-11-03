@@ -214,6 +214,25 @@ private:
                          bool firstRequest);
     void placeGoatedDice(const DiceBetRequest &request);
     void placeGoatedLimbo(const LimboBetRequest &request);
+    // Goated blackjack (REST: casino/blackjack/create, hit, stand, double-down, split,
+    // buy-insurance, reject-insurance), answered in Stake's blackjack shape.
+    void placeGoatedBlackjack(const GameBetRequest &request);
+    void sendGoatedBlackjack(const QString &stakeAction, const QJsonObject &params, double requestedAmount);
+    void postGoatedBlackjack(const QString &endpoint, const QJsonObject &body, const QJsonObject &params,
+                             double requestedAmount, bool firstRequest = false);
+    // Goated hilo (casino/hilo/bet, PATCH casino/hilo/select {choice: H / L / S},
+    // casino/hilo/cashout), answered in Stake's hilo shape.
+    void placeGoatedHilo(const GameBetRequest &request);
+    void sendGoatedHilo(const QString &endpoint, const QJsonObject &stakeBody, const QJsonObject &params,
+                        double requestedAmount);
+    void fetchGoatedHilo(const QJsonObject &params, double requestedAmount);
+    void handleGoatedHiloReply(const TransportReply &reply, const QJsonObject &params, double requestedAmount,
+                               bool firstRequest, bool activeQuery);
+    QString m_goatedHiloRank; // the card the next guess is about
+    // GET casino/blackjack/active: the open hand (or a quiet "nothing open").
+    void fetchGoatedBlackjack(const QJsonObject &params, double requestedAmount);
+    void handleGoatedBlackjackReply(const TransportReply &reply, const QJsonObject &params,
+                                    double requestedAmount, bool firstRequest, bool activeQuery);
     void placeWolfbetDice(const DiceBetRequest &request);
     void placeWolfbetLimbo(const LimboBetRequest &request);
     void rotateWolfbetSeed();

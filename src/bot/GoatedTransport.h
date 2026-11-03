@@ -42,6 +42,9 @@ public:
     }
     bool isReady(QString *whyNot = nullptr) const override;
     void post(const QString &path, const QJsonObject &body, TransportCallback cb) override;
+    // GET / PATCH requests (casino/blackjack/active, casino/hilo/select), answered like post().
+    void get(const QString &path, TransportCallback cb);
+    void patch(const QString &path, const QJsonObject &body, TransportCallback cb);
 
     // Reads all balances over HTTPS (lowercase currency code -> amount).
     void requestBalances();
