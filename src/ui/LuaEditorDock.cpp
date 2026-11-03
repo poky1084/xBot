@@ -1037,7 +1037,7 @@ void LuaEditorDock::onHelp()
         "<b>Stake's other games</b> (Stake only; set <code>game</code> and <code>nextbet</code>):<br>"
         "<code>keno</code>: numbers (1 – 40), risk · <code>mines</code>: fields (1 – 25, 1 = top-left), mines · "
         "<code>plinko</code>: rows, risk · <code>wheel</code>: segments, risk · "
-        "<code>dragontower</code>: eggs (1-based, one per floor), difficulty · <code>flip</code> / <code>rps</code>: guesses · "
+        "<code>tower</code>: eggs (1-based, one per floor), difficulty · <code>flip</code> / <code>rps</code>: guesses · "
         "<code>pump</code>: pumps, difficulty · <code>snakes</code>: rolls, difficulty · "
         "<code>cases</code> / <code>darts</code> / <code>tarot</code>: difficulty · "
         "<code>bars</code>: tiles, difficulty · <code>chicken</code>: steps, difficulty · "

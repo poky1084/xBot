@@ -23,6 +23,9 @@ bool casinoSupports(const QString &casinoKey, Game game);
 // Choices of a game input that a casino does not offer (Shuffle plinko: no "expert" risk).
 // The Manual / Auto Bet tabs leave them out while that casino is selected.
 QStringList unsupportedChoices(const QString &casinoKey, Game game, const QString &key);
+// A casino's own upper limit for a number input, given the game's other settings `values`
+// (Shuffle chicken lanes: easy 19, medium 17, hard 15, expert 10); < 0 = none.
+double casinoMaximum(const QString &casinoKey, Game game, const QString &key, const QJsonObject &values);
 
 // ---- settings of a game -----------------------------------------------------------------
 enum class ParamType {

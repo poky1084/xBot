@@ -14,14 +14,14 @@ struct lua_State;
 //         game    = "dice"          -- optional: "dice" or "limbo" (default: the game
 //                                   -- selected in the Game menu); may be changed in dobet().
 //                                   -- On Stake also "keno", "mines", "plinko", "wheel", "hilo",
-//                                   -- "blackjack", "baccarat", "roulette", "dragontower",
+//                                   -- "blackjack", "baccarat", "roulette", "tower",
 //                                   -- "flip", "rps", "pump", "snakes", "cases", "darts",
 //                                   -- "diamonds", "videopoker", "bluesamurai", "scarabspin",
 //                                   -- "tomeoflife", "bars", "chicken", "tarot", "drill",
 //                                   -- "packs", "moles", "primedice" with the reference bot's
 //                                   -- variables (keno: numbers = {1,2,3} (1 .. 40), risk = "low";
 //                                   -- mines: fields = {1,2} (1 .. 25, 1 = top-left), mines = 3;
-//                                   -- dragontower eggs / moles picks 1-based too; baccarat: nextbet =
+//                                   -- tower eggs / moles picks 1-based too; baccarat: nextbet =
 //                                   -- {player = 0, banker = 0.004, tie = 0}; roulette: chips =
 //                                   -- {{value = "colorRed", amount = 0.001}}; hilo / blackjack:
 //                                   -- function round() return HILO_BET_HIGH end, with

@@ -19,6 +19,7 @@
 #include <QSpinBox>
 #include <QVBoxLayout>
 
+#include <algorithm>
 #include <cmath>
 #include <utility>
 
@@ -108,6 +109,12 @@ QJsonObject GameParamsWidget::valuesFor(Game game) const
         if (values.contains(it.key()) && !m_hiddenKeys.contains(it.key())
             && !StakeGames::unsupportedChoices(m_casino, game, it.key()).contains(it.value().toString()))
             values.insert(it.key(), it.value()); // hidden inputs / choices the casino lacks: default
+    // Numbers above the casino's own limit (Shuffle chicken: 17 lanes) are capped.
+    for (auto it = values.begin(); it != values.end(); ++it) {
+        const double cap = StakeGames::casinoMaximum(m_casino, game, it.key(), values);
+        if (cap >= 0.0 && it.value().isDouble() && it.value().toDouble() > cap)
+            it.value() = cap;
+    }
     return values;
 }
 
@@ -152,7 +159,11 @@ void GameParamsWidget::rebuild()
         switch (spec.type) {
         case ParamType::Int: {
             auto *spin = new QSpinBox;
-            spin->setRange(int(spec.min), int(spec.max > spec.min ? spec.max : 1000000));
+            int top = int(spec.max > spec.min ? spec.max : 1000000);
+            const double cap = StakeGames::casinoMaximum(m_casino, m_game, spec.key, values);
+            if (cap >= 0.0)
+                top = std::min(top, int(cap)); // the casino's own limit (Shuffle chicken lanes)
+            spin->setRange(int(spec.min), top);
             spin->setValue(v.isDouble() ? int(std::llround(v.toDouble())) : int(spec.def.toDouble()));
             spin->setKeyboardTracking(false);
             connect(spin, &QSpinBox::valueChanged, this, [this] { storeCurrent(); });
@@ -484,6 +495,22 @@ void GameParamsWidget::storeCurrent()
     QJsonObject values;
     for (const Field &f : std::as_const(m_fields))
         values.insert(f.spec.key, readEditor(f));
+    // A casino limit that depends on another input (Shuffle chicken: lanes per difficulty).
+    m_building = true; // a lowered maximum moves the value: no nested store
+    for (const Field &f : std::as_const(m_fields)) {
+        auto *spin = qobject_cast<QSpinBox *>(f.editor);
+        if (!spin || f.spec.type != StakeGames::ParamType::Int)
+            continue;
+        const double cap = StakeGames::casinoMaximum(m_casino, m_game, f.spec.key, values);
+        if (cap < 0.0)
+            continue;
+        const int top = std::min(int(f.spec.max > f.spec.min ? f.spec.max : 1000000), int(cap));
+        if (spin->maximum() != top) {
+            spin->setMaximum(top);
+            values.insert(f.spec.key, spin->value());
+        }
+    }
+    m_building = false;
     m_values.insert(gameName(m_game), values);
     emit paramsChanged();
 }

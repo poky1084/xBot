@@ -51,13 +51,13 @@ private:
 //
 //   game = "dice";          // optional: "dice", "limbo" or one of Stake's games (Stake only):
 //                           // "keno", "mines", "plinko", "wheel", "hilo", "blackjack", "baccarat",
-//                           // "roulette", "dragontower", "flip", "rps", "pump", "snakes", "cases",
+//                           // "roulette", "tower", "flip", "rps", "pump", "snakes", "cases",
 //                           // "darts", "diamonds", "videopoker", "bluesamurai", "scarabspin",
 //                           // "tomeoflife", "bars", "chicken", "tarot", "drill", "packs", "moles",
 //                           // "primedice". Their settings use the reference bot's variables, e.g.
 //                           // keno: numbers = [1,2,3] (1 .. 40); risk = "low";
 //                           // mines: fields = [1,2] (1 .. 25, 1 = top-left); mines = 3;
-//                           // dragontower eggs / moles picks are 1-based too (1 = the first);
+//                           // tower eggs / moles picks are 1-based too (1 = the first);
 //                           // baccarat: nextbet = {player: 0, banker: 0.004, tie: 0};
 //                           // roulette: chips = [{value: "colorRed", amount: 0.001}];
 //                           // hilo / blackjack: function round() { return HILO_BET_HIGH; } /

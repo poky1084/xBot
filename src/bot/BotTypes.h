@@ -114,10 +114,11 @@ inline const QList<Game> &allGames()
     static const QList<Game> games = {
         Game::Dice,       Game::Limbo,       Game::Baccarat,  Game::Bars,       Game::Blackjack,
         Game::BlueSamurai, Game::Cases,      Game::Chicken,   Game::Darts,      Game::Diamonds,
-        Game::DragonTower, Game::Drill,      Game::Flip,      Game::Hilo,       Game::Keno,
+        Game::Drill,      Game::Flip,        Game::Hilo,      Game::Keno,
         Game::Mines,      Game::Moles,       Game::Packs,     Game::Plinko,     Game::Primedice,
         Game::Pump,       Game::Rps,         Game::Roulette,  Game::ScarabSpin, Game::Snakes,
-        Game::Tarot,      Game::TomeOfLife,  Game::VideoPoker, Game::Wheel};
+        Game::Tarot,      Game::TomeOfLife,  Game::DragonTower, Game::VideoPoker, Game::Wheel};
+    // (Game::DragonTower is "Tower": listed in alphabetical order by that name.)
     return games;
 }
 
@@ -136,7 +137,7 @@ inline QString gameName(Game g)
     case Game::Blackjack:   return QStringLiteral("blackjack");
     case Game::Baccarat:    return QStringLiteral("baccarat");
     case Game::Roulette:    return QStringLiteral("roulette");
-    case Game::DragonTower: return QStringLiteral("dragontower");
+    case Game::DragonTower: return QStringLiteral("tower"); // Stake's Dragon Tower / Shuffle's Tower
     case Game::Flip:        return QStringLiteral("flip");
     case Game::Rps:         return QStringLiteral("rps");
     case Game::Pump:        return QStringLiteral("pump");
@@ -173,7 +174,7 @@ inline QString gameDisplayName(Game g)
     case Game::Blackjack:   return QStringLiteral("Blackjack");
     case Game::Baccarat:    return QStringLiteral("Baccarat");
     case Game::Roulette:    return QStringLiteral("Roulette");
-    case Game::DragonTower: return QStringLiteral("Dragon Tower");
+    case Game::DragonTower: return QStringLiteral("Tower");
     case Game::Flip:        return QStringLiteral("Flip");
     case Game::Rps:         return QStringLiteral("Rock Paper Scissors");
     case Game::Pump:        return QStringLiteral("Pump");
@@ -196,7 +197,8 @@ inline QString gameDisplayName(Game g)
     return QStringLiteral("Dice");
 }
 
-// Parses a script / settings game name ("keno", "Dragon Tower" and "dragon-tower" also work).
+// Parses a script / settings game name ("keno", "Video Poker" and "video-poker" also work;
+// "dragontower", the old name of "tower", too).
 inline bool gameFromName(const QString &name, Game *out)
 {
     QString n = name.trimmed().toLower();
@@ -209,6 +211,8 @@ inline bool gameFromName(const QString &name, Game *out)
         n = QStringLiteral("rps");
     else if (n == QLatin1String("samurai") || n == QLatin1String("slotssamurai"))
         n = QStringLiteral("bluesamurai");
+    else if (n == QLatin1String("dragontower")) // the old name (saved settings, older scripts)
+        n = QStringLiteral("tower");
     for (Game g : allGames()) {
         if (gameName(g) == n) {
             if (out)

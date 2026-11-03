@@ -554,8 +554,8 @@ QList<Game> gamesForCasino(const QString &casinoKey)
     if (k == QLatin1String("paradice"))
         return {Game::Dice};
     if (k == QLatin1String("shuffle"))
-        return {Game::Dice, Game::Limbo, Game::Keno, Game::Mines, Game::Plinko, Game::Wheel, Game::Hilo,
-                Game::Blackjack};
+        return {Game::Dice, Game::Limbo, Game::Keno, Game::Mines, Game::Plinko, Game::Wheel,
+                Game::DragonTower, Game::Chicken, Game::Hilo, Game::Blackjack};
     return {Game::Dice, Game::Limbo}; // Goated, Wolfbet, Duel, Pasino, Tower, Winna
 }
 
@@ -565,6 +565,20 @@ QStringList unsupportedChoices(const QString &casinoKey, Game game, const QStrin
         && game == Game::Plinko && key == QLatin1String("risk"))
         return {QStringLiteral("expert")};
     return {};
+}
+
+double casinoMaximum(const QString &casinoKey, Game game, const QString &key, const QJsonObject &values)
+{
+    if (casinoKey.trimmed().compare(QLatin1String("shuffle"), Qt::CaseInsensitive) == 0
+        && game == Game::Chicken && key == QLatin1String("steps")) {
+        // Shuffle's lanes per difficulty.
+        const QString d = values.value(QStringLiteral("difficulty")).toString().toLower();
+        if (d == QLatin1String("medium")) return 17.0;
+        if (d == QLatin1String("hard")) return 15.0;
+        if (d == QLatin1String("expert")) return 10.0;
+        return 19.0; // easy
+    }
+    return -1.0;
 }
 
 bool casinoSupports(const QString &casinoKey, Game game)
@@ -1089,10 +1103,10 @@ bool buildBetRequest(Game game, double amount, const QString &currency, const QJ
         QJsonArray eggs;
         QString posError;
         if (!toZeroBased(p.contains(QStringLiteral("eggTiles")) ? p.value(QStringLiteral("eggTiles")) : val("eggs"),
-                         QStringLiteral("Dragon Tower: eggs"), &eggs, &posError))
+                         QStringLiteral("Tower: eggs"), &eggs, &posError))
             return fail(posError);
         if (eggs.isEmpty())
-            return fail(QStringLiteral("Dragon Tower: eggs must list the egg picked on each floor."));
+            return fail(QStringLiteral("Tower: eggs must list the egg picked on each floor."));
         b.insert(QStringLiteral("difficulty"), toText(val("difficulty"), QStringLiteral("easy")));
         b.insert(QStringLiteral("eggs"), eggs);
         ep = QStringLiteral("_api/casino/dragon-tower/bet");

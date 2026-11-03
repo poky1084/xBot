@@ -197,6 +197,10 @@ private:
     void placeShufflePlinko(const GameBetRequest &request);
     // Shuffle wheel (WheelPlay GraphQL), answered in Stake's wheel shape.
     void placeShuffleWheel(const GameBetRequest &request);
+    // Shuffle tower (TowerAutoBet: one pick per floor in one request) = the Tower game (Stake's Dragon Tower).
+    void placeShuffleTower(const GameBetRequest &request);
+    // Shuffle chicken (ChickenAuto: cross up to the chosen lane in one request).
+    void placeShuffleChicken(const GameBetRequest &request);
     QJsonObject shuffleAutoBetInfo(); // the autoBetInfo the site sends with auto bets
     QString m_shuffleAutoSessionId; // autoBetInfo.sessionId (one per app session)
     int m_shuffleAutoBetCount = 0;  // autoBetInfo.currentBetCount
