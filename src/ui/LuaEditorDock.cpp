@@ -1074,88 +1074,29 @@ void LuaEditorDock::onSaveAs()
 
 void LuaEditorDock::onHelp()
 {
+    // Names only: the variables and functions a strategy script can use, no descriptions.
     const bool js = m_lang == ScriptLanguage::JavaScript;
-    const QString common = tr(
-		"<code>casino</code> = <code>\"stake\"</code>, <code>\"shuffle\"</code>, <code>\"goated\"</code>, <code>\"wolfbet\"</code>, <code>\"duel\"</code>, <code>\"paradice\"</code>, <code>\"pasino\"</code>, <code>\"tower\"</code> or <code>\"winna\"</code> (set casino to play on)<br><br>"
-        "<code>game</code> – <code>\"dice\"</code>, <code>\"limbo\"</code> or a Stake game below (default: the game "
-        "selected in the Game menu); can be changed at any time, e.g. in <code>dobet()</code><br>"
-        "<code>currency</code> – currency code to bet in, e.g. <code>\"btc\"</code> or "
-        "<code>\"usdt\"</code> (default: the current bet currency); can be changed at any time. "
-        "Live: the account needs a balance in it; the session is kept and only the balance "
-        "becomes the new currency's<br>"
-        "<code>nextbet</code> – amount of the next bet<br>"
-        "<b>Dice:</b><br>"
-        "<code>chance</code> – win chance in % (0.01 – 99.99)<br>"
-        "<code>bethigh</code> – true = roll over, false = roll under<br>"
-        "<b>Limbo:</b><br>"
-        "<code>target</code> – multiplier target (1.01 – 1000000); <code>chance</code> and "
-        "<code>bethigh</code> are not used<br>"
-        "<b>Stake's other games</b> (Stake only; set <code>game</code> and <code>nextbet</code>):<br>"
-        "<code>keno</code>: numbers (1 – 40), risk · <code>mines</code>: fields (1 – 25, 1 = top-left), mines · "
-        "<code>plinko</code>: rows, risk · <code>wheel</code>: segments, risk · "
-        "<code>tower</code>: eggs (1-based, one per floor), difficulty · <code>flip</code> / <code>rps</code>: guesses · "
-        "<code>pump</code>: pumps, difficulty · <code>snakes</code>: rolls, difficulty · "
-        "<code>cases</code> / <code>darts</code> / <code>tarot</code>: difficulty · "
-        "<code>bars</code>: tiles, difficulty · <code>chicken</code>: steps, difficulty · <code>goatrun</code> (Goated): steps, difficulty · "
-        "<code>drill</code>: target, pick (1 – 3) · <code>moles</code>: moles, picks (1-based) · "
-        "<code>scarabspin</code> / <code>tomeoflife</code>: lines · "
-        "<code>primedice</code>: condition, target1 – target4 · "
-        "<code>videopoker</code>: target (hold combos or null) · "
-        "<code>diamonds</code>, <code>packs</code>, <code>bluesamurai</code>: nothing else<br>"
-        "<code>baccarat</code>: nextbet = {player, banker, tie} · "
-        "<code>roulette</code>: chips = list of {value, amount} (nextbet not needed)<br>"
-        "<code>hilo</code>: startcard = {rank, suit} and <code>round()</code>, which returns HILO_BET_HIGH / "
-        "HILO_BET_LOW / HILO_BET_EQUAL / HILO_SKIP / HILO_CASHOUT · "
-        "<code>blackjack</code>: <code>round()</code> returns \"BLACKJACK_HIT\" / \"_STAND\" / "
-        "\"_DOUBLE\" / \"_SPLIT\" / \"_INSURANCE\" / \"_NOINSURANCE\"; in round(), "
-        "<code>currentBet</code> is the open bet. Hilo and blackjack scripts must define round().<br>"
-        "<b>No defaults in code mode:</b> every variable of the game must be set (video poker "
-        "<code>target</code> may be nil / null = optimal hold), otherwise the run stops with the "
-        "missing names.<br><br>"
+    QString text = tr(
+        "<b>Variables</b><br>"
+        "<code>casino, game, currency, nextbet, chance, bethigh, target</code><br><br>"
+        "<b>Stake game variables</b><br>"
+        "<code>numbers, risk, fields, mines, rows, segments, eggs, difficulty, guesses, pumps, "
+        "rolls, tiles, steps, pick, moles, picks, lines, condition, target1, target2, target3, "
+        "target4, chips, startcard, currentBet</code><br><br>"
         "<b>Read only</b><br>"
         "<code>win, previousbet, lastprofit, currentprofit, roll, balance, profit, bets, wins, "
         "losses, wagered, currentstreak, winstreak, losestreak, startbalance</code><br>"
-        "<code>lastBet.amount, lastBet.roll (lastBet.Roll), lastBet.profit, lastBet.payout, "
-        "lastBet.payoutMultiplier, lastBet.win, lastBet.id, lastBet.result</code> – details of the last bet; "
-        "<code>lastBet.result</code> is the game's own result (baccarat \"banker\", roulette's number, the dice roll, ...) "
-        "(<code>lastBet.roll</code> / <code>lastBet.Roll</code>: video poker the hand's outcome, e.g. "
-        "<code>\"twoPair\"</code>; mines the mine positions, keno the drawn numbers, both 1-based lists)<br>"
-        "<code>bet</code> – Stake's full bet object of the last bet (e.g. "
-        "<code>bet.state.playerHand</code>); <code>checkTargetHit(hand, combos)</code> for video "
-        "poker<br><br>"
+        "<code>lastBet.amount, lastBet.roll, lastBet.profit, lastBet.payout, "
+        "lastBet.payoutMultiplier, lastBet.win, lastBet.id, lastBet.result</code><br><br>"
+        "<b>Bet response object</b><br>"
+        "<code>bet</code><br><br>"
         "<b>Functions</b><br>"
-        "<code>dobet()</code> – define it; called after every bet<br>"
-        "<code>stop(\"reason\")</code> – stop the run<br>"
-        "<code>print(...)</code> / <code>log(...)</code> – write to the Console tab<br>"
-        "<code>resetstats()</code> – reset the session statistics (bets, wins, losses, wagered, "
-        "profit, streaks); the balance is kept<br>"
-        "<code>resetseed([clientseed])</code> – rotate the seed pair, e.g. <code>resetseed(\"123xcv123\")</code>; "
-        "without an argument a random 10-character alphanumeric client seed is used (live: waits for a bet "
-        "in flight, the next bet waits for the server)<br>"
-        "<code>vault(amount)</code> – deposit <code>amount</code> of the current currency into the vault, "
-        "e.g. <code>vault(0.001)</code> (live mode)<br>"
-        "<code>beep()</code> / <code>ding()</code> – play a bell tone (the reference bot's beep, e.g. when a target hits)");
+        "<code>dobet(), round(), stop(), print(), log(), %1resetstats(), resetseed(), vault(), "
+        "beep(), ding(), checkTargetHit()</code><br><br>"
+        "<b>Constants</b><br>"
+        "<code>HILO_BET_HIGH, HILO_BET_LOW, HILO_BET_EQUAL, HILO_SKIP, HILO_CASHOUT</code>")
+        .arg(js ? QStringLiteral("console.log(), ") : QString());
 
-    QString text = common;
-    if (js) {
-        text += tr(" (<code>console.log(...)</code> works too; objects are printed as JSON)<br><br>"
-                   "<b>Syntax</b><br>"
-                   "Plain JavaScript (ECMAScript). Set the values above as global variables: "
-                   "<code>nextbet = 0.0001;</code> or <code>var nextbet = 0.0001;</code>. A top-level "
-                   "<code>let</code> / <code>const</code> is not visible to the bot, so use it only "
-                   "inside functions.<br><br>");
-    } else {
-        text += tr("<br><br>"
-                   "<b>Syntax</b><br>"
-                   "<code>!</code> works like <code>not</code> (e.g. <code>bethigh = !bethigh</code>) and "
-                   "<code>!=</code> like <code>~=</code>. The compound assignments <code>+=</code>, "
-                   "<code>-=</code>, <code>*=</code>, <code>/=</code> (also <code>//=</code>, "
-                   "<code>%=</code>, <code>^=</code>, <code>..=</code>) work too: "
-                   "<code>nextbet *= 2</code> means <code>nextbet = nextbet * (2)</code>. Put one "
-                   "such statement per line (or end it with <code>;</code>) and keep the left side "
-                   "free of function calls, because it is evaluated twice.<br><br>");
-    }
-    
     QMessageBox::information(this, tr("%1 strategy reference").arg(scriptLanguageName(m_lang)), text);
 }
 
