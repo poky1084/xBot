@@ -468,6 +468,25 @@ BetRecord BotEngine::rollOnce(const BotConfig &cfg)
     return rec;
 }
 
+void BotEngine::runScriptCommand(const QString &code)
+{
+    emit scriptOutput(QStringLiteral("> %1").arg(code), false); // echo, like a REPL
+    if (!m_scriptActive || !m_script || !m_script->isLoaded()) {
+        emit scriptOutput(tr("No script is running - press Run first, then send commands to it."), true);
+        return;
+    }
+    const ScriptStrategy::Status st = m_script->runCommand(code);
+    if (st == ScriptStrategy::Status::Error) {
+        emit scriptOutput(m_script->lastError(), true);
+        return;
+    }
+    if (st == ScriptStrategy::Status::Stop && m_running) {
+        // stop() from the command line: the same as from dobet().
+        const QString why = m_script->stopReason();
+        stopWithReason(why.isEmpty() ? tr("stopped from the console") : tr("stopped from the console: %1").arg(why));
+    }
+}
+
 void BotEngine::loadOpenGame(const BotConfig &cfg)
 {
     if (cfg.game != Game::Hilo && cfg.game != Game::Blackjack)

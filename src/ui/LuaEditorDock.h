@@ -9,6 +9,7 @@
 class QAction;
 class QComboBox;
 class QLabel;
+class QLineEdit;
 class QPlainTextEdit;
 class QTextDocument;
 class ScriptCodeEdit;
@@ -49,9 +50,14 @@ public:
 
     static QString defaultScript(ScriptLanguage language = ScriptLanguage::Lua);
 
+protected:
+    bool eventFilter(QObject *watched, QEvent *event) override; // command line Up / Down history
+
 signals:
     void runRequested(const QString &script, ScriptLanguage language);
     void stopRequested();
+    // Console tab's command line: a Lua / JavaScript snippet for the running script.
+    void commandRequested(const QString &code);
 
 private slots:
     void onOpen();
@@ -75,6 +81,10 @@ private:
     QComboBox *m_langBox = nullptr;
     QLabel *m_status = nullptr;
     QPlainTextEdit *m_console = nullptr;
+    QLineEdit *m_commandEdit = nullptr;
+    QStringList m_commandHistory; // Up / Down in the command line
+    int m_historyPos = -1;
+    void sendCommand();
     QList<QPair<QString, bool>> m_consoleLines; // (text, isError), kept to re-colour on theme change
     bool m_dark = false;
     QAction *m_actRun = nullptr;

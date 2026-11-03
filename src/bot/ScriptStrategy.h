@@ -71,6 +71,9 @@ public:
     virtual Status callRound(const QJsonObject &currentBet, QJsonValue &result) = 0;
 
     virtual bool isLoaded() const = 0;
+    // Console command line: runs `code` in the loaded script's globals. An expression's value
+    // is printed (print()), statements just run (nextbet = 0.001, stop(), ...).
+    virtual Status runCommand(const QString &code) = 0;
     // Overwrites a string variable of the running script (used when the casino is switched
     // from the menu: `casino` / `currency` must follow, or the script would switch back).
     virtual void setGlobalString(const char *name, const QString &value) = 0;

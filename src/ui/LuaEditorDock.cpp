@@ -9,6 +9,8 @@
 #include <QFileInfo>
 #include <QFontDatabase>
 #include <QLabel>
+#include <QLineEdit>
+#include <algorithm>
 #include <QMessageBox>
 #include <QHBoxLayout>
 #include <QPainter>
@@ -799,11 +801,21 @@ LuaEditorDock::LuaEditorDock(QWidget *parent)
     m_console->setPlaceholderText(tr("print() / log() output and script errors appear here."));
     consoleLayout->addWidget(m_console, 1);
 
+    // Command line: run a Lua / JavaScript snippet in the running script (nextbet = 0.001,
+    // print(balance), stop(), ...). Enter sends, Up / Down go through the earlier commands.
     auto *consoleBar = new QHBoxLayout;
     consoleBar->setContentsMargins(6, 3, 6, 3);
+    consoleBar->setSpacing(4);
+    m_commandEdit = new QLineEdit;
+    m_commandEdit->setPlaceholderText(tr("Command for the running script, e.g. print(balance)"));
+    m_commandEdit->setClearButtonEnabled(true);
+    m_commandEdit->installEventFilter(this);
+    auto *sendBtn = new QPushButton(tr("Send"));
+    connect(sendBtn, &QPushButton::clicked, this, &LuaEditorDock::sendCommand);
     auto *clearBtn = new QPushButton(tr("Clear"));
     connect(clearBtn, &QPushButton::clicked, this, &LuaEditorDock::clearConsole);
-    consoleBar->addStretch();
+    consoleBar->addWidget(m_commandEdit, 1);
+    consoleBar->addWidget(sendBtn);
     consoleBar->addWidget(clearBtn);
     consoleLayout->addLayout(consoleBar);
 
@@ -913,6 +925,50 @@ void LuaEditorDock::appendConsole(const QString &text, bool isError)
     while (m_consoleLines.size() > 1000) // same cap as the console's block count
         m_consoleLines.removeFirst();
     writeConsoleLine(text, isError);
+}
+
+bool LuaEditorDock::eventFilter(QObject *watched, QEvent *event)
+{
+    if (watched == m_commandEdit) {
+        // Enter sends the command. The main window's "Roll once" also uses Enter as its
+        // shortcut, and a shortcut wins over a line edit: claim the key here first.
+        const bool isKey = event->type() == QEvent::ShortcutOverride || event->type() == QEvent::KeyPress;
+        if (isKey) {
+            const int key = static_cast<QKeyEvent *>(event)->key();
+            if (key == Qt::Key_Return || key == Qt::Key_Enter) {
+                event->accept();
+                if (event->type() == QEvent::KeyPress)
+                    sendCommand();
+                return true;
+            }
+        }
+    }
+    if (watched == m_commandEdit && event->type() == QEvent::KeyPress && !m_commandHistory.isEmpty()) {
+        const int key = static_cast<QKeyEvent *>(event)->key();
+        if (key == Qt::Key_Up || key == Qt::Key_Down) {
+            if (key == Qt::Key_Up)
+                m_historyPos = m_historyPos < 0 ? int(m_commandHistory.size()) - 1 : std::max(0, m_historyPos - 1);
+            else if (m_historyPos >= 0)
+                m_historyPos = m_historyPos + 1 < m_commandHistory.size() ? m_historyPos + 1 : -1;
+            m_commandEdit->setText(m_historyPos >= 0 ? m_commandHistory.at(m_historyPos) : QString());
+            return true;
+        }
+    }
+    return QDockWidget::eventFilter(watched, event);
+}
+
+void LuaEditorDock::sendCommand()
+{
+    const QString code = m_commandEdit->text().trimmed();
+    if (code.isEmpty())
+        return;
+    if (m_commandHistory.isEmpty() || m_commandHistory.last() != code)
+        m_commandHistory.append(code);
+    while (m_commandHistory.size() > 100)
+        m_commandHistory.removeFirst();
+    m_historyPos = -1;
+    m_commandEdit->clear();
+    emit commandRequested(code);
 }
 
 void LuaEditorDock::clearConsole()

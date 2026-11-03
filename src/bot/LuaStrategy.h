@@ -94,6 +94,7 @@ public:
     // Call after every bet. Updates nextBet / runCfg from the script's globals.
     Status onBet(const BetInfo &info, double &nextBet, BotConfig &runCfg) override;
     Status callRound(const QJsonObject &currentBet, QJsonValue &result) override;
+    Status runCommand(const QString &code) override;
 
     bool isLoaded() const override { return m_L != nullptr; }
     void setGlobalString(const char *name, const QString &value) override;

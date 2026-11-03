@@ -114,6 +114,9 @@ public:
     // earlier session or the website) so it can be finished with the buttons. Quiet when
     // nothing is open or the connection is not ready.
     void loadOpenGame(const BotConfig &cfg);
+    // Strategy editor's Console command line: runs `code` in the running script (its globals,
+    // functions and print / log / stop ...). Output and errors go to the Console.
+    void runScriptCommand(const QString &code);
 
     // Clears the session and restores the starting balance.
     void resetSession(double initialBalance)

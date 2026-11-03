@@ -274,6 +274,27 @@ bool JsStrategy::runGuarded(const char *what, Fn &&fn)
     return true;
 }
 
+JsStrategy::Status JsStrategy::runCommand(const QString &code)
+{
+    if (!m_engine) {
+        m_error = QStringLiteral("no script is loaded");
+        return Status::Error;
+    }
+    QJSValue result;
+    if (!runGuarded("console", [&] {
+            result = m_engine->evaluate(code, QStringLiteral("console"));
+            return result;
+        }))
+        return Status::Error;
+    // An expression's value is printed like print(value) (objects as JSON).
+    if (!result.isUndefined()) {
+        QJSValue print = m_engine->globalObject().property(QStringLiteral("print"));
+        if (print.isCallable())
+            print.call({result});
+    }
+    return m_stop ? Status::Stop : Status::Ok;
+}
+
 // Global lookup. `var x`, `x = ...` and function declarations are properties of the
 // global object; a top-level `let` / `const` is looked up by name as a fallback.
 QJSValue JsStrategy::readGlobal(const char *name)

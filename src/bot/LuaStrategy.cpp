@@ -944,6 +944,43 @@ LuaStrategy::Status LuaStrategy::onBet(const BetInfo &info, double &nextBet, Bot
     return readOutputs(nextBet, runCfg) ? Status::Ok : Status::Error;
 }
 
+LuaStrategy::Status LuaStrategy::runCommand(const QString &code)
+{
+    if (!m_L) {
+        m_error = QStringLiteral("no script is loaded");
+        return Status::Error;
+    }
+    const int top = lua_gettop(m_L);
+    const QByteArray src = translateBang(code.toUtf8());
+    // An expression ("balance", "nextbet * 2") is printed: try it as "return <code>" first.
+    const QByteArray asExpr = QByteArrayLiteral("return ") + src;
+    if (luaL_loadbufferx(m_L, asExpr.constData(), size_t(asExpr.size()), "=console", "t") != LUA_OK) {
+        lua_pop(m_L, 1);
+        if (luaL_loadbufferx(m_L, src.constData(), size_t(src.size()), "=console", "t") != LUA_OK) {
+            m_error = QStringLiteral("syntax error: %1").arg(QString::fromUtf8(lua_tostring(m_L, -1)));
+            lua_settop(m_L, top);
+            return Status::Error;
+        }
+    }
+    if (!callProtected(0, "console", LUA_MULTRET)) {
+        lua_settop(m_L, top);
+        return Status::Error;
+    }
+    const int results = lua_gettop(m_L) - top;
+    if (results > 0) {
+        lua_getglobal(m_L, "print");
+        if (lua_isfunction(m_L, -1)) {
+            lua_insert(m_L, top + 1); // print, r1 .. rn
+            if (!callProtected(results, "console", 0)) {
+                lua_settop(m_L, top);
+                return Status::Error;
+            }
+        }
+    }
+    lua_settop(m_L, top);
+    return m_stop ? Status::Stop : Status::Ok;
+}
+
 LuaStrategy::Status LuaStrategy::callRound(const QJsonObject &currentBet, QJsonValue &result)
 {
     result = QJsonValue(QJsonValue::Undefined);
