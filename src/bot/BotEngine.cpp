@@ -446,8 +446,10 @@ void BotEngine::loadOpenGame(const BotConfig &cfg)
 {
     if (cfg.game != Game::Hilo && cfg.game != Game::Blackjack)
         return;
-    if (!liveMode() || !m_live->isStake() || m_running || m_inFlight || m_startPending || m_rollPending)
+    if (!liveMode() || m_running || m_inFlight || m_startPending || m_rollPending)
         return;
+    if (!m_live->isStake() && !m_live->isShuffle())
+        return; // hilo and blackjack: Stake and Shuffle
     if (!liveReady(nullptr))
         return;
     if (m_manualGameOpen && m_manualGame == cfg.game) {

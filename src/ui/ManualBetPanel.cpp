@@ -915,9 +915,17 @@ void ManualBetPanel::showBlackjackRound(const QJsonObject &bet, bool active, boo
     const QJsonObject cur = current >= 0 ? playerHands.at(current).toObject() : QJsonObject();
     const QJsonArray curCards = cur.value(QStringLiteral("cards")).toArray();
     m_bjCanDouble = active && curCards.size() == 2;
+    // Two cards of the same value (Q + J too: Shuffle splits any two 10-value cards).
+    const auto cardValue = [](const QJsonValue &c) {
+        const QString r = c.toObject().value(QStringLiteral("rank")).toString();
+        if (r == QLatin1String("J") || r == QLatin1String("Q") || r == QLatin1String("K"))
+            return 10;
+        if (r == QLatin1String("A"))
+            return 11;
+        return r.toInt();
+    };
     m_bjCanSplit = active && playerHands.size() == 1 && curCards.size() == 2
-                   && curCards.at(0).toObject().value(QStringLiteral("rank"))
-                          == curCards.at(1).toObject().value(QStringLiteral("rank"));
+                   && cardValue(curCards.at(0)) == cardValue(curCards.at(1));
 
     // The past decisions show under each hand ("Actions: deal, hit"); no status line.
     m_bjStatus->clear();

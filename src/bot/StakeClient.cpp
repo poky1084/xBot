@@ -139,6 +139,282 @@ LiveBetResult failed(const QString &error, const QString &type = {},
     r.outcomeUnknown = unknown;
     return r;
 }
+
+// ---------------------------------------------------------------- Shuffle blackjack helpers
+// Shuffle numbers its cards 0..51 as rank * 4 + suit, ranks 2..A (Stake's order: 0 = 2♦,
+// 1 = 2♥, 2 = 2♠, 3 = 2♣, 4 = 3♦, ..., 51 = A♣).
+QJsonObject shuffleCard(int n)
+{
+    static const char *ranks[] = {"2", "3", "4", "5", "6", "7", "8", "9", "10", "J", "Q", "K", "A"};
+    static const char *suits[] = {"D", "H", "S", "C"};
+    n = std::clamp(n, 0, 51);
+    QJsonObject card;
+    card.insert(QStringLiteral("rank"), QLatin1String(ranks[n / 4]));
+    card.insert(QStringLiteral("suit"), QLatin1String(suits[n % 4]));
+    return card;
+}
+
+int blackjackValue(const QJsonArray &cards)
+{
+    int total = 0;
+    int aces = 0;
+    for (const QJsonValue &c : cards) {
+        const QString r = c.toObject().value(QStringLiteral("rank")).toString();
+        if (r == QLatin1String("A")) {
+            ++aces;
+            total += 11;
+        } else if (r == QLatin1String("J") || r == QLatin1String("Q") || r == QLatin1String("K")) {
+            total += 10;
+        } else {
+            total += r.toInt();
+        }
+    }
+    while (total > 21 && aces-- > 0)
+        total -= 10;
+    return total;
+}
+
+QString shuffleToStakeAction(const QString &a)
+{
+    const QString u = a.toUpper();
+    if (u == QLatin1String("HIT")) return QStringLiteral("hit");
+    if (u == QLatin1String("STAND")) return QStringLiteral("stand");
+    if (u.startsWith(QLatin1String("DOUBLE"))) return QStringLiteral("double");
+    if (u == QLatin1String("SPLIT")) return QStringLiteral("split");
+    if (u == QLatin1String("REJECT_INSURANCE")) return QStringLiteral("noInsurance");
+    if (u == QLatin1String("BUY_INSURANCE")) return QStringLiteral("insurance");
+    return a.toLower();
+}
+
+// One hand in Stake's shape: {cards, value, actions} with Stake's "deal" first and its
+// "bust" / "blackjack" / "full" markers.
+QJsonObject stakeHand(const QJsonArray &shuffleCards, const QJsonArray &shuffleActions, bool split,
+                      const QStringList &extraActions = {})
+{
+    QJsonArray cards;
+    for (const QJsonValue &v : shuffleCards)
+        cards.append(shuffleCard(v.toInt()));
+    QJsonArray actions;
+    actions.append(QStringLiteral("deal"));
+    for (const QString &a : extraActions)
+        actions.append(a);
+    for (const QJsonValue &a : shuffleActions)
+        actions.append(shuffleToStakeAction(a.toString()));
+    const int value = blackjackValue(cards);
+    if (value > 21)
+        actions.append(QStringLiteral("bust"));
+    else if (value == 21 && cards.size() == 2 && !split)
+        actions.append(QStringLiteral("blackjack"));
+    else if (value == 21)
+        actions.append(QStringLiteral("full"));
+    QJsonObject hand;
+    hand.insert(QStringLiteral("cards"), cards);
+    hand.insert(QStringLiteral("value"), value);
+    hand.insert(QStringLiteral("actions"), actions);
+    return hand;
+}
+
+// A Shuffle blackjack bet (BlackjackBetFields) as a Stake blackjack bet:
+// {id, amount, payout, payoutMultiplier, active, currency, state: {player: [...], dealer: [...]}}.
+QJsonObject shuffleBlackjackAsStake(const QJsonObject &bet)
+{
+    const QJsonArray steps = bet.value(QStringLiteral("shuffleOriginalActions")).toArray();
+    const QJsonObject bj = steps.isEmpty()
+        ? QJsonObject()
+        : steps.last().toObject().value(QStringLiteral("action")).toObject()
+              .value(QStringLiteral("blackjack")).toObject();
+    const bool active = bet.value(QStringLiteral("completedAt")).isNull()
+                        || bet.value(QStringLiteral("completedAt")).toString().isEmpty();
+
+    const QJsonArray dealerCards = bj.value(QStringLiteral("dealerHand")).toArray();
+    const QJsonArray splitCards = bj.value(QStringLiteral("splitPlayerHand")).toArray();
+    const bool split = !splitCards.isEmpty();
+
+    // Insurance: Shuffle's insuranceStatus is ELIGIBLE while it is offered, then REJECTED or
+    // BOUGHT_... (the BUY_INSURANCE / REJECT_INSURANCE action is in mainPlayerActions too).
+    // When it is not offered (INELIGIBLE), record a decision so an ace up-card does not ask.
+    QStringList insurance;
+    const bool dealerAce = !dealerCards.isEmpty() && dealerCards.first().toInt() / 4 == 12;
+    const QString ins = bj.value(QStringLiteral("insuranceStatus")).toString().toUpper();
+    bool decided = false;
+    for (const QJsonValue &a : bj.value(QStringLiteral("mainPlayerActions")).toArray())
+        decided = decided || a.toString().toUpper().endsWith(QLatin1String("_INSURANCE"));
+    if (!decided) {
+        if (ins.startsWith(QLatin1String("BOUGHT")))
+            insurance << QStringLiteral("insurance");
+        else if (dealerAce && ins != QLatin1String("ELIGIBLE"))
+            insurance << QStringLiteral("noInsurance"); // INELIGIBLE / REJECTED / none
+    }
+
+    QJsonArray player;
+    player.append(stakeHand(bj.value(QStringLiteral("mainPlayerHand")).toArray(),
+                            bj.value(QStringLiteral("mainPlayerActions")).toArray(), split, insurance));
+    if (split)
+        player.append(stakeHand(splitCards, bj.value(QStringLiteral("splitPlayerActions")).toArray(), true));
+
+    QJsonArray dealerActions;
+    dealerActions.append(QStringLiteral("deal"));
+    if (!active && dealerCards.size() > 1) {
+        dealerActions.append(QStringLiteral("reveal"));
+        for (int i = 2; i < dealerCards.size(); ++i)
+            dealerActions.append(QStringLiteral("hit"));
+    }
+    QJsonObject dealer = stakeHand(dealerCards, {}, true);
+    dealer.insert(QStringLiteral("actions"), dealerActions);
+
+    QJsonObject state;
+    state.insert(QStringLiteral("player"), player);
+    state.insert(QStringLiteral("dealer"), QJsonArray{dealer});
+
+    const double amount = numberOf(bet.value(QStringLiteral("amount")));
+    const double payout = numberOf(bet.value(QStringLiteral("payout")));
+    double mult = 0.0;
+    if (!active) {
+        const QJsonValue m = bet.value(QStringLiteral("multiplier"));
+        mult = m.isNull() || m.isUndefined() ? (amount > 0.0 ? payout / amount : 0.0) : numberOf(m);
+    }
+
+    QJsonObject out;
+    out.insert(QStringLiteral("id"), bet.value(QStringLiteral("id")).toString());
+    out.insert(QStringLiteral("amount"), amount);
+    out.insert(QStringLiteral("payout"), payout);
+    out.insert(QStringLiteral("payoutMultiplier"), mult);
+    out.insert(QStringLiteral("active"), active);
+    out.insert(QStringLiteral("currency"), bet.value(QStringLiteral("currency")).toString().toLower());
+    out.insert(QStringLiteral("game"), QStringLiteral("blackjack"));
+    out.insert(QStringLiteral("state"), state);
+    // Shuffle's own outcome words ("WIN", "LOSS", "PUSH", ...), for reference.
+    out.insert(QStringLiteral("mainHandOutcome"), bj.value(QStringLiteral("mainHandOutcome")));
+    out.insert(QStringLiteral("splitHandOutcome"), bj.value(QStringLiteral("splitHandOutcome")));
+    return out;
+}
+
+const char kShuffleBlackjackFields[] =
+    "fragment BlackjackBetFields on Bet {\n"
+    "  id\n  amount\n  originalAmount\n  payout\n  multiplier\n  currency\n  afterBalance\n"
+    "  completedAt\n  shuffleOriginalActions {\n    id\n    action {\n      blackjack {\n"
+    "        mainPlayerHand\n        mainPlayerActions\n        splitPlayerHand\n"
+    "        splitPlayerActions\n        dealerHand\n        perfectPairWin\n"
+    "        twentyOnePlusThreeWin\n        twentyOnePlusThreeAmount\n        perfectPairAmount\n"
+    "        insuranceStatus\n        originalMainBetAmount\n        mainHandOutcome\n"
+    "        splitHandOutcome\n        __typename\n      }\n      __typename\n    }\n"
+    "    __typename\n  }\n  __typename\n}";
+
+// ---------------------------------------------------------------- Shuffle hilo helpers
+// Card number for Shuffle's HiloStart startCard (same numbering as blackjack).
+int shuffleCardNumber(const QString &rank, const QString &suit)
+{
+    static const QStringList ranks = {QStringLiteral("2"), QStringLiteral("3"), QStringLiteral("4"),
+                                      QStringLiteral("5"), QStringLiteral("6"), QStringLiteral("7"),
+                                      QStringLiteral("8"), QStringLiteral("9"), QStringLiteral("10"),
+                                      QStringLiteral("J"), QStringLiteral("Q"), QStringLiteral("K"),
+                                      QStringLiteral("A")};
+    static const QStringList suits = {QStringLiteral("D"), QStringLiteral("H"), QStringLiteral("S"),
+                                      QStringLiteral("C")};
+    const int r = std::max(0, int(ranks.indexOf(rank.toUpper())));
+    const int s = std::max(0, int(suits.indexOf(suit.toUpper())));
+    return r * 4 + s;
+}
+
+// Shuffle's guess on the card of rank `rank` as Stake names it: on an ace SAME_OR_ABOVE pays
+// as "higher" and SAME_OR_BELOW as "equal"; on a king SAME_OR_BELOW is "lower" and
+// SAME_OR_ABOVE "equal".
+QString shuffleHiloGuessAsStake(const QString &guess, const QString &rank)
+{
+    const QString g = guess.toUpper();
+    if (g == QLatin1String("SKIP"))
+        return QStringLiteral("skip");
+    if (g == QLatin1String("SAME_OR_ABOVE"))
+        return rank == QLatin1String("A") ? QStringLiteral("higher")
+             : rank == QLatin1String("K") ? QStringLiteral("equal")
+                                          : QStringLiteral("higherEqual");
+    if (g == QLatin1String("SAME_OR_BELOW"))
+        return rank == QLatin1String("K") ? QStringLiteral("lower")
+             : rank == QLatin1String("A") ? QStringLiteral("equal")
+                                          : QStringLiteral("lowerEqual");
+    return guess.toLower();
+}
+
+bool shuffleHiloLost(const QString &actionType)
+{
+    const QString t = actionType.toUpper();
+    return t.contains(QLatin1String("INCORRECT")) || t.contains(QLatin1String("WRONG"))
+        || t.contains(QLatin1String("LOSS")) || t.contains(QLatin1String("LOST"))
+        || t.contains(QLatin1String("BUST"));
+}
+
+// A Shuffle hilo bet (HiloBetFields) as a Stake hilo bet:
+// {id, amount, payout, payoutMultiplier, active, state: {startCard, rounds: [{card, guess,
+// payoutMultiplier}]}}. *lastRank = the rank of the card the next guess is about.
+QJsonObject shuffleHiloAsStake(const QJsonObject &bet, QString *lastRank)
+{
+    const QJsonArray steps = bet.value(QStringLiteral("shuffleOriginalActions")).toArray();
+    QJsonObject startCard;
+    QJsonArray rounds;
+    QString rank;
+    double current = 0.0;
+    bool lost = false;
+    bool cashedOut = false;
+    for (int i = 0; i < steps.size(); ++i) {
+        const QJsonObject h = steps.at(i).toObject().value(QStringLiteral("action")).toObject()
+                                  .value(QStringLiteral("hilo")).toObject();
+        const QJsonObject card = shuffleCard(h.value(QStringLiteral("card")).toInt());
+        const QString type = h.value(QStringLiteral("actionType")).toString().toUpper();
+        if (i == 0 || type == QLatin1String("START")) {
+            startCard = card;
+            rank = card.value(QStringLiteral("rank")).toString();
+            continue;
+        }
+        if (type.contains(QLatin1String("CASH"))) { // a cash-out step (no new card)
+            cashedOut = true;
+            continue;
+        }
+        const QJsonValue wm = h.value(QStringLiteral("winMultiplier"));
+        const bool roundLost = shuffleHiloLost(type);
+        if (roundLost)
+            current = 0.0;
+        else if (!wm.isNull() && !wm.isUndefined())
+            current = numberOf(wm);
+        lost = lost || roundLost;
+        QJsonObject round;
+        round.insert(QStringLiteral("card"), card);
+        round.insert(QStringLiteral("guess"), shuffleHiloGuessAsStake(h.value(QStringLiteral("guess")).toString(), rank));
+        round.insert(QStringLiteral("payoutMultiplier"), current);
+        rounds.append(round);
+        rank = card.value(QStringLiteral("rank")).toString();
+    }
+    const QJsonValue completed = bet.value(QStringLiteral("completedAt"));
+    const double amount = numberOf(bet.value(QStringLiteral("amount")));
+    const double payout = numberOf(bet.value(QStringLiteral("payout")));
+    const bool done = lost || cashedOut || payout > 0.0
+                      || (completed.isString() && !completed.toString().isEmpty());
+    double mult = 0.0;
+    if (done && !lost)
+        mult = amount > 0.0 && payout > 0.0 ? payout / amount : current;
+
+    QJsonObject state;
+    state.insert(QStringLiteral("startCard"), startCard);
+    state.insert(QStringLiteral("rounds"), rounds);
+    QJsonObject out;
+    out.insert(QStringLiteral("id"), bet.value(QStringLiteral("id")).toString());
+    out.insert(QStringLiteral("amount"), amount);
+    out.insert(QStringLiteral("payout"), payout);
+    out.insert(QStringLiteral("payoutMultiplier"), mult);
+    out.insert(QStringLiteral("active"), !done);
+    out.insert(QStringLiteral("currency"), bet.value(QStringLiteral("currency")).toString().toLower());
+    out.insert(QStringLiteral("game"), QStringLiteral("hilo"));
+    out.insert(QStringLiteral("state"), state);
+    if (lastRank)
+        *lastRank = rank;
+    return out;
+}
+
+const char kShuffleHiloFields[] =
+    "fragment HiloBetFields on Bet {\n"
+    "  id\n  amount\n  payout\n  currency\n  afterBalance\n  completedAt\n"
+    "  shuffleOriginalActions {\n    id\n    action {\n      hilo {\n        card\n        guess\n"
+    "        winMultiplier\n        actionType\n        __typename\n      }\n      __typename\n"
+    "    }\n    __typename\n  }\n  __typename\n}";
 } // namespace
 
 StakeClient::StakeClient(QObject *parent)
@@ -950,6 +1226,14 @@ void StakeClient::placeGame(const GameBetRequest &request)
         failLater(failed(tr("No currency selected — log in and pick one in Options.")));
         return;
     }
+    if (isShuffle() && request.game == Game::Blackjack) {
+        placeShuffleBlackjack(request);
+        return;
+    }
+    if (isShuffle() && request.game == Game::Hilo) {
+        placeShuffleHilo(request);
+        return;
+    }
     if (!isStake()) {
         failLater(failed(tr("%1 is only available on Stake - switch the casino to Stake or pick "
                             "another game.").arg(gameDisplayName(request.game))));
@@ -974,6 +1258,14 @@ void StakeClient::sendGameAction(Game game, const QString &endpoint, const QJson
     if (!m_transport || !m_transport->isReady(&why)) {
         const LiveBetResult r = failed(m_transport ? why : tr("No transport configured."), {}, true, false);
         QTimer::singleShot(0, this, [this, r] { emit diceFinished(r); });
+        return;
+    }
+    if (isShuffle() && game == Game::Blackjack) {
+        sendShuffleBlackjack(body.value(QStringLiteral("action")).toString(), params, requestedAmount);
+        return;
+    }
+    if (isShuffle() && game == Game::Hilo) {
+        sendShuffleHilo(endpoint, body, params, requestedAmount);
         return;
     }
     postGameBet(game, endpoint, body, params, requestedAmount, false);
@@ -1044,6 +1336,14 @@ void StakeClient::postGameBet(Game game, const QString &endpoint, const QJsonObj
 
 void StakeClient::fetchActiveGame(Game game, const QJsonObject &params, double requestedAmount)
 {
+    if (isShuffle() && game == Game::Blackjack) {
+        fetchShuffleBlackjack(params, requestedAmount);
+        return;
+    }
+    if (isShuffle() && game == Game::Hilo) {
+        fetchShuffleHilo(params, requestedAmount);
+        return;
+    }
     const QString slug = StakeGames::activeBetSlug(game);
     m_transport->post(QStringLiteral("_api/casino/active-bet/%1").arg(slug), QJsonObject(),
                       [this, game, params, requestedAmount](const TransportReply &reply) {
@@ -1113,6 +1413,307 @@ void StakeClient::postBet(const QString &endpoint, const QJsonObject &body, doub
 
 // Shuffle dice: the DicePlay GraphQL mutation (same query the JavaScript bot uses).
 // amount / bet are strings with 8 / 2 decimals, direction is BELOW / ABOVE.
+// ---------------------------------------------------------------- Shuffle blackjack
+QString StakeClient::shuffleWindowId()
+{
+    // The site sends a random id of its browser window with every blackjack request.
+    if (m_shuffleWindowId.isEmpty()) {
+        static const char chars[] = "abcdefghijklmnopqrstuvwxyz0123456789";
+        for (int i = 0; i < 10; ++i)
+            m_shuffleWindowId += QLatin1Char(chars[QRandomGenerator::global()->bounded(36)]);
+    }
+    return m_shuffleWindowId;
+}
+
+void StakeClient::placeShuffleBlackjack(const GameBetRequest &request)
+{
+    QJsonObject data;
+    data.insert(QStringLiteral("amount"), QString::number(request.amount, 'f', 8));
+    data.insert(QStringLiteral("currency"), ShuffleTransport::apiCurrency(m_currency));
+    // Side bets are not played.
+    data.insert(QStringLiteral("perfectPairAmount"), QStringLiteral("0.00000000"));
+    data.insert(QStringLiteral("twentyOnePlusThreeAmount"), QStringLiteral("0.00000000"));
+    data.insert(QStringLiteral("windowId"), shuffleWindowId());
+    data.insert(QStringLiteral("usdAmount"), 0);
+    postShuffleBlackjack(QStringLiteral("BlackjackStart"),
+                         QStringLiteral("mutation BlackjackStart($data: BlackjackStartInput!) {\n"
+                                        "  blackjackStart(data: $data) {\n    ...BlackjackBetFields\n"
+                                        "    __typename\n  }\n}\n\n")
+                             + QLatin1String(kShuffleBlackjackFields),
+                         QJsonObject{{QStringLiteral("data"), data}}, QStringLiteral("blackjackStart"),
+                         request.params, request.amount, true);
+}
+
+void StakeClient::sendShuffleBlackjack(const QString &stakeAction, const QJsonObject &params,
+                                       double requestedAmount)
+{
+    // Stake's action names -> Shuffle's.
+    QString action;
+    if (stakeAction == QLatin1String("hit")) action = QStringLiteral("HIT");
+    else if (stakeAction == QLatin1String("stand")) action = QStringLiteral("STAND");
+    else if (stakeAction == QLatin1String("double")) action = QStringLiteral("DOUBLE_DOWN");
+    else if (stakeAction == QLatin1String("split")) action = QStringLiteral("SPLIT");
+    else if (stakeAction == QLatin1String("insurance")) action = QStringLiteral("BUY_INSURANCE");
+    else if (stakeAction == QLatin1String("noInsurance")) action = QStringLiteral("REJECT_INSURANCE");
+    if (action.isEmpty() || m_shuffleBjBetId.isEmpty()) {
+        const LiveBetResult r = failed(action.isEmpty()
+                                           ? tr("Shuffle blackjack: unknown action \"%1\".").arg(stakeAction)
+                                           : tr("Shuffle blackjack: no open hand."));
+        QTimer::singleShot(0, this, [this, r] { emit diceFinished(r); });
+        return;
+    }
+    QJsonObject data;
+    data.insert(QStringLiteral("action"), action);
+    data.insert(QStringLiteral("windowId"), shuffleWindowId());
+    data.insert(QStringLiteral("betId"), m_shuffleBjBetId);
+    data.insert(QStringLiteral("cardCount"), m_shuffleBjSteps); // steps reported so far
+    postShuffleBlackjack(QStringLiteral("BlackjackNext"),
+                         QStringLiteral("mutation BlackjackNext($data: BlackjackNextInput!) {\n"
+                                        "  blackjackNext(data: $data) {\n    ...BlackjackBetFields\n"
+                                        "    __typename\n  }\n}\n\n")
+                             + QLatin1String(kShuffleBlackjackFields),
+                         QJsonObject{{QStringLiteral("data"), data}}, QStringLiteral("blackjackNext"),
+                         params, requestedAmount, false);
+}
+
+void StakeClient::fetchShuffleBlackjack(const QJsonObject &params, double requestedAmount)
+{
+    postShuffleBlackjack(QStringLiteral("BlackjackActiveBet"),
+                         QStringLiteral("query BlackjackActiveBet {\n  blackjackActiveBet {\n"
+                                        "    ...BlackjackBetFields\n    __typename\n  }\n}\n\n")
+                             + QLatin1String(kShuffleBlackjackFields),
+                         QJsonObject(), QStringLiteral("blackjackActiveBet"), params, requestedAmount, false);
+}
+
+void StakeClient::postShuffleBlackjack(const QString &operation, const QString &query,
+                                       const QJsonObject &variables, const QString &resultKey,
+                                       const QJsonObject &params, double requestedAmount, bool firstRequest)
+{
+    QJsonObject body;
+    body.insert(QStringLiteral("operationName"), operation);
+    body.insert(QStringLiteral("variables"), variables);
+    body.insert(QStringLiteral("query"), query);
+    const bool activeQuery = resultKey == QLatin1String("blackjackActiveBet");
+    m_transport->post(QStringLiteral("main-api/graphql/api/graphql"), body,
+                      [this, resultKey, params, requestedAmount, firstRequest, activeQuery](const TransportReply &reply) {
+        if (!reply.ok) {
+            const bool isTimeout = (reply.status == 0);
+            const bool unknown = (reply.status >= 500);
+            if (reply.status == 0)
+                emit sessionLost(reply.error);
+            emit diceFinished(failed(reply.error, {}, isTimeout, unknown));
+            return;
+        }
+        QString type;
+        const QString apiError = firstErrorText(reply.json, &type);
+        if (!apiError.isEmpty()) {
+            // A hand is still open (an earlier run, the website): fetch it to finish it first.
+            if (firstRequest && (containsCI(apiError, "active") || containsCI(apiError, "existing")
+                                 || containsCI(apiError, "already") || containsCI(apiError, "progress")
+                                 || containsCI(type, "existing") || containsCI(type, "active"))) {
+                fetchShuffleBlackjack(params, requestedAmount);
+                return;
+            }
+            LiveBetResult r = failed(apiError, type, isRetryable(type, apiError), false);
+            r.retryDelayMs = fastRetryDelayMs(type, apiError);
+            emit diceFinished(r);
+            return;
+        }
+        const QJsonObject raw = reply.json.value(QStringLiteral("data")).toObject()
+                                    .value(resultKey).toObject();
+        if (raw.isEmpty()) {
+            if (activeQuery) {
+                // Nothing open (same answer as Stake's active-bet fetch).
+                LiveBetResult r = failed(tr("Blackjack: no open hand."), QStringLiteral("existingGame"),
+                                         true, false);
+                r.retryDelayMs = 500;
+                emit diceFinished(r);
+                return;
+            }
+            emit diceFinished(failed(tr("Unexpected Shuffle blackjack response (no bet)."), {}, false, true));
+            return;
+        }
+        const QJsonObject bet = shuffleBlackjackAsStake(raw);
+        m_shuffleBjBetId = raw.value(QStringLiteral("id")).toString();
+        m_shuffleBjSteps = int(raw.value(QStringLiteral("shuffleOriginalActions")).toArray().size());
+        LiveBetResult r = gameResult(Game::Blackjack, bet, params, requestedAmount);
+        if (activeQuery) {
+            r.active = true; // continue it with the next move
+            r.win = false;
+        }
+        if (!r.active) {
+            m_shuffleBjBetId.clear();
+            // The balance after the settled hand (payout included).
+            const QJsonValue after = raw.value(QStringLiteral("afterBalance"));
+            if (after.isString() || after.isDouble())
+                r.balanceAfter = numberOf(after);
+        }
+        emit diceFinished(r);
+    });
+}
+
+// ---------------------------------------------------------------- Shuffle hilo
+void StakeClient::placeShuffleHilo(const GameBetRequest &request)
+{
+    // The start card as Stake's request would have it (Manual / Auto tab rank + suit, or a
+    // script's startcard), then as Shuffle's card number.
+    QString endpoint;
+    QJsonObject stakeBody;
+    QString err;
+    if (!StakeGames::buildBetRequest(Game::Hilo, request.amount, m_currency, request.params,
+                                     &endpoint, &stakeBody, &err)) {
+        const LiveBetResult r = failed(err);
+        QTimer::singleShot(0, this, [this, r] { emit diceFinished(r); });
+        return;
+    }
+    const QJsonObject card = stakeBody.value(QStringLiteral("startCard")).toObject();
+    QJsonObject data;
+    data.insert(QStringLiteral("amount"), QString::number(request.amount, 'f', 8));
+    data.insert(QStringLiteral("currency"), ShuffleTransport::apiCurrency(m_currency));
+    data.insert(QStringLiteral("startCard"),
+                shuffleCardNumber(card.value(QStringLiteral("rank")).toString(),
+                                  card.value(QStringLiteral("suit")).toString()));
+    data.insert(QStringLiteral("usdAmount"), 0);
+    postShuffleHilo(QStringLiteral("HiloStart"),
+                    QStringLiteral("mutation HiloStart($data: HiloStartInput!) {\n  hiloStart(data: $data) {\n"
+                                   "    ...HiloBetFields\n    __typename\n  }\n}\n\n")
+                        + QLatin1String(kShuffleHiloFields),
+                    QJsonObject{{QStringLiteral("data"), data}}, QStringLiteral("hiloStart"),
+                    request.params, request.amount, true);
+}
+
+void StakeClient::sendShuffleHilo(const QString &endpoint, const QJsonObject &stakeBody,
+                                  const QJsonObject &params, double requestedAmount)
+{
+    const auto failNow = [this](const QString &msg) {
+        const LiveBetResult r = failed(msg);
+        QTimer::singleShot(0, this, [this, r] { emit diceFinished(r); });
+    };
+    if (m_shuffleHiloBetId.isEmpty()) {
+        failNow(tr("Shuffle hilo: no open round."));
+        return;
+    }
+    QJsonObject data;
+    data.insert(QStringLiteral("betId"), m_shuffleHiloBetId);
+    if (endpoint.contains(QLatin1String("cashout"))) {
+        // HiloCashout takes the bet id directly (no data input); the answer ends with a
+        // CASHOUT step that has no card.
+        postShuffleHilo(QStringLiteral("HiloCashout"),
+                        QStringLiteral("mutation HiloCashout($betId: String) {\n"
+                                       "  hiloCashout(betId: $betId) {\n    ...HiloBetFields\n"
+                                       "    __typename\n  }\n}\n\n")
+                            + QLatin1String(kShuffleHiloFields),
+                        QJsonObject{{QStringLiteral("betId"), m_shuffleHiloBetId}},
+                        QStringLiteral("hiloCashout"), params, requestedAmount, false);
+        return;
+    }
+    // Stake's guesses -> Shuffle's (it only has same-or-above / same-or-below / skip; "equal"
+    // is same-or-below on an ace and same-or-above on a king).
+    const QString g = stakeBody.value(QStringLiteral("guess")).toString();
+    const QString rank = m_shuffleHiloRank;
+    QString guess;
+    if (g == QLatin1String("skip"))
+        guess = QStringLiteral("SKIP");
+    else if (g == QLatin1String("higher") || g == QLatin1String("higherEqual"))
+        guess = QStringLiteral("SAME_OR_ABOVE");
+    else if (g == QLatin1String("lower") || g == QLatin1String("lowerEqual"))
+        guess = QStringLiteral("SAME_OR_BELOW");
+    else if (g == QLatin1String("equal")) {
+        if (rank == QLatin1String("A"))
+            guess = QStringLiteral("SAME_OR_BELOW");
+        else if (rank == QLatin1String("K"))
+            guess = QStringLiteral("SAME_OR_ABOVE");
+        else {
+            failNow(tr("Shuffle hilo: Equal is only possible on an Ace or a King."));
+            return;
+        }
+    }
+    if (guess.isEmpty()) {
+        failNow(tr("Shuffle hilo: unknown guess \"%1\".").arg(g));
+        return;
+    }
+    data.insert(QStringLiteral("guess"), guess);
+    data.insert(QStringLiteral("cardCount"), m_shuffleHiloSteps); // steps reported so far
+    postShuffleHilo(QStringLiteral("HiloNext"),
+                    QStringLiteral("mutation HiloNext($data: HiloNextInput!) {\n  hiloNext(data: $data) {\n"
+                                   "    ...HiloBetFields\n    __typename\n  }\n}\n\n")
+                        + QLatin1String(kShuffleHiloFields),
+                    QJsonObject{{QStringLiteral("data"), data}}, QStringLiteral("hiloNext"),
+                    params, requestedAmount, false);
+}
+
+void StakeClient::fetchShuffleHilo(const QJsonObject &params, double requestedAmount)
+{
+    postShuffleHilo(QStringLiteral("HiloActiveBet"),
+                    QStringLiteral("query HiloActiveBet {\n  hiloActiveBet {\n    ...HiloBetFields\n"
+                                   "    __typename\n  }\n}\n\n")
+                        + QLatin1String(kShuffleHiloFields),
+                    QJsonObject(), QStringLiteral("hiloActiveBet"), params, requestedAmount, false);
+}
+
+void StakeClient::postShuffleHilo(const QString &operation, const QString &query, const QJsonObject &variables,
+                                  const QString &resultKey, const QJsonObject &params, double requestedAmount,
+                                  bool firstRequest)
+{
+    QJsonObject body;
+    body.insert(QStringLiteral("operationName"), operation);
+    body.insert(QStringLiteral("variables"), variables);
+    body.insert(QStringLiteral("query"), query);
+    const bool activeQuery = resultKey == QLatin1String("hiloActiveBet");
+    m_transport->post(QStringLiteral("main-api/graphql/api/graphql"), body,
+                      [this, resultKey, params, requestedAmount, firstRequest, activeQuery](const TransportReply &reply) {
+        if (!reply.ok) {
+            const bool isTimeout = (reply.status == 0);
+            const bool unknown = (reply.status >= 500);
+            if (reply.status == 0)
+                emit sessionLost(reply.error);
+            emit diceFinished(failed(reply.error, {}, isTimeout, unknown));
+            return;
+        }
+        QString type;
+        const QString apiError = firstErrorText(reply.json, &type);
+        if (!apiError.isEmpty()) {
+            // A round is still open (an earlier run, the website): fetch it to finish it first.
+            if (firstRequest && (containsCI(apiError, "active") || containsCI(apiError, "existing")
+                                 || containsCI(apiError, "already") || containsCI(apiError, "progress")
+                                 || containsCI(type, "existing") || containsCI(type, "active"))) {
+                fetchShuffleHilo(params, requestedAmount);
+                return;
+            }
+            LiveBetResult r = failed(apiError, type, isRetryable(type, apiError), false);
+            r.retryDelayMs = fastRetryDelayMs(type, apiError);
+            emit diceFinished(r);
+            return;
+        }
+        const QJsonObject raw = reply.json.value(QStringLiteral("data")).toObject().value(resultKey).toObject();
+        if (raw.isEmpty()) {
+            if (activeQuery) {
+                LiveBetResult r = failed(tr("Hilo: no open round."), QStringLiteral("existingGame"), true, false);
+                r.retryDelayMs = 500;
+                emit diceFinished(r);
+                return;
+            }
+            emit diceFinished(failed(tr("Unexpected Shuffle hilo response (no bet)."), {}, false, true));
+            return;
+        }
+        const QJsonObject bet = shuffleHiloAsStake(raw, &m_shuffleHiloRank);
+        m_shuffleHiloBetId = raw.value(QStringLiteral("id")).toString();
+        m_shuffleHiloSteps = int(raw.value(QStringLiteral("shuffleOriginalActions")).toArray().size());
+        LiveBetResult r = gameResult(Game::Hilo, bet, params, requestedAmount);
+        if (activeQuery) {
+            r.active = true;
+            r.win = false;
+        }
+        if (!r.active) {
+            m_shuffleHiloBetId.clear();
+            const QJsonValue after = raw.value(QStringLiteral("afterBalance"));
+            if (after.isString() || after.isDouble())
+                r.balanceAfter = numberOf(after);
+        }
+        emit diceFinished(r);
+    });
+}
+
 void StakeClient::placeShuffleDice(const DiceBetRequest &request)
 {
     const double target = std::round(request.target * 100.0) / 100.0;

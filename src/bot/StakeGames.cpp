@@ -553,7 +553,9 @@ QList<Game> gamesForCasino(const QString &casinoKey)
         return allGames();
     if (k == QLatin1String("paradice"))
         return {Game::Dice};
-    return {Game::Dice, Game::Limbo}; // Shuffle, Goated, Wolfbet, Duel, Pasino, Tower, Winna
+    if (k == QLatin1String("shuffle"))
+        return {Game::Dice, Game::Limbo, Game::Hilo, Game::Blackjack};
+    return {Game::Dice, Game::Limbo}; // Goated, Wolfbet, Duel, Pasino, Tower, Winna
 }
 
 bool casinoSupports(const QString &casinoKey, Game game)

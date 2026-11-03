@@ -3905,6 +3905,8 @@ bool MainWindow::loadCachedShuffleBalance()
         m_shuffleBalances.insert(cur, 0.0); // not in the full list = zero balance
 
     m_balances = m_shuffleBalances;
+    if (!m_isLoggedIn) // just logged in: show a blackjack hand still open on Shuffle
+        QTimer::singleShot(0, this, [this] { loadOpenGameIfShown(); });
     m_isLoggedIn = true;
     m_engine->syncBalance(m_shuffleBalances.value(cur));
     m_manualPanel->setStartBalance(m_engine->stats().balance);

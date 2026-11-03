@@ -179,6 +179,24 @@ private:
                              double requestedAmount) const;
     void placeShuffleDice(const DiceBetRequest &request);
     void placeShuffleLimbo(const LimboBetRequest &request);
+    // Shuffle blackjack (BlackjackStart / BlackjackNext / BlackjackActiveBet GraphQL). The
+    // answers are turned into Stake's blackjack bet shape, so the engine, the Manual tab and
+    // the scripts handle both casinos the same way.
+    void placeShuffleBlackjack(const GameBetRequest &request);
+    void sendShuffleBlackjack(const QString &stakeAction, const QJsonObject &params, double requestedAmount);
+    void fetchShuffleBlackjack(const QJsonObject &params, double requestedAmount);
+    void postShuffleBlackjack(const QString &operation, const QString &query, const QJsonObject &variables,
+                              const QString &resultKey, const QJsonObject &params, double requestedAmount,
+                              bool firstRequest);
+    QString shuffleWindowId();
+    // Shuffle hilo (HiloStart / HiloNext / HiloActiveBet), also turned into Stake's shape.
+    void placeShuffleHilo(const GameBetRequest &request);
+    void sendShuffleHilo(const QString &endpoint, const QJsonObject &stakeBody, const QJsonObject &params,
+                         double requestedAmount);
+    void fetchShuffleHilo(const QJsonObject &params, double requestedAmount);
+    void postShuffleHilo(const QString &operation, const QString &query, const QJsonObject &variables,
+                         const QString &resultKey, const QJsonObject &params, double requestedAmount,
+                         bool firstRequest);
     void placeGoatedDice(const DiceBetRequest &request);
     void placeGoatedLimbo(const LimboBetRequest &request);
     void placeWolfbetDice(const DiceBetRequest &request);
@@ -219,4 +237,11 @@ private:
     // Winna: index of the word for "roll over" that the site accepted (see placeWinnaDice()).
     int m_winnaOverWord = 0;
     double m_lastDiceTarget = -1.0; // see lastDiceTarget()
+    // Shuffle blackjack: the open bet (BlackjackNext needs its id and the number of steps).
+    QString m_shuffleWindowId;
+    QString m_shuffleBjBetId;
+    int m_shuffleBjSteps = 0;
+    QString m_shuffleHiloBetId;
+    int m_shuffleHiloSteps = 0;
+    QString m_shuffleHiloRank; // the card the next guess is about
 };
