@@ -1503,7 +1503,7 @@ void MainWindow::createLuaDock()
     connect(m_luaDock, &LuaEditorDock::runRequested, this, &MainWindow::onRunScript);
     // Console command line -> the running script.
     connect(m_luaDock, &LuaEditorDock::commandRequested, this,
-            [this](const QString &code) { m_engine->runScriptCommand(code); });
+            [this](const QString &code) { m_engine->runScriptCommand(code, m_luaDock->language()); });
     connect(m_luaDock, &LuaEditorDock::stopRequested, this, &MainWindow::onStopAuto);
 
     // Keep the "#" button in sync when the dock is closed with its X button.

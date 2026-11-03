@@ -468,11 +468,28 @@ BetRecord BotEngine::rollOnce(const BotConfig &cfg)
     return rec;
 }
 
-void BotEngine::runScriptCommand(const QString &code)
+void BotEngine::runScriptCommand(const QString &code, ScriptLanguage language)
 {
     emit scriptOutput(QStringLiteral("> %1").arg(code), false); // echo, like a REPL
     if (!m_scriptActive || !m_script || !m_script->isLoaded()) {
-        emit scriptOutput(tr("No script is running - press Run first, then send commands to it."), true);
+        // No script running: the console's own script in the editor's language. Its variables
+        // stay between commands; balance is the current one.
+        ScriptStrategy *console = language == ScriptLanguage::JavaScript
+            ? static_cast<ScriptStrategy *>(&m_consoleJs)
+            : static_cast<ScriptStrategy *>(&m_consoleLua);
+        console->setLogger([this](const QString &msg, bool isError) { emit scriptOutput(msg, isError); });
+        if (!console->isLoaded()) {
+            BotConfig cfg = m_config;
+            cfg.game = Game::Dice; // no game variables needed
+            double nextBet = m_config.baseBet;
+            if (console->init(QString(), m_stats.balance, nextBet, cfg) == ScriptStrategy::Status::Error) {
+                emit scriptOutput(console->lastError(), true);
+                return;
+            }
+        }
+        console->setGlobalNumber("balance", m_stats.balance);
+        if (console->runCommand(code) == ScriptStrategy::Status::Error)
+            emit scriptOutput(console->lastError(), true);
         return;
     }
     const ScriptStrategy::Status st = m_script->runCommand(code);

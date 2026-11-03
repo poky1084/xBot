@@ -363,7 +363,7 @@ A Stake strategy only holds the blocks. The base bet, win chance, side and stop 
 
 ## Code mode — Lua and JavaScript strategies
 
-Click the **#** toolbar button (*Strategy editor*). You can pick **Lua** or **JavaScript**, and each language keeps its own script. Use **Run** to start the strategy as an auto-bet and **Stop** to end it. The **Console** tab shows `print()` output and errors. **Open… / Save / Save as…** work with `.lua` and `.js` files, and **Help** shows the in-app reference. Scripts are also saved automatically between launches.
+Click the **#** toolbar button (*Strategy editor*). You can pick **Lua** or **JavaScript**, and each language keeps its own script. Use **Run** to start the strategy as an auto-bet and **Stop** to end it. The **Console** tab shows `print()` output and errors. At its bottom, a command line sends a Lua / JavaScript snippet to the running script (**Send** or Enter; Up / Down recall earlier commands): `nextbet = 0.001`, `print(balance)`, `stop()`… An expression's value is printed (`balance`, `lastBet.roll`). With no script running, commands run in the Console's own script in the editor's language (Lua or JavaScript): its variables stay between commands and `balance` is the current balance, so it works as a calculator or for trying out code; betting functions do nothing there. **Open… / Save / Save as…** work with `.lua` and `.js` files, and **Help** shows the in-app reference. Scripts are also saved automatically between launches.
 
 ### How a script runs
 

@@ -116,7 +116,9 @@ public:
     void loadOpenGame(const BotConfig &cfg);
     // Strategy editor's Console command line: runs `code` in the running script (its globals,
     // functions and print / log / stop ...). Output and errors go to the Console.
-    void runScriptCommand(const QString &code);
+    // With no script running the command runs in the console's own script of `language`
+    // (variables are kept between commands; print / log work, betting functions do nothing).
+    void runScriptCommand(const QString &code, ScriptLanguage language);
 
     // Clears the session and restores the starting balance.
     void resetSession(double initialBalance)
@@ -238,6 +240,9 @@ private:
 
     LuaStrategy m_luaStrategy;
     JsStrategy m_jsStrategy;
+    // The Console's own scripts, for commands while no script runs.
+    LuaStrategy m_consoleLua;
+    JsStrategy m_consoleJs;
     ScriptStrategy *m_script = &m_luaStrategy; // back end of the current / next run
     QString m_scriptSource;
     ScriptLanguage m_scriptLanguage = ScriptLanguage::Lua;

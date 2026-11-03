@@ -111,6 +111,11 @@ public:
     Status onBet(const BetInfo &info, double &nextBet, BotConfig &runCfg) override;
     Status callRound(const QJsonObject &currentBet, QJsonValue &result) override;
     Status runCommand(const QString &code) override;
+    void setGlobalNumber(const char *name, double value) override
+    {
+        if (m_engine)
+            publish(name, value);
+    }
 
     bool isLoaded() const override { return m_engine != nullptr; }
     void setGlobalString(const char *name, const QString &value) override;
