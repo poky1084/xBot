@@ -1207,10 +1207,20 @@ void MainWindow::createCentralWidget()
     m_betTable->setShowGrid(false);
     m_betTable->setSortingEnabled(false);
 
-    QFont mono(QStringLiteral("Consolas"));
-    mono.setStyleHint(QFont::Monospace);
-    mono.setPointSizeF(8.5);
-    m_betTable->setFont(mono);
+    // The same font family and size as the SESSION values in the sidebar: Montserrat (Segoe UI /
+    // Arial when it is not installed), 8.5 pt, not bold. The header keeps its own font.
+    QFont listFont(QStringLiteral("Montserrat"));
+    listFont.setFamilies({QStringLiteral("Montserrat"), QStringLiteral("Segoe UI"), QStringLiteral("Arial")});
+    listFont.setStyleHint(QFont::SansSerif);
+    listFont.setPointSizeF(8.5);
+    listFont.setBold(false);
+    m_betTable->setFont(listFont);
+    // Roll / Multiplier / Payout / Profit: the same font in bold. 12 px = the size the app's
+    // style sheet gives the list ("QWidget { font-size: 12px; }").
+    QFont boldListFont = listFont;
+    boldListFont.setPixelSize(12);
+    boldListFont.setBold(true);
+    m_model->setBoldFont(boldListFont);
     m_betTable->horizontalHeader()->setFont(QFont(QStringLiteral("Segoe UI"), 8));
 
     // Bet ID column: left-click "View" resolves the iid, right-click on any row
@@ -1289,7 +1299,10 @@ void MainWindow::createCentralWidget()
     chartLayout->setContentsMargins(12, 12, 12, 12);
     chartLayout->setSpacing(6);
     auto *chartHeader = new QHBoxLayout;
-    QFont monoBold = mono;
+    // Chart Max / Min / Now: Consolas 8.5 pt bold (the bet list's former font).
+    QFont monoBold(QStringLiteral("Consolas"));
+    monoBold.setStyleHint(QFont::Monospace);
+    monoBold.setPointSizeF(8.5);
     monoBold.setBold(true);
     m_chartMax = new QLabel(tr("Max: —"));
     m_chartMin = new QLabel(tr("Min: —"));

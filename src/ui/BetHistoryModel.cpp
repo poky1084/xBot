@@ -43,7 +43,7 @@ QVariant BetHistoryModel::data(const QModelIndex &index, int role) const
             return (!rec.betId.isEmpty() && !m_resolved.contains(rec.betId))
                        ? QVariant(QColor(0x25, 0x63, 0xeb)) // blue link until resolved
                        : QVariant();
-        if (index.column() == ColProfit || index.column() == ColMultiplier)
+        if (index.column() == ColProfit || index.column() == ColMultiplier || index.column() == ColPayout)
             return win ? QColor(0x2e, 0x9e, 0x46) : QColor(0xc9, 0x37, 0x2a);
         if (index.column() == ColRoll)
             return win ? QColor(0x2e, 0x9e, 0x46) : QColor(0xd4, 0x7a, 0x2c);
@@ -53,10 +53,12 @@ QVariant BetHistoryModel::data(const QModelIndex &index, int role) const
     if (role == Qt::TextAlignmentRole)
         return int(Qt::AlignLeft | Qt::AlignVCenter);
 
-    if (role == Qt::FontRole && (index.column() == ColRoll || index.column() == ColMultiplier)) {
-        QFont boldFont;
-        boldFont.setBold(true); // roll and multiplier columns are bold
-        return boldFont;
+    // Roll, Multiplier, Payout and Profit in bold; the other columns use the bet list's font.
+    if (role == Qt::FontRole) {
+        const int c = index.column();
+        if (c == ColRoll || c == ColMultiplier || c == ColPayout || c == ColProfit)
+            return m_boldFont;
+        return {};
     }
 
     if (role != Qt::DisplayRole && role != Qt::ToolTipRole)

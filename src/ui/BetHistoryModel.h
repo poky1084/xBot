@@ -3,6 +3,7 @@
 #include "bot/BotTypes.h"
 
 #include <QAbstractTableModel>
+#include <QFont>
 #include <QColor>
 #include <QHash>
 
@@ -11,6 +12,8 @@ class BetHistoryModel : public QAbstractTableModel
     Q_OBJECT
 
 public:
+    // Font of the Roll / Multiplier / Payout / Profit columns (bold; the others use the view's).
+    void setBoldFont(const QFont &font) { m_boldFont = font; }
     enum Column {
         ColGame = 0,
         ColIndex,
@@ -79,4 +82,5 @@ private:
     Filter m_filter = All;
     QString m_search;
     QColor m_stripe;             // background of every other bet (invalid = none)
+    QFont m_boldFont;
 };
