@@ -39,27 +39,24 @@ QVariant BetHistoryModel::data(const QModelIndex &index, int role) const
     }
 
     if (role == Qt::ForegroundRole) {
-        if (index.column() == ColBetId)
-            return (!rec.betId.isEmpty() && !m_resolved.contains(rec.betId))
-                       ? QVariant(QColor(0x25, 0x63, 0xeb)) // blue link until resolved
-                       : QVariant();
-        if (index.column() == ColProfit || index.column() == ColMultiplier || index.column() == ColPayout)
-            return win ? QColor(0x2e, 0x9e, 0x46) : QColor(0xc9, 0x37, 0x2a);
+        // Bet ID: blue "View" link until resolved, then the row's green / red like the rest.
+        if (index.column() == ColBetId && !rec.betId.isEmpty() && !m_resolved.contains(rec.betId))
+            return QColor(0x25, 0x63, 0xeb);
+        // Roll keeps its own colours (green win / orange loss); every other column is
+        // green on a win and grey on a loss (a darker grey in the light theme so it reads on white).
         if (index.column() == ColRoll)
             return win ? QColor(0x2e, 0x9e, 0x46) : QColor(0xd4, 0x7a, 0x2c);
-        return {};
+        if (win)
+            return QColor(0x2e, 0x9e, 0x46);
+        return m_dark ? QColor(0x9a, 0xa0, 0xa6) : QColor(0x6a, 0x70, 0x76);
     }
 
     if (role == Qt::TextAlignmentRole)
         return int(Qt::AlignLeft | Qt::AlignVCenter);
 
-    // Roll, Multiplier, Payout and Profit in bold; the other columns use the bet list's font.
-    if (role == Qt::FontRole) {
-        const int c = index.column();
-        if (c == ColRoll || c == ColMultiplier || c == ColPayout || c == ColProfit)
-            return m_boldFont;
-        return {};
-    }
+    // Every column in bold.
+    if (role == Qt::FontRole)
+        return m_boldFont;
 
     if (role != Qt::DisplayRole && role != Qt::ToolTipRole)
         return {};
@@ -209,6 +206,16 @@ void BetHistoryModel::setStripeColor(const QColor &color)
     if (!m_visible.isEmpty())
         emit dataChanged(index(0, 0), index(m_visible.size() - 1, ColumnCount - 1),
                          {Qt::BackgroundRole});
+}
+
+void BetHistoryModel::setDarkTheme(bool dark)
+{
+    if (m_dark == dark)
+        return;
+    m_dark = dark;
+    if (!m_visible.isEmpty())
+        emit dataChanged(index(0, 0), index(m_visible.size() - 1, ColumnCount - 1),
+                         {Qt::ForegroundRole});
 }
 
 void BetHistoryModel::setFilter(Filter filter)

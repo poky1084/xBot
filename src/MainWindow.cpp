@@ -1215,7 +1215,7 @@ void MainWindow::createCentralWidget()
     listFont.setPointSizeF(8.5);
     listFont.setBold(false);
     m_betTable->setFont(listFont);
-    // Roll / Multiplier / Payout / Profit: the same font in bold. 12 px = the size the app's
+    // All bet list columns: the same font in bold. 12 px = the size the app's
     // style sheet gives the list ("QWidget { font-size: 12px; }").
     QFont boldListFont = listFont;
     boldListFont.setPixelSize(12);
@@ -4805,8 +4805,10 @@ void MainWindow::applyTheme(bool dark)
     if (!qApp->styleSheet().isEmpty())
         qApp->setStyleSheet(QString());
     setStyleSheet(sheet);
-    if (m_model)
+    if (m_model) {
         m_model->setStripeColor(dark ? QColor(0x29, 0x2d, 0x31) : QColor(0xf6, 0xf8, 0xfb));
+        m_model->setDarkTheme(dark);
+    }
     if (m_luaDock)
         m_luaDock->setDark(dark);
 }

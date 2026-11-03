@@ -54,6 +54,9 @@ public:
     // time a new bet is inserted at the top.
     void setStripeColor(const QColor &color);
 
+    // Text colour of losing rows: grey, a lighter shade in the dark theme, darker in the light one.
+    void setDarkTheme(bool dark);
+
     // ---- Bet id column ----------------------------------------------------
     // Rows with a server bet id show a blue "View" link. Once the id has been
     // resolved (BetLookup) the cell shows the iid instead, like the C# bot.
@@ -83,4 +86,5 @@ private:
     QString m_search;
     QColor m_stripe;             // background of every other bet (invalid = none)
     QFont m_boldFont;
+    bool m_dark = false;         // dark theme: lighter grey for losing rows
 };
