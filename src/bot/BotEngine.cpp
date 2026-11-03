@@ -5,6 +5,7 @@
 
 #include <QJsonArray>
 #include <QRandomGenerator>
+#include <QRegularExpression>
 
 #include <algorithm>
 #include <cmath>
@@ -101,6 +102,16 @@ bool BotEngine::liveReady(QString *whyNot) const
     if (whyNot)
         *whyNot = why;
     return why.isEmpty();
+}
+
+// A Cloudflare / proxy gateway failure (HTTP 502 / 503 / 504 / 520-524 page) rather than an answer
+// from the casino itself.
+static bool isGatewayError(const QString &error)
+{
+    static const QRegularExpression re(QStringLiteral("HTTP (502|503|504|52[0-4])\\b|Bad Gateway|Gateway Time-?out|"
+                                                      "Service Unavailable|cloudflare"),
+                                       QRegularExpression::CaseInsensitiveOption);
+    return re.match(error).hasMatch();
 }
 
 void BotEngine::requestLiveBet(const BotConfig &cfg, double betSize, bool manual)
@@ -276,6 +287,17 @@ void BotEngine::onLiveFinished(const LiveBetResult &result)
     const QString betCasino = m_inFlightCasino; // read before any switch below can matter
 
     if (!r.ok) {
+        // Shuffle behind Cloudflare: a 502 / 503 / 504 / 52x gateway page means the request did not
+        // get an answer from Shuffle itself. Keep betting (the same bet again after the retry wait)
+        // instead of halting, and log a short line instead of the whole HTML page.
+        if (betCasino == QLatin1String("shuffle") && isGatewayError(r.error)) {
+            const QRegularExpression code(QStringLiteral("HTTP (5\\d\\d)"));
+            const QRegularExpressionMatch m = code.match(r.error);
+            r.error = tr("Shuffle is not answering (HTTP %1, Cloudflare gateway error) - betting continues")
+                          .arg(m.hasMatch() ? m.captured(1) : QStringLiteral("5xx"));
+            r.outcomeUnknown = false;
+            r.retryable = true;
+        }
         // Paradice "slowdown_please" during an auto-bet is retried at once: not logged each time.
         if (!(r.retryNow && r.retryable && !manual && m_running))
             emit logMessage(tr("Bet failed: %1").arg(r.error), true);
