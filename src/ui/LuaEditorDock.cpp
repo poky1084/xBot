@@ -1040,7 +1040,7 @@ void LuaEditorDock::onHelp()
         "<code>tower</code>: eggs (1-based, one per floor), difficulty · <code>flip</code> / <code>rps</code>: guesses · "
         "<code>pump</code>: pumps, difficulty · <code>snakes</code>: rolls, difficulty · "
         "<code>cases</code> / <code>darts</code> / <code>tarot</code>: difficulty · "
-        "<code>bars</code>: tiles, difficulty · <code>chicken</code>: steps, difficulty · "
+        "<code>bars</code>: tiles, difficulty · <code>chicken</code>: steps, difficulty · <code>goatrun</code> (Goated): steps, difficulty · "
         "<code>drill</code>: target, pick (1 – 3) · <code>moles</code>: moles, picks (1-based) · "
         "<code>scarabspin</code> / <code>tomeoflife</code>: lines · "
         "<code>primedice</code>: condition, target1 – target4 · "

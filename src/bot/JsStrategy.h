@@ -53,7 +53,7 @@ private:
 //                           // "keno", "mines", "plinko", "wheel", "hilo", "blackjack", "baccarat",
 //                           // "roulette", "tower", "flip", "rps", "pump", "snakes", "cases",
 //                           // "darts", "diamonds", "videopoker", "bluesamurai", "scarabspin",
-//                           // "tomeoflife", "bars", "chicken", "tarot", "drill", "packs", "moles",
+//                           // "tomeoflife", "bars", "chicken", "goatrun", "tarot", "drill", "packs", "moles",
 //                           // "primedice". Their settings use the reference bot's variables, e.g.
 //                           // keno: numbers = [1,2,3] (1 .. 40); risk = "low";
 //                           // mines: fields = [1,2] (1 .. 25, 1 = top-left); mines = 3;

@@ -229,6 +229,22 @@ private:
     void handleGoatedHiloReply(const TransportReply &reply, const QJsonObject &params, double requestedAmount,
                                bool firstRequest, bool activeQuery);
     QString m_goatedHiloRank; // the card the next guess is about
+    // Goated keno (casino/keno/bet), answered in Stake's keno shape.
+    void placeGoatedKeno(const GameBetRequest &request);
+    QString m_goatedAutobetSessionId; // autobet_session_id sent with Goated keno / mines bets
+    QString goatedAutobetSessionId();
+    // Goated mines (casino/mines/multi-select-bet: all tiles in one request).
+    void placeGoatedMines(const GameBetRequest &request);
+    // Goated plinko (casino/plinko).
+    void placeGoatedPlinko(const GameBetRequest &request);
+    // Goated wheel (casino/wheel).
+    void placeGoatedWheel(const GameBetRequest &request);
+    // Goated diamonds (casino/diamonds).
+    void placeGoatedDiamonds(const GameBetRequest &request);
+    // Goated tower (casino/tower/multi-select-bet: one pick per floor in one request).
+    void placeGoatedTower(const GameBetRequest &request);
+    // Goated Goat Run (casino/goat-run/multi-hop-bet: hop to the chosen lane in one request).
+    void placeGoatedGoatRun(const GameBetRequest &request);
     // GET casino/blackjack/active: the open hand (or a quiet "nothing open").
     void fetchGoatedBlackjack(const QJsonObject &params, double requestedAmount);
     void handleGoatedBlackjackReply(const TransportReply &reply, const QJsonObject &params,

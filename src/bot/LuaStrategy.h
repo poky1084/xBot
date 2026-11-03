@@ -17,7 +17,7 @@ struct lua_State;
 //                                   -- "blackjack", "baccarat", "roulette", "tower",
 //                                   -- "flip", "rps", "pump", "snakes", "cases", "darts",
 //                                   -- "diamonds", "videopoker", "bluesamurai", "scarabspin",
-//                                   -- "tomeoflife", "bars", "chicken", "tarot", "drill",
+//                                   -- "tomeoflife", "bars", "chicken", "goatrun", "tarot", "drill",
 //                                   -- "packs", "moles", "primedice" with the reference bot's
 //                                   -- variables (keno: numbers = {1,2,3} (1 .. 40), risk = "low";
 //                                   -- mines: fields = {1,2} (1 .. 25, 1 = top-left), mines = 3;

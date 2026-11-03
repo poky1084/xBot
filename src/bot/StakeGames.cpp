@@ -549,12 +549,16 @@ const char *pokerHelpersJs()
 QList<Game> gamesForCasino(const QString &casinoKey)
 {
     const QString k = casinoKey.trimmed().toLower();
-    if (k.isEmpty() || k == QLatin1String("stake"))
-        return allGames();
+    if (k.isEmpty() || k == QLatin1String("stake")) {
+        QList<Game> games = allGames();
+        games.removeAll(Game::GoatRun); // Goated's own game
+        return games;
+    }
     if (k == QLatin1String("paradice"))
         return {Game::Dice};
     if (k == QLatin1String("goated"))
-        return {Game::Dice, Game::Limbo, Game::Hilo, Game::Blackjack};
+        return {Game::Dice, Game::Limbo, Game::Keno, Game::Mines, Game::Plinko, Game::Wheel, Game::Diamonds,
+                Game::DragonTower, Game::GoatRun, Game::Hilo, Game::Blackjack};
     if (k == QLatin1String("shuffle"))
         return {Game::Dice, Game::Limbo, Game::Keno, Game::Mines, Game::Plinko, Game::Wheel,
                 Game::DragonTower, Game::Chicken, Game::Hilo, Game::Blackjack};
@@ -563,9 +567,10 @@ QList<Game> gamesForCasino(const QString &casinoKey)
 
 QStringList unsupportedChoices(const QString &casinoKey, Game game, const QString &key)
 {
-    if (casinoKey.trimmed().compare(QLatin1String("shuffle"), Qt::CaseInsensitive) == 0
+    const QString k = casinoKey.trimmed().toLower();
+    if ((k == QLatin1String("shuffle") || k == QLatin1String("goated"))
         && game == Game::Plinko && key == QLatin1String("risk"))
-        return {QStringLiteral("expert")};
+        return {QStringLiteral("expert")}; // low / medium / high only
     return {};
 }
 
@@ -579,6 +584,14 @@ double casinoMaximum(const QString &casinoKey, Game game, const QString &key, co
         if (d == QLatin1String("hard")) return 15.0;
         if (d == QLatin1String("expert")) return 10.0;
         return 19.0; // easy
+    }
+    if (game == Game::GoatRun && key == QLatin1String("steps")) {
+        // Goated's lanes per difficulty.
+        const QString d = values.value(QStringLiteral("difficulty")).toString().toLower();
+        if (d == QLatin1String("medium")) return 22.0;
+        if (d == QLatin1String("hard")) return 20.0;
+        if (d == QLatin1String("expert")) return 15.0;
+        return 24.0; // easy
     }
     return -1.0;
 }
@@ -697,6 +710,9 @@ QList<ParamSpec> paramSpecs(Game game)
     case Game::Chicken:
         return {spec(QStringLiteral("difficulty"), QStringLiteral("Difficulty:"), T::Choice, QStringLiteral("easy"), kEasyToExpert),
                 spec(QStringLiteral("steps"), QStringLiteral("Steps:"), T::Int, 1, {}, 1, 20)};
+    case Game::GoatRun: // lanes to hop: easy 24, medium 22, hard 20, expert 15 at most
+        return {spec(QStringLiteral("difficulty"), QStringLiteral("Difficulty:"), T::Choice, QStringLiteral("easy"), kEasyToExpert),
+                spec(QStringLiteral("steps"), QStringLiteral("Steps:"), T::Int, 1, {}, 1, 24)};
     case Game::Drill:
         return {spec(QStringLiteral("target"), QStringLiteral("Target Multi:"), T::Number, 1.01, {}, 1.01, 999),
                 spec(QStringLiteral("pick"), QStringLiteral("Pick:"), T::DrillPick, 1, {}, 1, 3,
@@ -768,7 +784,8 @@ QStringList scriptVariables(Game game)
     case Game::ScarabSpin:
     case Game::TomeOfLife:  return L({"lines"});
     case Game::Bars:        return L({"difficulty", "tiles"});
-    case Game::Chicken:     return L({"difficulty", "steps"});
+    case Game::Chicken:
+    case Game::GoatRun:     return L({"difficulty", "steps"});
     case Game::Drill:       return L({"target", "pick"});
     case Game::Moles:       return L({"moles", "picks"});
     case Game::Primedice:   return L({"condition", "target1", "target2", "target3", "target4"});
@@ -1192,6 +1209,10 @@ bool buildBetRequest(Game game, double amount, const QString &currency, const QJ
         b.insert(QStringLiteral("difficulty"), toText(val("difficulty"), QStringLiteral("medium")));
         b.insert(QStringLiteral("round"), toInt(val("steps"), 1));
         ep = QStringLiteral("_api/casino/chicken/bet");
+        break;
+    case Game::GoatRun: // Goated only (StakeClient::placeGoatedGoatRun reads difficulty / round)
+        b.insert(QStringLiteral("difficulty"), toText(val("difficulty"), QStringLiteral("easy")));
+        b.insert(QStringLiteral("round"), toInt(val("steps"), 1));
         break;
     case Game::Tarot:
         b.insert(QStringLiteral("difficulty"), toText(val("difficulty"), QStringLiteral("medium")));
@@ -1654,6 +1675,7 @@ Summary summarize(Game game, const QJsonObject &bet, const QJsonObject &params)
         }
         break;
     case Game::Chicken:
+    case Game::GoatRun:
         s.targetText = QStringLiteral("%1|%2").arg(text("difficulty"))
                            .arg(toInt(params.value(QStringLiteral("steps")), toInt(st.value(QStringLiteral("round")), 0)));
         if (!st.value(QStringLiteral("_deathPoint")).isUndefined()) {

@@ -105,7 +105,8 @@ enum class Game {
     Drill,
     Packs,
     Moles,
-    Primedice
+    Primedice,
+    GoatRun // Goated's Goat Run (not on Stake)
 };
 
 // Every game, in Game menu order.
@@ -114,7 +115,7 @@ inline const QList<Game> &allGames()
     static const QList<Game> games = {
         Game::Dice,       Game::Limbo,       Game::Baccarat,  Game::Bars,       Game::Blackjack,
         Game::BlueSamurai, Game::Cases,      Game::Chicken,   Game::Darts,      Game::Diamonds,
-        Game::Drill,      Game::Flip,        Game::Hilo,      Game::Keno,
+        Game::Drill,      Game::Flip,        Game::GoatRun,   Game::Hilo,      Game::Keno,
         Game::Mines,      Game::Moles,       Game::Packs,     Game::Plinko,     Game::Primedice,
         Game::Pump,       Game::Rps,         Game::Roulette,  Game::ScarabSpin, Game::Snakes,
         Game::Tarot,      Game::TomeOfLife,  Game::DragonTower, Game::VideoPoker, Game::Wheel};
@@ -151,6 +152,7 @@ inline QString gameName(Game g)
     case Game::TomeOfLife:  return QStringLiteral("tomeoflife");
     case Game::Bars:        return QStringLiteral("bars");
     case Game::Chicken:     return QStringLiteral("chicken");
+    case Game::GoatRun:     return QStringLiteral("goatrun");
     case Game::Tarot:       return QStringLiteral("tarot");
     case Game::Drill:       return QStringLiteral("drill");
     case Game::Packs:       return QStringLiteral("packs");
@@ -188,6 +190,7 @@ inline QString gameDisplayName(Game g)
     case Game::TomeOfLife:  return QStringLiteral("Tome of Life");
     case Game::Bars:        return QStringLiteral("Bars");
     case Game::Chicken:     return QStringLiteral("Chicken");
+    case Game::GoatRun:     return QStringLiteral("Goat Run");
     case Game::Tarot:       return QStringLiteral("Tarot");
     case Game::Drill:       return QStringLiteral("Drill");
     case Game::Packs:       return QStringLiteral("Packs");
