@@ -693,6 +693,12 @@ MainWindow::MainWindow(int slot, bool freshWebSession, QWidget *parent)
             m_luaDock->appendConsole(msg, isError);
     });
     connect(m_engine, &BotEngine::gameChanged, this, [this](Game game) { setGame(game); });
+    // A script switched game (game = "blackjack"): the window title shows it while the run lasts.
+    connect(m_engine, &BotEngine::runGameChanged, this, [this](Game game) {
+        m_runGame = game;
+        m_runGameShown = m_engine->isRunning() && game != m_game;
+        updateWindowTitle();
+    });
     // resetstats() / resetseed() called from a Lua / JavaScript strategy
     connect(m_engine, &BotEngine::statsReset, this, [this] {
         refreshAfterStatsReset();
@@ -1500,7 +1506,7 @@ void MainWindow::updateWindowTitle()
     // The main window keeps the plain title; "+" windows show their number:
     // #2 = first "+" window, #3 = the next, … (settings slot + 1). The game being played
     // follows the casino ("xBot - Stake: Keno").
-    const QString game = gameDisplayName(m_game);
+    const QString game = gameDisplayName(m_runGameShown ? m_runGame : m_game);
     if (m_slot == 0)
         setWindowTitle(tr("xBot - %1: %2").arg(casinoDisplayName(m_live.casino), game));
     else
@@ -1510,6 +1516,7 @@ void MainWindow::updateWindowTitle()
 void MainWindow::setGame(Game game)
 {
     m_game = game;
+    m_runGameShown = false; // the Game menu's choice is what the title shows again
     {
         const QSignalBlocker blocker(m_gameGroup);
         if (QAction *a = m_gameActions.value(game))
@@ -2025,6 +2032,10 @@ void MainWindow::onEngineStarted()
 
 void MainWindow::onEngineStopped(const QString &reason)
 {
+    if (m_runGameShown) { // the script's game was only for the run
+        m_runGameShown = false;
+        updateWindowTitle();
+    }
     Q_UNUSED(reason);
     m_luaRunning = false;
     if (m_luaDock)

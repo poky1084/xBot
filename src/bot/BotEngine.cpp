@@ -744,6 +744,8 @@ void BotEngine::start()
                                 .arg(m_runCfg.side == BetSide::Over ? tr("over") : tr("under")),
                             false);
         //notifyGameChange();
+        m_titleGameValid = false;
+        announceRunGame(); // the script's first game in the window title
     } else if (m_conditions.active())
         emit logMessage(tr("Condition builder active: %1 block(s), first bet %2. "
                            "Only the Auto Bet base bet is used.")
@@ -1140,6 +1142,15 @@ void BotEngine::updateAutoSettings(const BotConfig &cfg, bool condMode, const Bl
                         false);
 }
 
+void BotEngine::announceRunGame()
+{
+    if (m_titleGameValid && m_runCfg.game == m_titleGame)
+        return;
+    m_titleGame = m_runCfg.game;
+    m_titleGameValid = true;
+    emit runGameChanged(m_titleGame);
+}
+
 void BotEngine::notifyGameChange()
 {
     if (m_runCfg.game == m_announcedGame)
@@ -1395,6 +1406,7 @@ bool BotEngine::advanceProgression(bool win, const BotConfig &cfg)
         if (applyScriptCasino() || applyScriptCurrency())
             return true;
         //notifyGameChange();
+        announceRunGame(); // dobet() set `game`: the window title follows
         return false;
     }
     if (m_conditions.active()) {

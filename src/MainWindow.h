@@ -172,6 +172,9 @@ private:
     void detachFloatingDock(QDockWidget *dock, bool bringToFront = false);
     static QString casinoDisplayName(LiveSettings::Casino casino);
     void loadOpenGameIfShown();
+    // A script run's game (game = "blackjack") shown in the window title until the run stops.
+    Game m_runGame = Game::Dice;
+    bool m_runGameShown = false;
     QAction *casinoAction(LiveSettings::Casino casino) const;
     void closeHiddenBrowser();
     void ensureHiddenBrowser(const LiveSettings &s);

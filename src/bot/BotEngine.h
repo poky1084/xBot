@@ -168,6 +168,9 @@ signals:
     void scriptOutput(const QString &message, bool isError); // print()/log() text and script errors
     // The game being played changed (a script set game = "dice" / "limbo").
     void gameChanged(Game game);
+    // The game the running bets are placed in (a script's `game` included): for the window
+    // title only, the Manual / Auto Bet tabs are left as they are.
+    void runGameChanged(Game game);
     // A script called resetstats(): the statistics were reset (the balance is kept).
     void statsReset();
     // A script called resetseed(): rotate the seed pair with this client seed
@@ -292,6 +295,10 @@ private:
     QString m_inFlightCasino; // casino the bet in flight was sent to (its row shows this one)
     // Manual hilo round waiting for a button (see manualGameMove()).
     bool m_manualGameOpen = false;
+    // runGameChanged(): the game last announced for the title.
+    Game m_titleGame = Game::Dice;
+    bool m_titleGameValid = false;
+    void announceRunGame();
     bool m_loadingOpenGame = false; // loadOpenGame()'s request is in flight
     Game m_manualGame = Game::Hilo;
     BotConfig m_manualGameCfg;
