@@ -8,7 +8,6 @@
 #include <QTimer>
 
 #include <algorithm>
-#include <limits>
 
 namespace
 {
@@ -42,29 +41,16 @@ void BalanceGraphWidget::scheduleRepaint()
 void BalanceGraphWidget::addSample(double profit)
 {
     if (m_samples.isEmpty()) {
-        // The curve starts at 0 (before the first bet), so point n is the profit after bet n.
-        m_samples.reserve(4096);
+        // The curve starts at 0 (before the first bet).
+        m_samples.reserve(kMaxSamples + 1);
         m_samples.append(0.0);
-        m_lo = m_hi = 0.0;
+        m_firstBet = 0;
     }
     m_samples.append(profit);
-    m_lo = std::min(m_lo, profit);
-    m_hi = std::max(m_hi, profit);
-
-    // Block summaries, filled in as each block completes (amortised O(1) per bet).
-    const qsizetype n = m_samples.size();
-    if (n % kBlock1 == 0) {
-        const auto first = m_samples.cbegin() + (n - kBlock1);
-        const auto [mn, mx] = std::minmax_element(first, m_samples.cend());
-        m_blocks1.append({*mn, *mx});
-        if (n % kBlock2 == 0) {
-            Range r{std::numeric_limits<double>::max(), std::numeric_limits<double>::lowest()};
-            for (qsizetype i = m_blocks1.size() - kBlock2 / kBlock1; i < m_blocks1.size(); ++i) {
-                r.lo = std::min(r.lo, m_blocks1.at(i).lo);
-                r.hi = std::max(r.hi, m_blocks1.at(i).hi);
-            }
-            m_blocks2.append(r);
-        }
+    if (m_samples.size() > kMaxSamples) {
+        const qsizetype drop = m_samples.size() - kMaxSamples;
+        m_samples.remove(0, drop);
+        m_firstBet += drop;
     }
     scheduleRepaint();
 }
@@ -72,37 +58,9 @@ void BalanceGraphWidget::addSample(double profit)
 void BalanceGraphWidget::clearSamples()
 {
     m_samples.clear();
-    m_samples.squeeze();
-    m_blocks1.clear();
-    m_blocks2.clear();
-    m_lo = m_hi = 0.0;
+    m_firstBet = 0;
     m_repaintTimer->stop();
     update();
-}
-
-BalanceGraphWidget::Range BalanceGraphWidget::rangeMinMax(qsizetype from, qsizetype to) const
-{
-    Range r{std::numeric_limits<double>::max(), std::numeric_limits<double>::lowest()};
-    qsizetype i = from;
-    while (i < to) {
-        if (i % kBlock2 == 0 && i + kBlock2 <= to) {
-            const Range &b = m_blocks2.at(i / kBlock2);
-            r.lo = std::min(r.lo, b.lo);
-            r.hi = std::max(r.hi, b.hi);
-            i += kBlock2;
-        } else if (i % kBlock1 == 0 && i + kBlock1 <= to) {
-            const Range &b = m_blocks1.at(i / kBlock1);
-            r.lo = std::min(r.lo, b.lo);
-            r.hi = std::max(r.hi, b.hi);
-            i += kBlock1;
-        } else {
-            const double v = m_samples.at(i);
-            r.lo = std::min(r.lo, v);
-            r.hi = std::max(r.hi, v);
-            ++i;
-        }
-    }
-    return r;
 }
 
 int BalanceGraphWidget::sampleIndexAt(const QPoint &pos) const
@@ -148,9 +106,10 @@ void BalanceGraphWidget::paintEvent(QPaintEvent *event)
         return;
     }
 
-    // Vertical scale: the whole session, always including the zero line.
-    double lo = std::min(m_lo, 0.0);
-    double hi = std::max(m_hi, 0.0);
+    // Vertical scale: the bets shown, always including the zero line.
+    const auto [mn, mx] = std::minmax_element(m_samples.cbegin(), m_samples.cend());
+    double lo = std::min(*mn, 0.0);
+    double hi = std::max(*mx, 0.0);
     if (hi - lo < 1e-12) {
         hi += 1.0;
         lo -= 1.0;
@@ -166,39 +125,18 @@ void BalanceGraphWidget::paintEvent(QPaintEvent *event)
     p.setPen(QPen(dark ? QColor(0x6a, 0x70, 0x76) : QColor(0xb0, 0xb6, 0xbc), 1, Qt::DashLine));
     p.drawLine(QPointF(r.left(), zeroY), QPointF(r.right(), zeroY));
 
-    // The curve. With more bets than pixel columns, each column gets its bets' first, highest,
-    // lowest and last profit, so every bet is in the picture (spikes included) at a cost of
-    // about one pass over the columns.
+    // The curve: one point per bet in the window, spread over the full width.
     const int w = r.width();
     QPolygonF line;
-    if (n - 1 <= qsizetype(w)) {
-        line.reserve(int(n));
-        const double step = double(w) / double(n - 1);
-        for (qsizetype i = 0; i < n; ++i)
-            line << QPointF(r.left() + double(i) * step, yOf(m_samples.at(i)));
-    } else {
-        line.reserve(w * 4);
-        for (int c = 0; c < w; ++c) {
-            const qsizetype from = qsizetype(c) * n / w;
-            const qsizetype to = std::max(from + 1, qsizetype(c + 1) * n / w);
-            const double x = r.left() + c + 0.5;
-            const Range mm = rangeMinMax(from, to);
-            const double first = m_samples.at(from);
-            const double last = m_samples.at(to - 1);
-            line << QPointF(x, yOf(first));
-            // Highest and lowest in the order they are reached from the first value.
-            if (mm.hi - first < first - mm.lo)
-                line << QPointF(x, yOf(mm.hi)) << QPointF(x, yOf(mm.lo));
-            else
-                line << QPointF(x, yOf(mm.lo)) << QPointF(x, yOf(mm.hi));
-            line << QPointF(x, yOf(last));
-        }
-    }
+    line.reserve(int(n));
+    const double step = double(w) / double(n - 1);
+    for (qsizetype i = 0; i < n; ++i)
+        line << QPointF(r.left() + double(i) * step, yOf(m_samples.at(i)));
 
     // Green above the zero line, red below: the same line drawn twice, clipped to each side.
     const QColor green(0x4c, 0xd9, 0x64);
     const QColor red(0xef, 0x44, 0x44);
-    p.setRenderHint(QPainter::Antialiasing, n - 1 <= qsizetype(w) * 2);
+    p.setRenderHint(QPainter::Antialiasing);
 
     // Shaded fill between the curve and the zero line, tinted the same way (green above,
     // red below). One polygon (the curve closed along the zero line), filled twice clipped.
@@ -229,7 +167,6 @@ void BalanceGraphWidget::paintEvent(QPaintEvent *event)
     p.setPen(pen);
     p.drawPolyline(line);
     p.setClipping(false);
-    p.setRenderHint(QPainter::Antialiasing);
 
     // Hover: dashed guide, a dot on the curve and "#bet  profit" next to it.
     if (m_hoverX >= 0) {
@@ -247,7 +184,7 @@ void BalanceGraphWidget::paintEvent(QPaintEvent *event)
             p.setBrush(Qt::NoBrush);
 
             const QString label = QStringLiteral("#%1  %2%3")
-                                      .arg(idx)
+                                      .arg(m_firstBet + idx) // the bet's number in the session
                                       .arg(v > 0 ? QStringLiteral("+") : QString())
                                       .arg(v, 0, 'f', 8);
             QFont f = font();
