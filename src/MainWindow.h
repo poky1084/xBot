@@ -334,7 +334,7 @@ private:
     QLabel *m_lblBalance = nullptr;
     QLabel *m_lblProfit = nullptr;
     QLabel *m_lblWagered = nullptr;
-    QLabel *m_lblWinRate = nullptr;
+    QLabel *m_lblRtp = nullptr; // session RTP (replaces the former Win rate row)
     QLabel *m_lblHighestBet = nullptr;
     QLabel *m_lblHighestProfit = nullptr;
     QLabel *m_lblLowestProfit = nullptr;

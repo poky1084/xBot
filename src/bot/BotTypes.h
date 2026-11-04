@@ -344,6 +344,8 @@ struct SessionStats
     }
 
     double winRate() const { return bets > 0 ? 100.0 * double(wins) / double(bets) : 0.0; }
+    // Return to player so far: what came back (stakes + profit) per amount wagered, in %.
+    double rtp() const { return wagered > 0.0 ? 100.0 * (wagered + profit) / wagered : 0.0; }
 
     void reset(double initialBalance)
     {

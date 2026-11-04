@@ -1183,7 +1183,7 @@ void MainWindow::createSidebar()
     makeSessionRow(tr("Balance"), &m_lblBalance, 0);
     makeSessionRow(tr("Profit"), &m_lblProfit, 1);
     makeSessionRow(tr("Wager"), &m_lblWagered, 2);
-    makeSessionRow(tr("Win rate"), &m_lblWinRate, 3);
+    makeSessionRow(tr("RTP"), &m_lblRtp, 3);
     makeSessionRow(tr("Highest bet"), &m_lblHighestBet, 4);
     makeSessionRow(tr("H profit"), &m_lblHighestProfit, 5);
     makeSessionRow(tr("L profit"), &m_lblLowestProfit, 6);
@@ -4546,8 +4546,12 @@ void MainWindow::updateSessionWidgets()
     m_lblProfit->setStyleSheet(s.profit >= 0.0 ? QStringLiteral("color:#2e9e46;")
                                                : QStringLiteral("color:#c9372a;"));
     m_lblWagered->setText(timesOf(s.wagered) + QLatin1Char(' ') + formatAmount(s.wagered));
-    m_lblWinRate->setText(hasSession ? QStringLiteral("%1%").arg(s.winRate(), 0, 'f', 1)
-                                     : QStringLiteral("—"));
+    // RTP: (wagered + profit) / wagered, green at 100 % or more, red below.
+    const bool hasRtp = hasSession && s.wagered > 0.0;
+    m_lblRtp->setText(hasRtp ? QStringLiteral("%1%").arg(s.rtp(), 0, 'f', 2) : QStringLiteral("—"));
+    m_lblRtp->setStyleSheet(!hasRtp            ? QString()
+                            : s.rtp() >= 100.0 ? QStringLiteral("color:#2e9e46;")
+                                               : QStringLiteral("color:#c9372a;"));
 
     const QString green = QStringLiteral("color:#2e9e46;");
     const QString red = QStringLiteral("color:#c9372a;");
