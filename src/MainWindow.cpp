@@ -88,6 +88,7 @@
 #include <QVBoxLayout>
 
 #include <algorithm>
+#include <cmath>
 
 #ifdef Q_OS_WIN
 #  ifndef NOMINMAX
@@ -4546,12 +4547,11 @@ void MainWindow::updateSessionWidgets()
     m_lblProfit->setStyleSheet(s.profit >= 0.0 ? QStringLiteral("color:#2e9e46;")
                                                : QStringLiteral("color:#c9372a;"));
     m_lblWagered->setText(timesOf(s.wagered) + QLatin1Char(' ') + formatAmount(s.wagered));
-    // RTP: (wagered + profit) / wagered, green at 100 % or more, red below.
-    const bool hasRtp = hasSession && s.wagered > 0.0;
-    m_lblRtp->setText(hasRtp ? QStringLiteral("%1%").arg(s.rtp(), 0, 'f', 2) : QStringLiteral("—"));
-    m_lblRtp->setStyleSheet(!hasRtp            ? QString()
-                            : s.rtp() >= 100.0 ? QStringLiteral("color:#2e9e46;")
-                                               : QStringLiteral("color:#c9372a;"));
+    // RTP: (wagered + profit) / wagered, cut (not rounded) to 2 decimals and 100.00 % before
+    // the first bet, like Antebot. Green at 100 % or more, the normal text colour below.
+    const double rtp = s.wagered > 0.0 ? std::floor(s.rtp() * 100.0 + 1e-7) / 100.0 : 100.0;
+    m_lblRtp->setText(QStringLiteral("%1%").arg(rtp, 0, 'f', 2));
+    m_lblRtp->setStyleSheet(rtp >= 100.0 ? QStringLiteral("color:#2e9e46;") : QString());
 
     const QString green = QStringLiteral("color:#2e9e46;");
     const QString red = QStringLiteral("color:#c9372a;");
