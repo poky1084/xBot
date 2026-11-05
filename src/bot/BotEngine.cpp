@@ -514,7 +514,8 @@ void BotEngine::loadOpenGame(const BotConfig &cfg)
         return;
     if (!m_live->isStake() && !m_live->isShuffle() && !m_live->isGoated()
         && !(m_live->isWolfbet() && cfg.game == Game::Hilo)
-        && !m_live->isDuel())
+        && !m_live->isDuel()
+        && !(m_live->isPasino() && cfg.game == Game::Blackjack))
         return; // hilo and blackjack: Stake, Shuffle, Goated and Duel; hilo also on Wolfbet
     if (!liveReady(nullptr))
         return;

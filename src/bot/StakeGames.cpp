@@ -574,7 +574,9 @@ QList<Game> gamesForCasino(const QString &casinoKey)
                 Game::Blackjack}; // Chicken = Duel's Beef (cross-road)
     if (k == QLatin1String("wolfbet"))
         return {Game::Dice, Game::Limbo, Game::Keno, Game::Plinko, Game::Hilo};
-    return {Game::Dice, Game::Limbo}; // Pasino, Tower, Winna
+    if (k == QLatin1String("pasino"))
+        return {Game::Dice, Game::Limbo, Game::Blackjack};
+    return {Game::Dice, Game::Limbo}; // Tower, Winna
 }
 
 QStringList unsupportedChoices(const QString &casinoKey, Game game, const QString &key)

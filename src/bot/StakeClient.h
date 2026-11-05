@@ -337,6 +337,20 @@ private:
     QString m_currency;
     // Pasino sends the client seed with every bet ("client_seed"); set by rotateSeedPair().
     QString m_pasinoClientSeed;
+    // Pasino blackjack: POST blackjack/play (new hand), blackjack/hit | stand | double | split.
+    // No insurance on Pasino (scripts' BLACKJACK_INSURANCE is refused).
+    void placePasinoBlackjack(const GameBetRequest &request, bool redeal = false);
+    void sendPasinoBlackjack(const QString &stakeAction, const QJsonObject &params, double requestedAmount);
+    // The open hand: POST blackjack/session ({"session_exists":true, the hand, "bet_amt"}).
+    void fetchPasinoBlackjack(const QJsonObject &params, double requestedAmount, const QString &startError = {});
+    void handlePasinoBlackjackReply(const TransportReply &reply, const QJsonObject &params, double requestedAmount,
+                                    bool firstRequest = false);
+    double m_pasinoBjBet = 0.0;       // the stake of one hand
+    bool m_pasinoBjDoubled[2] = {false, false}; // hands doubled here (Pasino does not say)
+    QJsonObject m_pasinoBjLast;       // the last answer of the open hand
+    GameBetRequest m_pasinoBjRequest; // the new hand being dealt (sent again after "active session")
+    int m_pasinoBjStartTries = 0;     // re-deals after an empty session check, for that new hand
+    int m_pasinoBjQuickTries = 0;     // fast re-deals before the session is checked at all
     // Winna: index of the word for "roll over" that the site accepted (see placeWinnaDice()).
     int m_winnaOverWord = 0;
     double m_lastDiceTarget = -1.0; // see lastDiceTarget()

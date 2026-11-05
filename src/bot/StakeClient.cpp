@@ -460,6 +460,130 @@ QJsonObject goatedHiloAsStake(const QJsonObject &bet, QString *lastRank)
     return out;
 }
 
+// ---------------------------------------------------------------- Pasino blackjack helpers
+// Pasino numbers its cards 0-51: rank = n / 4 (0 = 2 .. 8 = 10, 9 J, 10 Q, 11 K, 12 A), suit = n % 4.
+// (51 = an ace, 18 = a 6, 24 / 27 = two 8s: checked against the scores in the answers.)
+QJsonObject pasinoCard(int n)
+{
+    static const char *ranks[] = {"2", "3", "4", "5", "6", "7", "8", "9", "10", "J", "Q", "K", "A"};
+    static const char suits[] = {'C', 'D', 'H', 'S'};
+    QJsonObject card;
+    if (n < 0 || n > 51)
+        return card;
+    card.insert(QStringLiteral("rank"), QString::fromLatin1(ranks[n / 4]));
+    card.insert(QStringLiteral("suit"), QString(QLatin1Char(suits[n % 4])));
+    return card;
+}
+
+QJsonArray pasinoCards(const QJsonValue &v)
+{
+    QJsonArray out;
+    for (const QString &part : v.toString().split(QLatin1Char(','), Qt::SkipEmptyParts)) {
+        bool ok = false;
+        const int n = part.trimmed().toInt(&ok);
+        if (ok)
+            out.append(pasinoCard(n));
+    }
+    return out;
+}
+
+// A move the casino does not offer right now (double after a hit, split without a pair): scripts'
+// strategy tables ask for it anyway. Like the usual "double, otherwise hit / stand" rule, it
+// becomes hit below 17 and stand from 17 (the hand's value).
+QString blackjackFallbackMove(const QString &wanted, const QStringList &offered, int handValue)
+{
+    if (offered.isEmpty() || offered.contains(wanted))
+        return wanted;
+    const QString move = handValue < 17 ? QStringLiteral("hit") : QStringLiteral("stand");
+    return offered.contains(move) ? move : (offered.contains(QStringLiteral("stand")) ? QStringLiteral("stand")
+                                                                                       : offered.first());
+}
+
+// A Pasino blackjack answer ({"status":"in_progress"|"win"|"loss"|...,"player_hand":"51,18",
+// "player2_hand" (after a split),"dealer_hand","actions":["Hit","Stand","Double","Split"],
+// "hand1_status","hand2_status","profit" (net, final),"bet_id","balance"}) as a Stake blackjack
+// bet. `bet` = one hand's stake, `doubled` = the hands doubled here (Pasino does not report it).
+QJsonObject pasinoBlackjackAsStake(const QJsonObject &json, double bet, const bool doubled[2])
+{
+    QJsonArray handCards[2] = {pasinoCards(json.value(QStringLiteral("player_hand"))),
+                               pasinoCards(json.value(QStringLiteral("player2_hand")))};
+    const bool split = !handCards[1].isEmpty();
+    const QString status[2] = {json.value(QStringLiteral("hand1_status")).toString().toLower(),
+                               json.value(QStringLiteral("hand2_status")).toString().toLower()};
+    // Open while the round or any hand is still being played: after a split the first hand's
+    // result can come while the second one is still to play (it was recorded as a finished bet,
+    // and the next new hand was then refused with "active session").
+    const auto playing = [](const QString &s) {
+        return s == QLatin1String("in_progress") || s == QLatin1String("not_started");
+    };
+    const bool active = json.value(QStringLiteral("status")).toString().toLower() == QLatin1String("in_progress")
+                        || status[0] == QLatin1String("in_progress")
+                        || (split && playing(status[1]));
+    const QJsonArray dealerCards = pasinoCards(json.value(QStringLiteral("dealer_hand")));
+    // No insurance on Pasino: a dealer ace is marked as declined so nothing asks for it.
+    const bool dealerAce = !dealerCards.isEmpty()
+                           && dealerCards.first().toObject().value(QStringLiteral("rank")).toString() == QLatin1String("A");
+
+    QJsonArray player;
+    int units = 0;
+    for (int i = 0; i < (split ? 2 : 1); ++i) {
+        const QJsonArray &cards = handCards[i];
+        units += doubled[i] ? 2 : 1;
+        QJsonArray actions;
+        const int extra = std::max(0, int(cards.size()) - 2);
+        for (int k = 0; k < extra; ++k)
+            actions.append(doubled[i] && k == extra - 1 ? QStringLiteral("double") : QStringLiteral("hit"));
+        const bool over = !active || (status[i] != QLatin1String("in_progress")
+                                      && status[i] != QLatin1String("not_started"));
+        if (over && !doubled[i] && blackjackValue(cards) < 21)
+            actions.append(QStringLiteral("stand"));
+        QStringList extraActions;
+        if (i == 0 && dealerAce)
+            extraActions << QStringLiteral("noInsurance");
+        if (split)
+            extraActions << QStringLiteral("split");
+        player.append(stakeHandOf(cards, actions, split, extraActions));
+    }
+
+    QJsonArray dealerActions;
+    dealerActions.append(QStringLiteral("deal"));
+    if (!active && dealerCards.size() > 1) {
+        dealerActions.append(QStringLiteral("reveal"));
+        for (int i = 2; i < dealerCards.size(); ++i)
+            dealerActions.append(QStringLiteral("hit"));
+    }
+    QJsonObject dealer = stakeHandOf(dealerCards, {}, true);
+    dealer.insert(QStringLiteral("actions"), dealerActions);
+
+    QJsonObject state;
+    state.insert(QStringLiteral("player"), player);
+    state.insert(QStringLiteral("dealer"), QJsonArray{dealer});
+
+    QJsonArray allowed;
+    for (const QJsonValue &a : json.value(QStringLiteral("actions")).toArray()) {
+        const QString n = a.toString().trimmed().toLower();
+        if (n == QLatin1String("hit") || n == QLatin1String("stand") || n == QLatin1String("double")
+            || n == QLatin1String("split"))
+            allowed.append(n); // "Insurance" is listed sometimes, but Pasino has none
+    }
+
+    const double amount = bet * std::max(1, units);
+    const double payout = active ? 0.0 : std::max(0.0, amount + numberOf(json.value(QStringLiteral("profit"))));
+    QJsonObject out;
+    const QJsonValue id = json.value(QStringLiteral("bet_id"));
+    out.insert(QStringLiteral("id"), id.isString() ? id.toString()
+                                     : (id.isDouble() ? QString::number(qint64(id.toDouble())) : QString()));
+    out.insert(QStringLiteral("amount"), amount);
+    out.insert(QStringLiteral("payout"), payout);
+    out.insert(QStringLiteral("payoutMultiplier"), active || !(amount > 0.0) ? 0.0 : payout / amount);
+    out.insert(QStringLiteral("active"), active);
+    out.insert(QStringLiteral("game"), QStringLiteral("blackjack"));
+    out.insert(QStringLiteral("state"), state);
+    if (active)
+        out.insert(QStringLiteral("allowedActions"), allowed);
+    return out;
+}
+
 // ---------------------------------------------------------------- Duel blackjack helpers
 // A Duel blackjack bet ({"id","nonce","status" (1 = open, 5 = settled),"amount_currency" (the
 // stake of one hand),"amount_won" (payout, stake included),"blackjack":{"player":{"hands":[{"cards":
@@ -1779,6 +1903,10 @@ void StakeClient::placeGame(const GameBetRequest &request)
         placeDuelBlackjack(request);
         return;
     }
+    if (isPasino() && request.game == Game::Blackjack) {
+        placePasinoBlackjack(request);
+        return;
+    }
     if (isDuel() && request.game == Game::Hilo) {
         placeDuelHilo(request);
         return;
@@ -1930,6 +2058,10 @@ void StakeClient::sendGameAction(Game game, const QString &endpoint, const QJson
         sendDuelBlackjack(body.value(QStringLiteral("action")).toString(), params, requestedAmount);
         return;
     }
+    if (isPasino() && game == Game::Blackjack) {
+        sendPasinoBlackjack(body.value(QStringLiteral("action")).toString(), params, requestedAmount);
+        return;
+    }
     if (isDuel() && game == Game::Hilo) {
         sendDuelHilo(endpoint, body, params, requestedAmount);
         return;
@@ -2028,6 +2160,16 @@ void StakeClient::fetchActiveGame(Game game, const QJsonObject &params, double r
     }
     if (isDuel() && game == Game::Hilo) {
         fetchDuelHilo(params, requestedAmount);
+        return;
+    }
+    if (isPasino() && game == Game::Blackjack) {
+        fetchPasinoBlackjack(params, requestedAmount);
+        return;
+    }
+    if (isPasino()) {
+        LiveBetResult r = failed(tr("%1: no open game found on Pasino.").arg(gameDisplayName(game)),
+                                 QStringLiteral("existingGame"), false, false);
+        QTimer::singleShot(0, this, [this, r] { emit diceFinished(r); });
         return;
     }
     if (isDuel()) {
@@ -5257,6 +5399,186 @@ void StakeClient::placePasinoDice(const DiceBetRequest &request)
     });
 }
 
+// Pasino blackjack (JSON sent as x-www-form-urlencoded, token / language added by the transport):
+//   new hand: POST https://api.pasino.com/blackjack/play
+//             {"bet_amt":"0.00010000","coin":"DOGE","client_seed":"<64 chars>"}
+//   moves:    POST https://api.pasino.com/blackjack/hit | stand | double | split  {}
+//   open hand: POST https://api.pasino.com/blackjack/session  {}
+//             -> {"session_exists":true,"bet_amt","coin","player_hand","player2_hand","dealer_hand",
+//                 "split":"0","current_hand":"0","actions",...,"hand1_status","hand2_status"}
+// Every answer: see pasinoBlackjackAsStake(). Pasino has no insurance.
+void StakeClient::placePasinoBlackjack(const GameBetRequest &request, bool redeal)
+{
+    m_pasinoBjRequest = request;
+    if (!redeal) {
+        m_pasinoBjStartTries = 0;
+        m_pasinoBjQuickTries = 0;
+    }
+    ensurePasinoSeed(m_pasinoClientSeed);
+    m_pasinoBjBet = request.amount;
+    m_pasinoBjDoubled[0] = m_pasinoBjDoubled[1] = false;
+    m_pasinoBjLast = QJsonObject();
+    QJsonObject body;
+    body.insert(QStringLiteral("bet_amt"), QString::number(request.amount, 'f', 8));
+    body.insert(QStringLiteral("coin"), PasinoTransport::apiCurrency(m_currency));
+    body.insert(QStringLiteral("client_seed"), m_pasinoClientSeed);
+    const QJsonObject params = request.params;
+    const double amount = request.amount;
+    m_transport->post(QStringLiteral("blackjack/play"), body, [this, params, amount](const TransportReply &reply) {
+        handlePasinoBlackjackReply(reply, params, amount, true);
+    });
+}
+
+void StakeClient::sendPasinoBlackjack(const QString &stakeAction, const QJsonObject &params, double requestedAmount)
+{
+    const auto failNow = [this](const QString &msg) {
+        const LiveBetResult r = failed(msg);
+        QTimer::singleShot(0, this, [this, r] { emit diceFinished(r); });
+    };
+    if (stakeAction == QLatin1String("insurance")) {
+        failNow(tr("Pasino blackjack has no insurance - use hit, stand, double or split."));
+        return;
+    }
+    if (stakeAction == QLatin1String("noInsurance")) {
+        // Nothing to decline on Pasino: answer with the hand as it is, so the next move follows.
+        if (m_pasinoBjLast.isEmpty()) {
+            failNow(tr("Pasino blackjack: no open hand."));
+            return;
+        }
+        const LiveBetResult r = gameResult(Game::Blackjack,
+                                           pasinoBlackjackAsStake(m_pasinoBjLast, m_pasinoBjBet, m_pasinoBjDoubled),
+                                           params, requestedAmount);
+        QTimer::singleShot(0, this, [this, r] { emit diceFinished(r); });
+        return;
+    }
+    if (stakeAction != QLatin1String("hit") && stakeAction != QLatin1String("stand")
+        && stakeAction != QLatin1String("double") && stakeAction != QLatin1String("split")) {
+        failNow(tr("Pasino blackjack: unknown action \"%1\".").arg(stakeAction));
+        return;
+    }
+    // Only a move Pasino offers now ("You cannot double your bet now"): otherwise hit / stand.
+    QString move = stakeAction;
+    {
+        QStringList offered;
+        for (const QJsonValue &a : m_pasinoBjLast.value(QStringLiteral("actions")).toArray()) {
+            const QString n = a.toString().trimmed().toLower();
+            if (n != QLatin1String("insurance"))
+                offered << n;
+        }
+        const bool second = m_pasinoBjLast.value(QStringLiteral("hand2_status")).toString().toLower()
+                            == QLatin1String("in_progress");
+        const int value = int(numberOf(m_pasinoBjLast.value(second ? QStringLiteral("player2_score")
+                                                                   : QStringLiteral("player_score"))));
+        move = blackjackFallbackMove(stakeAction, offered, value);
+        if (move == QLatin1String("double"))
+            m_pasinoBjDoubled[second ? 1 : 0] = true; // Pasino's answer does not say which hand
+    }
+    m_transport->post(QStringLiteral("blackjack/%1").arg(move), QJsonObject(),
+                      [this, params, requestedAmount](const TransportReply &reply) {
+        handlePasinoBlackjackReply(reply, params, requestedAmount);
+    });
+}
+
+void StakeClient::fetchPasinoBlackjack(const QJsonObject &params, double requestedAmount, const QString &startError)
+{
+    m_transport->post(QStringLiteral("blackjack/session"), QJsonObject(),
+                      [this, params, requestedAmount, startError](const TransportReply &reply) {
+        const QJsonObject &json = reply.json;
+        const bool open = reply.ok && json.value(QStringLiteral("session_exists")).toBool(false)
+                          && json.contains(QStringLiteral("player_hand"));
+        if (!open) {
+            m_pasinoBjLast = QJsonObject();
+            if (!startError.isEmpty()) {
+                // The new hand was refused ("active session") but no hand is open: the previous
+                // hand is still being settled on Pasino's side. Nothing was dealt, so the same new
+                // hand is sent again after a short pause, a few times; then the run's normal
+                // retry (5 s) takes over instead of halting.
+                // Pasino refuses quick repeats too, so the waits grow (0.4 s, 0.8 s, ... 2 s at
+                // most), quietly, without errors in the log.
+                if (++m_pasinoBjStartTries <= 15) {
+                    QTimer::singleShot(400 * std::min(m_pasinoBjStartTries, 5), this, [this] {
+                        if (isPasino())
+                            placePasinoBlackjack(m_pasinoBjRequest, true);
+                        else
+                            emit diceFinished(failed(tr("Pasino: the casino was switched before the hand was dealt.")));
+                    });
+                    return;
+                }
+                emit diceFinished(failed(tr("Pasino blackjack: %1 (no open hand found)").arg(startError),
+                                         {}, true, false));
+                return;
+            }
+            LiveBetResult r = failed(tr("Blackjack: no open hand."), QStringLiteral("existingGame"), true, false);
+            r.retryDelayMs = 500;
+            emit diceFinished(r);
+            return;
+        }
+        // The session answer has no "status": it is an open hand by definition.
+        QJsonObject hand = json;
+        hand.insert(QStringLiteral("status"), QStringLiteral("in_progress"));
+        if (json.contains(QStringLiteral("bet_amt")))
+            m_pasinoBjBet = numberOf(json.value(QStringLiteral("bet_amt")));
+        if (!(m_pasinoBjBet > 0.0))
+            m_pasinoBjBet = requestedAmount;
+        if (m_pasinoBjLast.isEmpty())
+            m_pasinoBjDoubled[0] = m_pasinoBjDoubled[1] = false; // loaded from the site: none known
+        if (json.contains(QStringLiteral("client_seed")) && !json.value(QStringLiteral("client_seed")).toString().isEmpty())
+            m_pasinoClientSeed = json.value(QStringLiteral("client_seed")).toString();
+        m_pasinoBjLast = hand;
+        LiveBetResult r = gameResult(Game::Blackjack,
+                                     pasinoBlackjackAsStake(hand, m_pasinoBjBet, m_pasinoBjDoubled),
+                                     params, requestedAmount);
+        r.active = true; // continue it with the next move
+        r.win = false;
+        emit diceFinished(r);
+    });
+}
+
+void StakeClient::handlePasinoBlackjackReply(const TransportReply &reply, const QJsonObject &params,
+                                             double requestedAmount, bool firstRequest)
+{
+    if (!reply.ok) {
+        const bool isTimeout = (reply.status == 0);
+        const bool unknown = (reply.status >= 500);
+        if (reply.status == 0)
+            emit sessionLost(reply.error);
+        emit diceFinished(failed(reply.error, {}, isTimeout, unknown));
+        return;
+    }
+    const QJsonObject &json = reply.json;
+    const QString errText = PasinoTransport::errorText(json);
+    if (!errText.isEmpty()) {
+        // "You already have an active session": a hand is still open - load it to finish it first.
+        if (firstRequest && (containsCI(errText, "active session") || containsCI(errText, "already")
+                             || containsCI(errText, "in progress") || containsCI(errText, "unfinished"))) {
+            // Look for a hand that is still open first (it is finished before a new one).
+            fetchPasinoBlackjack(params, requestedAmount, errText);
+            return;
+        }
+        LiveBetResult r = failed(errText, {}, isRetryable({}, errText), false);
+        r.retryDelayMs = fastRetryDelayMs({}, errText);
+        emit diceFinished(r);
+        return;
+    }
+    if (!json.contains(QStringLiteral("player_hand")) || !json.contains(QStringLiteral("status"))) {
+        const QString raw = QString::fromUtf8(QJsonDocument(json).toJson(QJsonDocument::Compact)).left(400);
+        emit diceFinished(failed(tr("Unexpected Pasino blackjack response: %1").arg(raw), {}, false, true));
+        return;
+    }
+    if (!(m_pasinoBjBet > 0.0))
+        m_pasinoBjBet = requestedAmount;
+    const QJsonObject bet = pasinoBlackjackAsStake(json, m_pasinoBjBet, m_pasinoBjDoubled);
+    LiveBetResult r = gameResult(Game::Blackjack, bet, params, requestedAmount);
+    if (r.active) {
+        m_pasinoBjLast = json;
+    } else {
+        m_pasinoBjLast = QJsonObject();
+        if (json.contains(QStringLiteral("balance")))
+            r.balanceAfter = numberOf(json.value(QStringLiteral("balance")));
+    }
+    emit diceFinished(r);
+}
+
 // Pasino limbo: POST https://api.pasino.com/limbo/play  (JSON sent as x-www-form-urlencoded)
 //   {"token","language":"en","client_seed":"<64 chars>","bet_amt":"0.01000000","coin":"GEM",
 //    "target_payout":"2.00"}
@@ -5968,13 +6290,25 @@ void StakeClient::sendDuelBlackjack(const QString &stakeAction, const QJsonObjec
     if (index < 0 || index >= hands.size())
         index = 0;
     const QJsonObject hand = hands.isEmpty() ? QJsonObject() : hands.at(index).toObject();
+    // Only a move Duel offers now: otherwise hit / stand (see blackjackFallbackMove()).
+    QString move = stakeAction;
+    {
+        QStringList offered;
+        for (const QJsonValue &a : m_duelBjState.value(QStringLiteral("available_actions")).toArray()) {
+            const QString n = a.toString().trimmed().toLower();
+            if (n == QLatin1String("hit") || n == QLatin1String("stand") || n == QLatin1String("double")
+                || n == QLatin1String("split"))
+                offered << n;
+        }
+        move = blackjackFallbackMove(stakeAction, offered, int(numberOf(hand.value(QStringLiteral("value")))));
+    }
     QJsonObject body;
     body.insert(QStringLiteral("active_hand_index"), index);
     body.insert(QStringLiteral("active_hand_size"), int(hand.value(QStringLiteral("cards")).toArray().size()));
     body.insert(QStringLiteral("active_hand_value"), int(numberOf(hand.value(QStringLiteral("value")))));
     body.insert(QStringLiteral("hand_amount"), std::max(1, int(hands.size())));
     body.insert(QStringLiteral("deal_speed_level"), QJsonValue(QJsonValue::Null));
-    m_transport->post(QStringLiteral("api/v2/blackjack/%1/%2").arg(m_duelBjId).arg(stakeAction), body,
+    m_transport->post(QStringLiteral("api/v2/blackjack/%1/%2").arg(m_duelBjId).arg(move), body,
                       [this, params, requestedAmount](const TransportReply &reply) {
         handleDuelBlackjackReply(reply, params, requestedAmount, false);
     });
