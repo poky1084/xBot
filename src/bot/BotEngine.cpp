@@ -510,8 +510,9 @@ void BotEngine::loadOpenGame(const BotConfig &cfg)
         return;
     if (!liveMode() || m_running || m_inFlight || m_startPending || m_rollPending)
         return;
-    if (!m_live->isStake() && !m_live->isShuffle() && !m_live->isGoated())
-        return; // hilo and blackjack: Stake, Shuffle and Goated
+    if (!m_live->isStake() && !m_live->isShuffle() && !m_live->isGoated()
+        && !(m_live->isWolfbet() && cfg.game == Game::Hilo))
+        return; // hilo and blackjack: Stake, Shuffle and Goated; hilo also on Wolfbet
     if (!liveReady(nullptr))
         return;
     // Always ask the casino (the round may have been played on, or finished, on the website

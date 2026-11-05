@@ -1,0 +1,341 @@
+﻿<?xml version="1.0" encoding="utf-8"?>
+<Project ToolsVersion="18.0" xmlns="http://schemas.microsoft.com/developer/msbuild/2003">
+  <ItemGroup>
+    <ClCompile Include="C:\Users\Legion\Documents\BOTDICEQQ\xbot-clean\build\xBot_autogen\mocs_compilation_Debug.cpp">
+      <Filter>Source Files</Filter>
+    </ClCompile>
+    <ClCompile Include="C:\Users\Legion\Documents\BOTDICEQQ\xbot-clean\src\main.cpp">
+      <Filter>Source Files</Filter>
+    </ClCompile>
+    <ClCompile Include="C:\Users\Legion\Documents\BOTDICEQQ\xbot-clean\src\MainWindow.cpp">
+      <Filter>Source Files</Filter>
+    </ClCompile>
+    <ClCompile Include="C:\Users\Legion\Documents\BOTDICEQQ\xbot-clean\src\bot\SimulatedProvider.cpp">
+      <Filter>Source Files</Filter>
+    </ClCompile>
+    <ClCompile Include="C:\Users\Legion\Documents\BOTDICEQQ\xbot-clean\src\bot\BotEngine.cpp">
+      <Filter>Source Files</Filter>
+    </ClCompile>
+    <ClCompile Include="C:\Users\Legion\Documents\BOTDICEQQ\xbot-clean\src\bot\StakeTransport.cpp">
+      <Filter>Source Files</Filter>
+    </ClCompile>
+    <ClCompile Include="C:\Users\Legion\Documents\BOTDICEQQ\xbot-clean\src\bot\StakeClient.cpp">
+      <Filter>Source Files</Filter>
+    </ClCompile>
+    <ClCompile Include="C:\Users\Legion\Documents\BOTDICEQQ\xbot-clean\src\bot\StakeGames.cpp">
+      <Filter>Source Files</Filter>
+    </ClCompile>
+    <ClCompile Include="C:\Users\Legion\Documents\BOTDICEQQ\xbot-clean\src\bot\BeepSound.cpp">
+      <Filter>Source Files</Filter>
+    </ClCompile>
+    <ClCompile Include="C:\Users\Legion\Documents\BOTDICEQQ\xbot-clean\src\bot\WebViewTransport.cpp">
+      <Filter>Source Files</Filter>
+    </ClCompile>
+    <ClCompile Include="C:\Users\Legion\Documents\BOTDICEQQ\xbot-clean\src\bot\ConditionRunner.cpp">
+      <Filter>Source Files</Filter>
+    </ClCompile>
+    <ClCompile Include="C:\Users\Legion\Documents\BOTDICEQQ\xbot-clean\src\bot\LuaStrategy.cpp">
+      <Filter>Source Files</Filter>
+    </ClCompile>
+    <ClCompile Include="C:\Users\Legion\Documents\BOTDICEQQ\xbot-clean\src\bot\JsStrategy.cpp">
+      <Filter>Source Files</Filter>
+    </ClCompile>
+    <ClCompile Include="C:\Users\Legion\Documents\BOTDICEQQ\xbot-clean\src\bot\ShuffleTransport.cpp">
+      <Filter>Source Files</Filter>
+    </ClCompile>
+    <ClCompile Include="C:\Users\Legion\Documents\BOTDICEQQ\xbot-clean\src\bot\GoatedTransport.cpp">
+      <Filter>Source Files</Filter>
+    </ClCompile>
+    <ClCompile Include="C:\Users\Legion\Documents\BOTDICEQQ\xbot-clean\src\bot\WolfbetTransport.cpp">
+      <Filter>Source Files</Filter>
+    </ClCompile>
+    <ClCompile Include="C:\Users\Legion\Documents\BOTDICEQQ\xbot-clean\src\bot\DuelTransport.cpp">
+      <Filter>Source Files</Filter>
+    </ClCompile>
+    <ClCompile Include="C:\Users\Legion\Documents\BOTDICEQQ\xbot-clean\src\bot\ParadiceTransport.cpp">
+      <Filter>Source Files</Filter>
+    </ClCompile>
+    <ClCompile Include="C:\Users\Legion\Documents\BOTDICEQQ\xbot-clean\src\bot\PasinoTransport.cpp">
+      <Filter>Source Files</Filter>
+    </ClCompile>
+    <ClCompile Include="C:\Users\Legion\Documents\BOTDICEQQ\xbot-clean\src\bot\TowerTransport.cpp">
+      <Filter>Source Files</Filter>
+    </ClCompile>
+    <ClCompile Include="C:\Users\Legion\Documents\BOTDICEQQ\xbot-clean\src\bot\WinnaTransport.cpp">
+      <Filter>Source Files</Filter>
+    </ClCompile>
+    <ClCompile Include="C:\Users\Legion\Documents\BOTDICEQQ\xbot-clean\src\ui\BetHistoryModel.cpp">
+      <Filter>Source Files</Filter>
+    </ClCompile>
+    <ClCompile Include="C:\Users\Legion\Documents\BOTDICEQQ\xbot-clean\src\ui\BalanceGraphWidget.cpp">
+      <Filter>Source Files</Filter>
+    </ClCompile>
+    <ClCompile Include="C:\Users\Legion\Documents\BOTDICEQQ\xbot-clean\src\ui\TargetBar.cpp">
+      <Filter>Source Files</Filter>
+    </ClCompile>
+    <ClCompile Include="C:\Users\Legion\Documents\BOTDICEQQ\xbot-clean\src\ui\ManualBetPanel.cpp">
+      <Filter>Source Files</Filter>
+    </ClCompile>
+    <ClCompile Include="C:\Users\Legion\Documents\BOTDICEQQ\xbot-clean\src\ui\GameParamsWidget.cpp">
+      <Filter>Source Files</Filter>
+    </ClCompile>
+    <ClCompile Include="C:\Users\Legion\Documents\BOTDICEQQ\xbot-clean\src\ui\AutoBetPanel.cpp">
+      <Filter>Source Files</Filter>
+    </ClCompile>
+    <ClCompile Include="C:\Users\Legion\Documents\BOTDICEQQ\xbot-clean\src\ui\FairPanel.cpp">
+      <Filter>Source Files</Filter>
+    </ClCompile>
+    <ClCompile Include="C:\Users\Legion\Documents\BOTDICEQQ\xbot-clean\src\ui\LogWidget.cpp">
+      <Filter>Source Files</Filter>
+    </ClCompile>
+    <ClCompile Include="C:\Users\Legion\Documents\BOTDICEQQ\xbot-clean\src\ui\LuaEditorDock.cpp">
+      <Filter>Source Files</Filter>
+    </ClCompile>
+    <ClCompile Include="C:\Users\Legion\Documents\BOTDICEQQ\xbot-clean\src\ui\OptionsDialog.cpp">
+      <Filter>Source Files</Filter>
+    </ClCompile>
+    <ClCompile Include="C:\Users\Legion\Documents\BOTDICEQQ\xbot-clean\src\ui\CookieGrabberDialog.cpp">
+      <Filter>Source Files</Filter>
+    </ClCompile>
+    <ClCompile Include="C:\Users\Legion\Documents\BOTDICEQQ\xbot-clean\src\ui\ConditionBlock.cpp">
+      <Filter>Source Files</Filter>
+    </ClCompile>
+    <ClCompile Include="C:\Users\Legion\Documents\BOTDICEQQ\xbot-clean\src\ui\BlockEditorDialog.cpp">
+      <Filter>Source Files</Filter>
+    </ClCompile>
+    <ClCompile Include="C:\Users\Legion\Documents\BOTDICEQQ\xbot-clean\src\ui\ConditionBuilderDialog.cpp">
+      <Filter>Source Files</Filter>
+    </ClCompile>
+    <ClCompile Include="C:\Users\Legion\Documents\BOTDICEQQ\xbot-clean\src\ui\ShuffleLoginDialog.cpp">
+      <Filter>Source Files</Filter>
+    </ClCompile>
+    <ClCompile Include="C:\Users\Legion\Documents\BOTDICEQQ\xbot-clean\src\ui\GoatedLoginDialog.cpp">
+      <Filter>Source Files</Filter>
+    </ClCompile>
+    <ClCompile Include="C:\Users\Legion\Documents\BOTDICEQQ\xbot-clean\src\ui\WolfbetLoginDialog.cpp">
+      <Filter>Source Files</Filter>
+    </ClCompile>
+    <ClCompile Include="C:\Users\Legion\Documents\BOTDICEQQ\xbot-clean\src\ui\DuelLoginDialog.cpp">
+      <Filter>Source Files</Filter>
+    </ClCompile>
+    <ClCompile Include="C:\Users\Legion\Documents\BOTDICEQQ\xbot-clean\src\ui\ParadiceLoginDialog.cpp">
+      <Filter>Source Files</Filter>
+    </ClCompile>
+    <ClCompile Include="C:\Users\Legion\Documents\BOTDICEQQ\xbot-clean\src\ui\PasinoLoginDialog.cpp">
+      <Filter>Source Files</Filter>
+    </ClCompile>
+    <ClCompile Include="C:\Users\Legion\Documents\BOTDICEQQ\xbot-clean\src\ui\TowerLoginDialog.cpp">
+      <Filter>Source Files</Filter>
+    </ClCompile>
+    <ClCompile Include="C:\Users\Legion\Documents\BOTDICEQQ\xbot-clean\src\ui\WinnaLoginDialog.cpp">
+      <Filter>Source Files</Filter>
+    </ClCompile>
+    <ClCompile Include="C:\Users\Legion\Documents\BOTDICEQQ\xbot-clean\src\ui\StakeLoginDialog.cpp">
+      <Filter>Source Files</Filter>
+    </ClCompile>
+    <ClCompile Include="C:\Users\Legion\Documents\BOTDICEQQ\xbot-clean\src\ui\DuelBrowser.cpp">
+      <Filter>Source Files</Filter>
+    </ClCompile>
+    <ClCompile Include="C:\Users\Legion\Documents\BOTDICEQQ\xbot-clean\build\xBot_autogen\3YJK5W5UP7\qrc_resources_Debug.cpp">
+      <Filter>Source Files</Filter>
+    </ClCompile>
+    <ClCompile Include="C:\Users\Legion\Documents\BOTDICEQQ\xbot-clean\build\xBot_autogen\mocs_compilation_Release.cpp">
+      <Filter>Source Files</Filter>
+    </ClCompile>
+    <ClCompile Include="C:\Users\Legion\Documents\BOTDICEQQ\xbot-clean\build\xBot_autogen\3YJK5W5UP7\qrc_resources_Release.cpp">
+      <Filter>Source Files</Filter>
+    </ClCompile>
+    <ClCompile Include="C:\Users\Legion\Documents\BOTDICEQQ\xbot-clean\build\xBot_autogen\mocs_compilation_MinSizeRel.cpp">
+      <Filter>Source Files</Filter>
+    </ClCompile>
+    <ClCompile Include="C:\Users\Legion\Documents\BOTDICEQQ\xbot-clean\build\xBot_autogen\3YJK5W5UP7\qrc_resources_MinSizeRel.cpp">
+      <Filter>Source Files</Filter>
+    </ClCompile>
+    <ClCompile Include="C:\Users\Legion\Documents\BOTDICEQQ\xbot-clean\build\xBot_autogen\mocs_compilation_RelWithDebInfo.cpp">
+      <Filter>Source Files</Filter>
+    </ClCompile>
+    <ClCompile Include="C:\Users\Legion\Documents\BOTDICEQQ\xbot-clean\build\xBot_autogen\3YJK5W5UP7\qrc_resources_RelWithDebInfo.cpp">
+      <Filter>Source Files</Filter>
+    </ClCompile>
+  </ItemGroup>
+  <ItemGroup>
+    <ClInclude Include="C:\Users\Legion\Documents\BOTDICEQQ\xbot-clean\src\MainWindow.h">
+      <Filter>Header Files</Filter>
+    </ClInclude>
+    <ClInclude Include="C:\Users\Legion\Documents\BOTDICEQQ\xbot-clean\src\bot\BotTypes.h">
+      <Filter>Header Files</Filter>
+    </ClInclude>
+    <ClInclude Include="C:\Users\Legion\Documents\BOTDICEQQ\xbot-clean\src\bot\IDiceProvider.h">
+      <Filter>Header Files</Filter>
+    </ClInclude>
+    <ClInclude Include="C:\Users\Legion\Documents\BOTDICEQQ\xbot-clean\src\bot\SimulatedProvider.h">
+      <Filter>Header Files</Filter>
+    </ClInclude>
+    <ClInclude Include="C:\Users\Legion\Documents\BOTDICEQQ\xbot-clean\src\bot\BotEngine.h">
+      <Filter>Header Files</Filter>
+    </ClInclude>
+    <ClInclude Include="C:\Users\Legion\Documents\BOTDICEQQ\xbot-clean\src\bot\StakeTransport.h">
+      <Filter>Header Files</Filter>
+    </ClInclude>
+    <ClInclude Include="C:\Users\Legion\Documents\BOTDICEQQ\xbot-clean\src\bot\StakeClient.h">
+      <Filter>Header Files</Filter>
+    </ClInclude>
+    <ClInclude Include="C:\Users\Legion\Documents\BOTDICEQQ\xbot-clean\src\bot\StakeGames.h">
+      <Filter>Header Files</Filter>
+    </ClInclude>
+    <ClInclude Include="C:\Users\Legion\Documents\BOTDICEQQ\xbot-clean\src\bot\BeepSound.h">
+      <Filter>Header Files</Filter>
+    </ClInclude>
+    <ClInclude Include="C:\Users\Legion\Documents\BOTDICEQQ\xbot-clean\src\bot\LiveSettings.h">
+      <Filter>Header Files</Filter>
+    </ClInclude>
+    <ClInclude Include="C:\Users\Legion\Documents\BOTDICEQQ\xbot-clean\src\bot\WebViewTransport.h">
+      <Filter>Header Files</Filter>
+    </ClInclude>
+    <ClInclude Include="C:\Users\Legion\Documents\BOTDICEQQ\xbot-clean\src\bot\ConditionRunner.h">
+      <Filter>Header Files</Filter>
+    </ClInclude>
+    <ClInclude Include="C:\Users\Legion\Documents\BOTDICEQQ\xbot-clean\src\bot\LuaStrategy.h">
+      <Filter>Header Files</Filter>
+    </ClInclude>
+    <ClInclude Include="C:\Users\Legion\Documents\BOTDICEQQ\xbot-clean\src\bot\ScriptStrategy.h">
+      <Filter>Header Files</Filter>
+    </ClInclude>
+    <ClInclude Include="C:\Users\Legion\Documents\BOTDICEQQ\xbot-clean\src\bot\JsStrategy.h">
+      <Filter>Header Files</Filter>
+    </ClInclude>
+    <ClInclude Include="C:\Users\Legion\Documents\BOTDICEQQ\xbot-clean\src\bot\ShuffleTransport.h">
+      <Filter>Header Files</Filter>
+    </ClInclude>
+    <ClInclude Include="C:\Users\Legion\Documents\BOTDICEQQ\xbot-clean\src\bot\GoatedTransport.h">
+      <Filter>Header Files</Filter>
+    </ClInclude>
+    <ClInclude Include="C:\Users\Legion\Documents\BOTDICEQQ\xbot-clean\src\bot\WolfbetTransport.h">
+      <Filter>Header Files</Filter>
+    </ClInclude>
+    <ClInclude Include="C:\Users\Legion\Documents\BOTDICEQQ\xbot-clean\src\bot\DuelTransport.h">
+      <Filter>Header Files</Filter>
+    </ClInclude>
+    <ClInclude Include="C:\Users\Legion\Documents\BOTDICEQQ\xbot-clean\src\bot\ParadiceTransport.h">
+      <Filter>Header Files</Filter>
+    </ClInclude>
+    <ClInclude Include="C:\Users\Legion\Documents\BOTDICEQQ\xbot-clean\src\bot\PasinoTransport.h">
+      <Filter>Header Files</Filter>
+    </ClInclude>
+    <ClInclude Include="C:\Users\Legion\Documents\BOTDICEQQ\xbot-clean\src\bot\TowerTransport.h">
+      <Filter>Header Files</Filter>
+    </ClInclude>
+    <ClInclude Include="C:\Users\Legion\Documents\BOTDICEQQ\xbot-clean\src\bot\WinnaTransport.h">
+      <Filter>Header Files</Filter>
+    </ClInclude>
+    <ClInclude Include="C:\Users\Legion\Documents\BOTDICEQQ\xbot-clean\src\bot\NoCookieJar.h">
+      <Filter>Header Files</Filter>
+    </ClInclude>
+    <ClInclude Include="C:\Users\Legion\Documents\BOTDICEQQ\xbot-clean\src\bot\CasinoCurrencies.h">
+      <Filter>Header Files</Filter>
+    </ClInclude>
+    <ClInclude Include="C:\Users\Legion\Documents\BOTDICEQQ\xbot-clean\src\ui\BetHistoryModel.h">
+      <Filter>Header Files</Filter>
+    </ClInclude>
+    <ClInclude Include="C:\Users\Legion\Documents\BOTDICEQQ\xbot-clean\src\ui\BalanceGraphWidget.h">
+      <Filter>Header Files</Filter>
+    </ClInclude>
+    <ClInclude Include="C:\Users\Legion\Documents\BOTDICEQQ\xbot-clean\src\ui\TargetBar.h">
+      <Filter>Header Files</Filter>
+    </ClInclude>
+    <ClInclude Include="C:\Users\Legion\Documents\BOTDICEQQ\xbot-clean\src\ui\ManualBetPanel.h">
+      <Filter>Header Files</Filter>
+    </ClInclude>
+    <ClInclude Include="C:\Users\Legion\Documents\BOTDICEQQ\xbot-clean\src\ui\GameParamsWidget.h">
+      <Filter>Header Files</Filter>
+    </ClInclude>
+    <ClInclude Include="C:\Users\Legion\Documents\BOTDICEQQ\xbot-clean\src\ui\AutoBetPanel.h">
+      <Filter>Header Files</Filter>
+    </ClInclude>
+    <ClInclude Include="C:\Users\Legion\Documents\BOTDICEQQ\xbot-clean\src\ui\FairPanel.h">
+      <Filter>Header Files</Filter>
+    </ClInclude>
+    <ClInclude Include="C:\Users\Legion\Documents\BOTDICEQQ\xbot-clean\src\ui\LogWidget.h">
+      <Filter>Header Files</Filter>
+    </ClInclude>
+    <ClInclude Include="C:\Users\Legion\Documents\BOTDICEQQ\xbot-clean\src\ui\LuaEditorDock.h">
+      <Filter>Header Files</Filter>
+    </ClInclude>
+    <ClInclude Include="C:\Users\Legion\Documents\BOTDICEQQ\xbot-clean\src\ui\OptionsDialog.h">
+      <Filter>Header Files</Filter>
+    </ClInclude>
+    <ClInclude Include="C:\Users\Legion\Documents\BOTDICEQQ\xbot-clean\src\ui\CookieGrabberDialog.h">
+      <Filter>Header Files</Filter>
+    </ClInclude>
+    <ClInclude Include="C:\Users\Legion\Documents\BOTDICEQQ\xbot-clean\src\ui\ConditionBlock.h">
+      <Filter>Header Files</Filter>
+    </ClInclude>
+    <ClInclude Include="C:\Users\Legion\Documents\BOTDICEQQ\xbot-clean\src\ui\BlockEditorDialog.h">
+      <Filter>Header Files</Filter>
+    </ClInclude>
+    <ClInclude Include="C:\Users\Legion\Documents\BOTDICEQQ\xbot-clean\src\ui\ConditionBuilderDialog.h">
+      <Filter>Header Files</Filter>
+    </ClInclude>
+    <ClInclude Include="C:\Users\Legion\Documents\BOTDICEQQ\xbot-clean\src\ui\ShuffleLoginDialog.h">
+      <Filter>Header Files</Filter>
+    </ClInclude>
+    <ClInclude Include="C:\Users\Legion\Documents\BOTDICEQQ\xbot-clean\src\ui\GoatedLoginDialog.h">
+      <Filter>Header Files</Filter>
+    </ClInclude>
+    <ClInclude Include="C:\Users\Legion\Documents\BOTDICEQQ\xbot-clean\src\ui\WolfbetLoginDialog.h">
+      <Filter>Header Files</Filter>
+    </ClInclude>
+    <ClInclude Include="C:\Users\Legion\Documents\BOTDICEQQ\xbot-clean\src\ui\DuelLoginDialog.h">
+      <Filter>Header Files</Filter>
+    </ClInclude>
+    <ClInclude Include="C:\Users\Legion\Documents\BOTDICEQQ\xbot-clean\src\ui\ParadiceLoginDialog.h">
+      <Filter>Header Files</Filter>
+    </ClInclude>
+    <ClInclude Include="C:\Users\Legion\Documents\BOTDICEQQ\xbot-clean\src\ui\PasinoLoginDialog.h">
+      <Filter>Header Files</Filter>
+    </ClInclude>
+    <ClInclude Include="C:\Users\Legion\Documents\BOTDICEQQ\xbot-clean\src\ui\TowerLoginDialog.h">
+      <Filter>Header Files</Filter>
+    </ClInclude>
+    <ClInclude Include="C:\Users\Legion\Documents\BOTDICEQQ\xbot-clean\src\ui\WinnaLoginDialog.h">
+      <Filter>Header Files</Filter>
+    </ClInclude>
+    <ClInclude Include="C:\Users\Legion\Documents\BOTDICEQQ\xbot-clean\src\ui\StakeLoginDialog.h">
+      <Filter>Header Files</Filter>
+    </ClInclude>
+    <ClInclude Include="C:\Users\Legion\Documents\BOTDICEQQ\xbot-clean\src\ui\DuelBrowser.h">
+      <Filter>Header Files</Filter>
+    </ClInclude>
+    <ClInclude Include="C:\Users\Legion\Documents\BOTDICEQQ\xbot-clean\src\ui\WindowSettings.h">
+      <Filter>Header Files</Filter>
+    </ClInclude>
+    <ClInclude Include="C:\Users\Legion\Documents\BOTDICEQQ\xbot-clean\src\ui\CursorRestore.h">
+      <Filter>Header Files</Filter>
+    </ClInclude>
+  </ItemGroup>
+  <ItemGroup>
+    <CustomBuild Include="C:\Users\Legion\Documents\BOTDICEQQ\xbot-clean\build\CMakeFiles\645e0ec5d16c40ca0a987033a10e5902\qrc_resources_(CONFIG).cpp.rule">
+      <Filter>CMake Rules</Filter>
+    </CustomBuild>
+    <CustomBuild Include="C:\Users\Legion\Documents\BOTDICEQQ\xbot-clean\CMakeLists.txt" />
+  </ItemGroup>
+  <ItemGroup>
+    <None Include="C:\Users\Legion\Documents\BOTDICEQQ\xbot-clean\resources\resources.qrc" />
+  </ItemGroup>
+  <ItemGroup>
+    <ResourceCompile Include="C:\Users\Legion\Documents\BOTDICEQQ\xbot-clean\resources\app.rc">
+      <Filter>Source Files</Filter>
+    </ResourceCompile>
+  </ItemGroup>
+  <ItemGroup>
+    <Filter Include="CMake Rules">
+      <UniqueIdentifier>{04D654F2-B77C-3BC2-9E02-B1FD26AE8DA6}</UniqueIdentifier>
+    </Filter>
+    <Filter Include="Header Files">
+      <UniqueIdentifier>{DCC3DB99-F140-32D1-B898-72E8BC50F7BC}</UniqueIdentifier>
+    </Filter>
+    <Filter Include="Source Files">
+      <UniqueIdentifier>{771B1231-ADF0-3410-A737-A1F33004BE9D}</UniqueIdentifier>
+    </Filter>
+  </ItemGroup>
+</Project>

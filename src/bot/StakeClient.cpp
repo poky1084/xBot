@@ -460,6 +460,141 @@ QJsonObject goatedHiloAsStake(const QJsonObject &bet, QString *lastRank)
     return out;
 }
 
+// ---------------------------------------------------------------- Wolfbet hilo helpers
+// Wolfbet numbers its cards 0-51: suit * 13 + rank, suits diamonds, hearts, spades, clubs
+// (0-3) and ranks A, 2, ... 10, J, Q, K (0-12). 4 = 5 of diamonds, 23 = J of hearts, 27 = 2 of
+// spades, 36 = J of spades, 48 = 10 of clubs.
+const QStringList &wolfbetRanks()
+{
+    static const QStringList r = {QStringLiteral("A"), QStringLiteral("2"), QStringLiteral("3"),
+                                  QStringLiteral("4"), QStringLiteral("5"), QStringLiteral("6"),
+                                  QStringLiteral("7"), QStringLiteral("8"), QStringLiteral("9"),
+                                  QStringLiteral("10"), QStringLiteral("J"), QStringLiteral("Q"),
+                                  QStringLiteral("K")};
+    return r;
+}
+const QString kWolfbetSuits = QStringLiteral("DHSC");
+
+QJsonObject wolfbetCard(int n)
+{
+    QJsonObject card;
+    if (n < 0 || n > 51)
+        return card;
+    card.insert(QStringLiteral("rank"), wolfbetRanks().at(n % 13));
+    card.insert(QStringLiteral("suit"), QString(kWolfbetSuits.at(n / 13)));
+    return card;
+}
+
+// {rank, suit} (Stake's start card) -> 0-51, -1 when it is not a card.
+int wolfbetCardNumber(const QJsonObject &card)
+{
+    QString rank = card.value(QStringLiteral("rank")).toString().trimmed().toUpper();
+    if (rank == QLatin1String("T"))
+        rank = QStringLiteral("10");
+    const int r = int(wolfbetRanks().indexOf(rank));
+    const int s = int(kWolfbetSuits.indexOf(card.value(QStringLiteral("suit")).toString().trimmed().toUpper()));
+    return r < 0 || s < 0 ? -1 : s * 13 + r;
+}
+
+// Ranks a "high" / "low" guess wins on, out of 13. "high" = higher or same, "low" = lower or
+// same; on an ace "high" is strictly higher (and "low" the ace again), on a king "low" is
+// strictly lower (and "high" the king again) - the same as Goated's H / L.
+int wolfbetHiloWinningRanks(const QString &rule, int rank)
+{
+    if (rule == QLatin1String("high"))
+        return rank == 0 ? 12 : 13 - rank;
+    if (rule == QLatin1String("low"))
+        return rank == 12 ? 12 : rank + 1;
+    return 0;
+}
+
+// Whether a Wolfbet hilo round is still open. Known: "status" 1 = cashed out (finished), 3 = open
+// with guesses made, 4 = just started (no guesses yet); a guess (not a skip) with a status other than 1 lost the round. A round
+// just started (no guesses yet) may carry another status, so anything else counts as open.
+bool wolfbetHiloOpen(const QJsonObject &bet)
+{
+    if (bet.isEmpty() || int(numberOf(bet.value(QStringLiteral("status")))) == 1)
+        return false;
+    for (const QJsonValue &v : bet.value(QStringLiteral("bets")).toArray()) {
+        const QJsonObject sub = v.toObject();
+        if (sub.value(QStringLiteral("rule")).toString().toLower() != QLatin1String("skip")
+            && int(numberOf(sub.value(QStringLiteral("status")))) != 1)
+            return false; // a lost guess ends the round
+    }
+    return true;
+}
+
+// A Wolfbet hilo bet ({"hash", "status": 3 while open, "amount", "profit", "initial_bet_value",
+// "bets": [{"status": 1 = won, "multiplier" (the round's so far), "bet_value", "result_value",
+// "rule", "sub_nonce"}]}) as a Stake hilo bet. *lastCard = the card the next guess is about,
+// *steps = the guesses made so far.
+QJsonObject wolfbetHiloAsStake(const QJsonObject &bet, int *lastCard, int *steps)
+{
+    const bool active = wolfbetHiloOpen(bet);
+    const double amount = numberOf(bet.value(QStringLiteral("amount")));
+    const double profit = numberOf(bet.value(QStringLiteral("profit")));
+    const QJsonArray subs = bet.value(QStringLiteral("bets")).toArray();
+
+    int card = int(numberOf(bet.value(QStringLiteral("initial_bet_value"))));
+    const QJsonObject startCard = wolfbetCard(card);
+    bool lostGuess = false;
+    double current = 0.0;
+    QJsonArray rounds;
+    for (const QJsonValue &v : subs) {
+        const QJsonObject sub = v.toObject();
+        const QString rule = sub.value(QStringLiteral("rule")).toString().toLower();
+        const QString rank = wolfbetCard(card).value(QStringLiteral("rank")).toString();
+        QString guess = rule;
+        if (rule == QLatin1String("high"))
+            guess = rank == QLatin1String("A") ? QStringLiteral("higher")
+                  : rank == QLatin1String("K") ? QStringLiteral("equal") : QStringLiteral("higherEqual");
+        else if (rule == QLatin1String("low"))
+            guess = rank == QLatin1String("K") ? QStringLiteral("lower")
+                  : rank == QLatin1String("A") ? QStringLiteral("equal") : QStringLiteral("lowerEqual");
+        const bool skipped = rule == QLatin1String("skip");
+        const bool won = int(numberOf(sub.value(QStringLiteral("status")))) == 1;
+        if (skipped) {
+            // A skip only draws a new card: never a loss, the round's multiplier stays (its
+            // own "multiplier" is used only when the site reports one).
+            const double m = numberOf(sub.value(QStringLiteral("multiplier")));
+            if (m > 0.0)
+                current = m;
+        } else {
+            if (!won)
+                lostGuess = true;
+            current = won ? numberOf(sub.value(QStringLiteral("multiplier"))) : 0.0;
+        }
+        card = int(numberOf(sub.value(QStringLiteral("result_value"))));
+        QJsonObject round;
+        round.insert(QStringLiteral("card"), wolfbetCard(card));
+        round.insert(QStringLiteral("guess"), guess);
+        round.insert(QStringLiteral("payoutMultiplier"), current);
+        rounds.append(round);
+    }
+    const bool lost = !active && (lostGuess || (amount > 0.0 && profit < 0.0));
+    const double finalMult = active || lost ? 0.0 : (amount > 0.0 ? (amount + profit) / amount : current);
+
+    QJsonObject state;
+    state.insert(QStringLiteral("startCard"), startCard);
+    state.insert(QStringLiteral("rounds"), rounds);
+    QJsonObject out;
+    out.insert(QStringLiteral("id"), bet.value(QStringLiteral("hash")).toString());
+    out.insert(QStringLiteral("amount"), amount);
+    out.insert(QStringLiteral("payout"), active || lost ? 0.0 : amount + profit);
+    out.insert(QStringLiteral("payoutMultiplier"), finalMult);
+    out.insert(QStringLiteral("active"), active);
+    out.insert(QStringLiteral("currency"), bet.value(QStringLiteral("currency")).toString().toLower());
+    out.insert(QStringLiteral("game"), QStringLiteral("hilo"));
+    out.insert(QStringLiteral("state"), state);
+    if (bet.contains(QStringLiteral("nonce")))
+        out.insert(QStringLiteral("nonce"), bet.value(QStringLiteral("nonce")));
+    if (lastCard)
+        *lastCard = card;
+    if (steps)
+        *steps = int(subs.size());
+    return out;
+}
+
 const char kShuffleBlackjackFields[] =
     "fragment BlackjackBetFields on Bet {\n"
     "  id\n  amount\n  originalAmount\n  payout\n  multiplier\n  currency\n  afterBalance\n"
@@ -1409,6 +1544,18 @@ void StakeClient::placeGame(const GameBetRequest &request)
         placeGoatedHilo(request);
         return;
     }
+    if (isWolfbet() && request.game == Game::Hilo) {
+        placeWolfbetHilo(request);
+        return;
+    }
+    if (isWolfbet() && request.game == Game::Keno) {
+        placeWolfbetKeno(request);
+        return;
+    }
+    if (isWolfbet() && request.game == Game::Plinko) {
+        placeWolfbetPlinko(request);
+        return;
+    }
     if (isGoated() && request.game == Game::Keno) {
         placeGoatedKeno(request);
         return;
@@ -1512,6 +1659,10 @@ void StakeClient::sendGameAction(Game game, const QString &endpoint, const QJson
         sendShuffleHilo(endpoint, body, params, requestedAmount);
         return;
     }
+    if (isWolfbet() && game == Game::Hilo) {
+        sendWolfbetHilo(endpoint, body, params, requestedAmount);
+        return;
+    }
     postGameBet(game, endpoint, body, params, requestedAmount, false);
 }
 
@@ -1594,6 +1745,16 @@ void StakeClient::fetchActiveGame(Game game, const QJsonObject &params, double r
     }
     if (isGoated() && game == Game::Hilo) {
         fetchGoatedHilo(params, requestedAmount);
+        return;
+    }
+    if (isWolfbet() && game == Game::Hilo) {
+        fetchWolfbetHilo(params, requestedAmount);
+        return;
+    }
+    if (isWolfbet()) {
+        LiveBetResult r = failed(tr("%1: no open game found on Wolfbet.").arg(gameDisplayName(game)),
+                                 QStringLiteral("existingGame"), false, false);
+        QTimer::singleShot(0, this, [this, r] { emit diceFinished(r); });
         return;
     }
     if (isGoated()) {
@@ -3704,6 +3865,477 @@ void StakeClient::handleGoatedHiloReply(const TransportReply &reply, const QJson
         const QString cur = m_currency.toUpper();
         if (balances.contains(cur))
             r.balanceAfter = numberOf(balances.value(cur));
+    }
+    emit diceFinished(r);
+}
+
+// ---------------------------------------------------------------- Wolfbet keno
+// POST https://wolfbet.com/api/v2/keno/manual/play
+//   {"currency":"doge","game":"keno","amount":"0.0001","multiplier":"1000","risk":"low",
+//    "selected":[25,36,...] (1-40),"auto":1}
+// "multiplier" is the top payout of the risk's paytable for that many numbers (10 numbers, low
+// risk: 1000). Answer: {"bet":{"hash","nonce","currency","amount","profit" (net),"multiplier"
+// (the payout multiplier),"risk","selected","result_value" (the 10 drawn numbers, 1-40),
+// "state":"win"|"loss"},"userBalance":{"amount","currency"}}.
+namespace
+{
+// Highest payout of each paytable (Stake's tables, which Wolfbet uses), by risk and by the
+// count of numbers picked (index 0 = 1 number .. 9 = 10 numbers).
+double wolfbetKenoTopMultiplier(const QString &risk, int picks)
+{
+    static const double low[10] = {1.85, 3.8, 26, 90, 300, 700, 700, 800, 1000, 1000};
+    static const double medium[10] = {2.75, 5.1, 50, 100, 390, 710, 800, 900, 1000, 1000};
+    static const double high[10] = {3.96, 17.1, 81.5, 259, 450, 710, 800, 900, 1000, 1000};
+    if (picks < 1 || picks > 10)
+        return -1.0;
+    if (risk == QLatin1String("low"))
+        return low[picks - 1];
+    if (risk == QLatin1String("medium"))
+        return medium[picks - 1];
+    if (risk == QLatin1String("high"))
+        return high[picks - 1];
+    return -1.0;
+}
+} // namespace
+
+void StakeClient::placeWolfbetKeno(const GameBetRequest &request)
+{
+    const auto failNow = [this](const QString &msg) {
+        const LiveBetResult r = failed(msg);
+        QTimer::singleShot(0, this, [this, r] { emit diceFinished(r); });
+    };
+    // Numbers and risk as Stake's request would have them (0-based) -> Wolfbet's 1-40.
+    QString endpoint;
+    QJsonObject stakeBody;
+    QString err;
+    if (!StakeGames::buildBetRequest(Game::Keno, request.amount, m_currency, request.params,
+                                     &endpoint, &stakeBody, &err)) {
+        failNow(err);
+        return;
+    }
+    const QString risk = stakeBody.value(QStringLiteral("risk")).toString().toLower();
+    QJsonArray selected;
+    for (const QJsonValue &n : stakeBody.value(QStringLiteral("numbers")).toArray())
+        selected.append(n.toInt() + 1);
+    const double top = wolfbetKenoTopMultiplier(risk, int(selected.size()));
+    if (top < 0.0) {
+        failNow(tr("Wolfbet keno: risk must be low, medium or high (not \"%1\").").arg(risk));
+        return;
+    }
+    // Plain numbers like the site sends them: "1000", "81.5", "3.96".
+    QString topText = QString::number(top, 'f', 2);
+    while (topText.endsWith(QLatin1Char('0')))
+        topText.chop(1);
+    if (topText.endsWith(QLatin1Char('.')))
+        topText.chop(1);
+
+    QJsonObject body;
+    body.insert(QStringLiteral("currency"), m_currency.toLower());
+    body.insert(QStringLiteral("game"), QStringLiteral("keno"));
+    body.insert(QStringLiteral("amount"), QString::number(request.amount, 'f', 8));
+    body.insert(QStringLiteral("multiplier"), topText);
+    body.insert(QStringLiteral("risk"), risk);
+    body.insert(QStringLiteral("selected"), selected);
+    body.insert(QStringLiteral("auto"), 1);
+
+    const QJsonObject params = request.params;
+    const double requestedAmount = request.amount;
+    m_transport->post(QStringLiteral("api/v2/keno/manual/play"), body,
+                      [this, params, requestedAmount](const TransportReply &reply) {
+        if (!reply.ok) {
+            const bool isTimeout = (reply.status == 0);
+            const bool unknown = (reply.status >= 500);
+            if (reply.status == 0)
+                emit sessionLost(reply.error);
+            emit diceFinished(failed(reply.error, {}, isTimeout, unknown));
+            return;
+        }
+        const QJsonObject &json = reply.json;
+        const QJsonObject raw = json.value(QStringLiteral("bet")).toObject();
+        if (raw.isEmpty()) {
+            // No bet in the answer: an API error (or rate limit notice) - the bet was not placed.
+            QString errText = goatedErrorText(json);
+            if (errText.isEmpty())
+                errText = tr("Wolfbet keno bet rejected (HTTP %1).").arg(reply.status);
+            if (reply.status >= 400 || isRetryable({}, errText)) {
+                LiveBetResult r = failed(errText, {}, isRetryable({}, errText), false);
+                r.retryDelayMs = fastRetryDelayMs({}, errText);
+                emit diceFinished(r);
+                return;
+            }
+            const QString text = QString::fromUtf8(QJsonDocument(json).toJson(QJsonDocument::Compact)).left(400);
+            emit diceFinished(failed(tr("Unexpected Wolfbet keno response: %1").arg(text), {}, false, true));
+            return;
+        }
+        if (!raw.value(QStringLiteral("result_value")).isArray()) {
+            const QString text = QString::fromUtf8(QJsonDocument(json).toJson(QJsonDocument::Compact)).left(400);
+            emit diceFinished(failed(tr("Unexpected Wolfbet keno response (no drawn numbers): %1").arg(text),
+                                     {}, false, true));
+            return;
+        }
+        // Stake's keno shape (0-based numbers): state {risk, selectedNumbers, drawnNumbers}.
+        const auto zeroBased = [](const QJsonValue &v) {
+            QJsonArray out;
+            for (const QJsonValue &n : v.toArray())
+                out.append(int(numberOf(n)) - 1);
+            return out;
+        };
+        const double amount = raw.contains(QStringLiteral("amount")) ? numberOf(raw.value(QStringLiteral("amount")))
+                                                                     : requestedAmount;
+        const double profit = numberOf(raw.value(QStringLiteral("profit")));
+        double mult = numberOf(raw.value(QStringLiteral("multiplier")));
+        if (!(mult > 0.0) && amount > 0.0 && raw.contains(QStringLiteral("profit")))
+            mult = std::max(0.0, (amount + profit) / amount);
+        QJsonObject state;
+        state.insert(QStringLiteral("risk"), raw.value(QStringLiteral("risk")).toString().toLower());
+        state.insert(QStringLiteral("selectedNumbers"), zeroBased(raw.value(QStringLiteral("selected"))));
+        state.insert(QStringLiteral("drawnNumbers"), zeroBased(raw.value(QStringLiteral("result_value"))));
+        QJsonObject bet;
+        bet.insert(QStringLiteral("id"), raw.value(QStringLiteral("hash")).toString());
+        bet.insert(QStringLiteral("amount"), amount);
+        bet.insert(QStringLiteral("payout"), amount * mult);
+        bet.insert(QStringLiteral("payoutMultiplier"), mult);
+        bet.insert(QStringLiteral("active"), false);
+        bet.insert(QStringLiteral("currency"), raw.value(QStringLiteral("currency")).toString().toLower());
+        bet.insert(QStringLiteral("game"), QStringLiteral("keno"));
+        bet.insert(QStringLiteral("state"), state);
+        if (raw.contains(QStringLiteral("nonce")))
+            bet.insert(QStringLiteral("nonce"), raw.value(QStringLiteral("nonce")));
+        LiveBetResult r = gameResult(Game::Keno, bet, params, requestedAmount);
+        const QJsonObject balance = json.value(QStringLiteral("userBalance")).toObject();
+        if (balance.value(QStringLiteral("currency")).toString().compare(m_currency, Qt::CaseInsensitive) == 0
+            && balance.contains(QStringLiteral("amount")))
+            r.balanceAfter = numberOf(balance.value(QStringLiteral("amount")));
+        emit diceFinished(r);
+    });
+}
+
+// ---------------------------------------------------------------- Wolfbet plinko
+// POST https://wolfbet.com/api/v2/plinko/manual/play
+//   {"currency":"doge","game":"plinko","amount":"0.001","risk":"high","rows":8,"auto":1}
+// Answer: {"bet":{"hash","nonce","currency","amount","profit" (net),"multiplier" (payout
+// multiplier),"risk","rows","result_value" (the bucket, 0 = leftmost),"path","state"},
+// "userBalance":{"amount","currency"}}.
+void StakeClient::placeWolfbetPlinko(const GameBetRequest &request)
+{
+    const auto failNow = [this](const QString &msg) {
+        const LiveBetResult r = failed(msg);
+        QTimer::singleShot(0, this, [this, r] { emit diceFinished(r); });
+    };
+    QString endpoint;
+    QJsonObject stakeBody;
+    QString err;
+    if (!StakeGames::buildBetRequest(Game::Plinko, request.amount, m_currency, request.params,
+                                     &endpoint, &stakeBody, &err)) {
+        failNow(err);
+        return;
+    }
+    const QJsonObject vars = stakeBody.value(QStringLiteral("variables")).toObject();
+    const QString risk = vars.value(QStringLiteral("risk")).toString().toLower();
+    if (risk != QLatin1String("low") && risk != QLatin1String("medium") && risk != QLatin1String("high")) {
+        failNow(tr("Wolfbet plinko: risk must be low, medium or high (not \"%1\").").arg(risk));
+        return;
+    }
+    QJsonObject body;
+    body.insert(QStringLiteral("currency"), m_currency.toLower());
+    body.insert(QStringLiteral("game"), QStringLiteral("plinko"));
+    body.insert(QStringLiteral("amount"), QString::number(request.amount, 'f', 8));
+    body.insert(QStringLiteral("risk"), risk);
+    body.insert(QStringLiteral("rows"), vars.value(QStringLiteral("rows")).toInt(8));
+    body.insert(QStringLiteral("auto"), 1);
+
+    const QJsonObject params = request.params;
+    const double requestedAmount = request.amount;
+    m_transport->post(QStringLiteral("api/v2/plinko/manual/play"), body,
+                      [this, params, requestedAmount](const TransportReply &reply) {
+        if (!reply.ok) {
+            const bool isTimeout = (reply.status == 0);
+            const bool unknown = (reply.status >= 500);
+            if (reply.status == 0)
+                emit sessionLost(reply.error);
+            emit diceFinished(failed(reply.error, {}, isTimeout, unknown));
+            return;
+        }
+        const QJsonObject &json = reply.json;
+        const QJsonObject raw = json.value(QStringLiteral("bet")).toObject();
+        if (raw.isEmpty()) {
+            // No bet in the answer: an API error (or rate limit notice) - the bet was not placed.
+            QString errText = goatedErrorText(json);
+            if (errText.isEmpty())
+                errText = tr("Wolfbet plinko bet rejected (HTTP %1).").arg(reply.status);
+            if (reply.status >= 400 || isRetryable({}, errText)) {
+                LiveBetResult r = failed(errText, {}, isRetryable({}, errText), false);
+                r.retryDelayMs = fastRetryDelayMs({}, errText);
+                emit diceFinished(r);
+                return;
+            }
+            const QString text = QString::fromUtf8(QJsonDocument(json).toJson(QJsonDocument::Compact)).left(400);
+            emit diceFinished(failed(tr("Unexpected Wolfbet plinko response: %1").arg(text), {}, false, true));
+            return;
+        }
+        if (!raw.contains(QStringLiteral("multiplier")) && !raw.contains(QStringLiteral("profit"))) {
+            const QString text = QString::fromUtf8(QJsonDocument(json).toJson(QJsonDocument::Compact)).left(400);
+            emit diceFinished(failed(tr("Unexpected Wolfbet plinko response (no result): %1").arg(text),
+                                     {}, false, true));
+            return;
+        }
+        const double amount = raw.contains(QStringLiteral("amount")) ? numberOf(raw.value(QStringLiteral("amount")))
+                                                                     : requestedAmount;
+        double mult = numberOf(raw.value(QStringLiteral("multiplier")));
+        if (!raw.contains(QStringLiteral("multiplier")) && amount > 0.0)
+            mult = std::max(0.0, (amount + numberOf(raw.value(QStringLiteral("profit")))) / amount);
+        // Stake's plinko shape: state {risk, rows, point (the bucket the ball fell into)}.
+        QJsonObject state;
+        state.insert(QStringLiteral("risk"), raw.value(QStringLiteral("risk")).toString().toLower());
+        state.insert(QStringLiteral("rows"), int(numberOf(raw.value(QStringLiteral("rows")))));
+        if (raw.contains(QStringLiteral("result_value")))
+            state.insert(QStringLiteral("point"), int(numberOf(raw.value(QStringLiteral("result_value")))));
+        QJsonObject bet;
+        bet.insert(QStringLiteral("id"), raw.value(QStringLiteral("hash")).toString());
+        bet.insert(QStringLiteral("amount"), amount);
+        bet.insert(QStringLiteral("payout"), amount * mult);
+        bet.insert(QStringLiteral("payoutMultiplier"), mult);
+        bet.insert(QStringLiteral("active"), false);
+        bet.insert(QStringLiteral("currency"), raw.value(QStringLiteral("currency")).toString().toLower());
+        bet.insert(QStringLiteral("game"), QStringLiteral("plinko"));
+        bet.insert(QStringLiteral("state"), state);
+        if (raw.contains(QStringLiteral("nonce")))
+            bet.insert(QStringLiteral("nonce"), raw.value(QStringLiteral("nonce")));
+        LiveBetResult r = gameResult(Game::Plinko, bet, params, requestedAmount);
+        const QJsonObject balance = json.value(QStringLiteral("userBalance")).toObject();
+        if (balance.value(QStringLiteral("currency")).toString().compare(m_currency, Qt::CaseInsensitive) == 0
+            && balance.contains(QStringLiteral("amount")))
+            r.balanceAfter = numberOf(balance.value(QStringLiteral("amount")));
+        emit diceFinished(r);
+    });
+}
+
+// ---------------------------------------------------------------- Wolfbet hilo
+// POST https://wolfbet.com/api/v1/user/hilo/play
+//   start: {"rule":"start","bet_value":<start card 0-51>,"currency":"doge","amount":"1",
+//           "win_chance":0,"multiplier":0,"sub_nonce":0}
+//   guess: {"rule":"high"|"low","bet_value":<current card>,"currency","amount" (the round's stake),
+//           "win_chance":84.62,"multiplier":1.1699,"sub_nonce":<moves made so far, skips included>}
+//   skip:  {"rule":"skip", ..., "win_chance":0,"multiplier":0,"sub_nonce":<moves so far>}
+// GET https://wolfbet.com/api/v1/user/hilo/finish: cash out.
+// GET https://wolfbet.com/api/v1/user/hilo/status: the open round (same "bet" object).
+// Every answer: {"bet": {... see wolfbetHiloAsStake()}}, the cash out also "userBalance".
+void StakeClient::placeWolfbetHilo(const GameBetRequest &request)
+{
+    const auto failNow = [this](const QString &msg) {
+        const LiveBetResult r = failed(msg);
+        QTimer::singleShot(0, this, [this, r] { emit diceFinished(r); });
+    };
+    QString endpoint;
+    QJsonObject stakeBody;
+    QString err;
+    if (!StakeGames::buildBetRequest(Game::Hilo, request.amount, m_currency, request.params,
+                                     &endpoint, &stakeBody, &err)) {
+        failNow(err);
+        return;
+    }
+    const int start = wolfbetCardNumber(stakeBody.value(QStringLiteral("startCard")).toObject());
+    if (start < 0) {
+        failNow(tr("Wolfbet hilo: invalid start card."));
+        return;
+    }
+    m_wolfbetHiloAmount = QString::number(request.amount, 'f', 8);
+    m_wolfbetHiloCard = start;
+    m_wolfbetHiloSteps = 0;
+    m_wolfbetHiloNonce = -1;
+
+    QJsonObject body;
+    body.insert(QStringLiteral("rule"), QStringLiteral("start"));
+    body.insert(QStringLiteral("bet_value"), start);
+    body.insert(QStringLiteral("currency"), m_currency.toLower());
+    body.insert(QStringLiteral("amount"), m_wolfbetHiloAmount);
+    body.insert(QStringLiteral("win_chance"), 0);
+    body.insert(QStringLiteral("multiplier"), 0);
+    body.insert(QStringLiteral("sub_nonce"), 0);
+    const QJsonObject params = request.params;
+    const double amount = request.amount;
+    m_transport->post(QStringLiteral("api/v1/user/hilo/play"), body,
+                      [this, params, amount](const TransportReply &reply) {
+        handleWolfbetHiloReply(reply, params, amount, true);
+    });
+}
+
+void StakeClient::sendWolfbetHilo(const QString &endpoint, const QJsonObject &stakeBody, const QJsonObject &params,
+                                  double requestedAmount)
+{
+    const auto failNow = [this](const QString &msg) {
+        const LiveBetResult r = failed(msg);
+        QTimer::singleShot(0, this, [this, r] { emit diceFinished(r); });
+    };
+    auto *wolfbet = qobject_cast<WolfbetTransport *>(m_transport);
+    if (!wolfbet) {
+        failNow(tr("Wolfbet hilo: no Wolfbet connection."));
+        return;
+    }
+    if (endpoint.contains(QLatin1String("cashout"))) {
+        wolfbet->get(QStringLiteral("api/v1/user/hilo/finish"), [this, params, requestedAmount](const TransportReply &reply) {
+            handleWolfbetHiloReply(reply, params, requestedAmount, false);
+        });
+        return;
+    }
+    if (m_wolfbetHiloCard < 0 || m_wolfbetHiloAmount.isEmpty()) {
+        failNow(tr("Wolfbet hilo: no open round."));
+        return;
+    }
+    // Stake's guesses -> Wolfbet's rules ("high" = higher or same, "low" = lower or same;
+    // "equal" is "high" on a king and "low" on an ace).
+    const int rank = m_wolfbetHiloCard % 13;
+    const QString g = stakeBody.value(QStringLiteral("guess")).toString();
+    QString rule;
+    if (g == QLatin1String("higher") || g == QLatin1String("higherEqual"))
+        rule = QStringLiteral("high");
+    else if (g == QLatin1String("lower") || g == QLatin1String("lowerEqual"))
+        rule = QStringLiteral("low");
+    else if (g == QLatin1String("equal")) {
+        if (rank == 12)
+            rule = QStringLiteral("high");
+        else if (rank == 0)
+            rule = QStringLiteral("low");
+        else {
+            failNow(tr("Wolfbet hilo: Equal is only possible on an Ace or a King."));
+            return;
+        }
+    } else if (g == QLatin1String("skip")) {
+        rule = QStringLiteral("skip"); // win_chance and multiplier 0, like the start
+    }
+    if (rule.isEmpty()) {
+        failNow(tr("Wolfbet hilo: unknown guess \"%1\".").arg(g));
+        return;
+    }
+    // The site sends the win chance (2 decimals) and the multiplier (99 / chance, 4 decimals)
+    // with every guess and rejects values that do not match its own.
+    const int winning = wolfbetHiloWinningRanks(rule, rank);
+    const double chance = winning > 0 ? std::round(winning * 10000.0 / 13.0) / 100.0 : 0.0;
+    const double mult = chance > 0.0 ? std::round(99.0 / chance * 10000.0) / 10000.0 : 0.0;
+
+    QJsonObject body;
+    body.insert(QStringLiteral("rule"), rule);
+    body.insert(QStringLiteral("bet_value"), m_wolfbetHiloCard);
+    body.insert(QStringLiteral("currency"), m_currency.toLower());
+    body.insert(QStringLiteral("amount"), m_wolfbetHiloAmount);
+    body.insert(QStringLiteral("win_chance"), chance);
+    body.insert(QStringLiteral("multiplier"), mult);
+    body.insert(QStringLiteral("sub_nonce"), m_wolfbetHiloSteps);
+    m_transport->post(QStringLiteral("api/v1/user/hilo/play"), body,
+                      [this, params, requestedAmount](const TransportReply &reply) {
+        handleWolfbetHiloReply(reply, params, requestedAmount, false);
+    });
+}
+
+void StakeClient::fetchWolfbetHilo(const QJsonObject &params, double requestedAmount, const QString &startError)
+{
+    auto *wolfbet = qobject_cast<WolfbetTransport *>(m_transport);
+    if (!wolfbet) {
+        const LiveBetResult r = failed(tr("Hilo: no open round."), QStringLiteral("existingGame"), true, false);
+        QTimer::singleShot(0, this, [this, r] { emit diceFinished(r); });
+        return;
+    }
+    wolfbet->get(QStringLiteral("api/v1/user/hilo/status"),
+                 [this, params, requestedAmount, startError](const TransportReply &reply) {
+        handleWolfbetHiloReply(reply, params, requestedAmount, false, true, startError);
+    });
+}
+
+void StakeClient::handleWolfbetHiloReply(const TransportReply &reply, const QJsonObject &params,
+                                         double requestedAmount, bool firstRequest, bool activeQuery,
+                                         const QString &startError)
+{
+    // Status request with nothing open (same answer as Goated's / Shuffle's).
+    const auto nothingOpen = [this, startError, &reply] {
+        m_wolfbetHiloCard = -1;
+        m_wolfbetHiloSteps = 0;
+        m_wolfbetHiloAmount.clear();
+        if (!startError.isEmpty()) {
+            // The new round was refused, but the status request shows no open round: report the
+            // site's own message with the status answer (to see why it was not taken as open),
+            // and stop there (no endless start / status loop).
+            const QString status = reply.ok
+                ? QString::fromUtf8(QJsonDocument(reply.json).toJson(QJsonDocument::Compact)).left(600)
+                : tr("HTTP %1 %2").arg(reply.status).arg(reply.error);
+            LiveBetResult r = failed(tr("Wolfbet hilo: %1 (hilo/status answered: %2)").arg(startError, status),
+                                     {}, isRetryable({}, startError), false);
+            r.retryDelayMs = fastRetryDelayMs({}, startError);
+            emit diceFinished(r);
+            return;
+        }
+        LiveBetResult r = failed(tr("Hilo: no open round."), QStringLiteral("existingGame"), true, false);
+        r.retryDelayMs = 500;
+        emit diceFinished(r);
+    };
+    if (!reply.ok && activeQuery) {
+        nothingOpen();
+        return;
+    }
+    if (!reply.ok) {
+        const bool isTimeout = (reply.status == 0);
+        const bool unknown = (reply.status >= 500);
+        if (reply.status == 0)
+            emit sessionLost(reply.error);
+        emit diceFinished(failed(reply.error, {}, isTimeout, unknown));
+        return;
+    }
+    const QJsonObject &json = reply.json;
+    QJsonObject raw = json.value(QStringLiteral("bet")).toObject();
+    if (activeQuery && !wolfbetHiloOpen(raw)) {
+        nothingOpen();
+        return;
+    }
+    if (raw.isEmpty()) {
+        // No bet in the answer: an API error (or rate limit notice) - nothing was played.
+        QString errText = goatedErrorText(json);
+        if (errText.isEmpty())
+            errText = tr("Wolfbet hilo request rejected (HTTP %1).").arg(reply.status);
+        if (firstRequest && (containsCI(errText, "active") || containsCI(errText, "unfinished")
+                             || containsCI(errText, "already") || containsCI(errText, "progress")
+                             || containsCI(errText, "existing") || containsCI(errText, "finish"))) {
+            // A round is still open (left over from the website or a lost answer): load it so
+            // it is finished first.
+            fetchWolfbetHilo(params, requestedAmount, errText);
+            return;
+        }
+        if (reply.status >= 400 || isRetryable({}, errText)) {
+            LiveBetResult r = failed(errText, {}, isRetryable({}, errText), false);
+            r.retryDelayMs = fastRetryDelayMs({}, errText);
+            emit diceFinished(r);
+            return;
+        }
+        const QString text = QString::fromUtf8(QJsonDocument(json).toJson(QJsonDocument::Compact)).left(400);
+        emit diceFinished(failed(tr("Unexpected Wolfbet hilo response: %1").arg(text), {}, false, true));
+        return;
+    }
+    // The round's nonce comes with the start (and the status) answer; the cash out answer has
+    // none, so the remembered one is used for the bet list row.
+    if (raw.contains(QStringLiteral("nonce")) && !raw.value(QStringLiteral("nonce")).isNull())
+        m_wolfbetHiloNonce = qint64(numberOf(raw.value(QStringLiteral("nonce"))));
+    else if (m_wolfbetHiloNonce >= 0)
+        raw.insert(QStringLiteral("nonce"), double(m_wolfbetHiloNonce));
+    const QJsonObject bet = wolfbetHiloAsStake(raw, &m_wolfbetHiloCard, &m_wolfbetHiloSteps);
+    // Every guess repeats the round's stake exactly as the site reports it ("0.01100000"), also
+    // for a round loaded with the status request.
+    const QJsonValue stake = raw.value(QStringLiteral("amount"));
+    if (stake.isString() && !stake.toString().isEmpty())
+        m_wolfbetHiloAmount = stake.toString();
+    else if (stake.isDouble())
+        m_wolfbetHiloAmount = QString::number(stake.toDouble(), 'f', 8);
+    LiveBetResult r = gameResult(Game::Hilo, bet, params, requestedAmount);
+    if (activeQuery) {
+        r.active = true;
+        r.win = false;
+    }
+    if (!r.active) {
+        m_wolfbetHiloCard = -1;
+        m_wolfbetHiloSteps = 0;
+        m_wolfbetHiloAmount.clear();
+        m_wolfbetHiloNonce = -1;
+        const QJsonObject balance = json.value(QStringLiteral("userBalance")).toObject();
+        if (balance.value(QStringLiteral("currency")).toString().compare(m_currency, Qt::CaseInsensitive) == 0
+            && balance.contains(QStringLiteral("amount")))
+            r.balanceAfter = numberOf(balance.value(QStringLiteral("amount")));
     }
     emit diceFinished(r);
 }

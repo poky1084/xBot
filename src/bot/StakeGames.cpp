@@ -562,15 +562,19 @@ QList<Game> gamesForCasino(const QString &casinoKey)
     if (k == QLatin1String("shuffle"))
         return {Game::Dice, Game::Limbo, Game::Keno, Game::Mines, Game::Plinko, Game::Wheel,
                 Game::DragonTower, Game::Chicken, Game::Hilo, Game::Blackjack};
-    return {Game::Dice, Game::Limbo}; // Wolfbet, Duel, Pasino, Tower, Winna
+    if (k == QLatin1String("wolfbet"))
+        return {Game::Dice, Game::Limbo, Game::Keno, Game::Plinko, Game::Hilo};
+    return {Game::Dice, Game::Limbo}; // Duel, Pasino, Tower, Winna
 }
 
 QStringList unsupportedChoices(const QString &casinoKey, Game game, const QString &key)
 {
     const QString k = casinoKey.trimmed().toLower();
-    if ((k == QLatin1String("shuffle") || k == QLatin1String("goated"))
+    if ((k == QLatin1String("shuffle") || k == QLatin1String("goated") || k == QLatin1String("wolfbet"))
         && game == Game::Plinko && key == QLatin1String("risk"))
         return {QStringLiteral("expert")}; // low / medium / high only
+    if (k == QLatin1String("wolfbet") && game == Game::Keno && key == QLatin1String("risk"))
+        return {QStringLiteral("classic")}; // low / medium / high only
     return {};
 }
 

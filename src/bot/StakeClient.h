@@ -229,6 +229,25 @@ private:
     void handleGoatedHiloReply(const TransportReply &reply, const QJsonObject &params, double requestedAmount,
                                bool firstRequest, bool activeQuery);
     QString m_goatedHiloRank; // the card the next guess is about
+    // Wolfbet keno: POST api/v2/keno/manual/play (numbers 1-40, risk low / medium / high).
+    void placeWolfbetKeno(const GameBetRequest &request);
+    // Wolfbet plinko: POST api/v2/plinko/manual/play (rows, risk low / medium / high).
+    void placeWolfbetPlinko(const GameBetRequest &request);
+    // Wolfbet hilo: POST api/v1/user/hilo/play {rule: start / high / low, bet_value: card 0-51,
+    // win_chance, multiplier, sub_nonce}, cash out with GET api/v1/user/hilo/finish.
+    void placeWolfbetHilo(const GameBetRequest &request);
+    void sendWolfbetHilo(const QString &endpoint, const QJsonObject &stakeBody, const QJsonObject &params,
+                         double requestedAmount);
+    // The open round: GET api/v1/user/hilo/status ({"bet": {...}} with "status": 3 while open).
+    // startError: the new round was refused with this message (looked like "a round is open");
+    // when the status request finds none after all, that message is reported, not "no open round".
+    void fetchWolfbetHilo(const QJsonObject &params, double requestedAmount, const QString &startError = {});
+    void handleWolfbetHiloReply(const TransportReply &reply, const QJsonObject &params, double requestedAmount,
+                                bool firstRequest, bool activeQuery = false, const QString &startError = {});
+    int m_wolfbetHiloCard = -1;   // card (0-51) the next guess is about
+    int m_wolfbetHiloSteps = 0;   // guesses made so far in the open round (= the next sub_nonce)
+    QString m_wolfbetHiloAmount;  // the round's stake as sent with "start" (repeated with every guess)
+    qint64 m_wolfbetHiloNonce = -1; // the round's nonce (in the start answer; the cash out has none)
     // Goated keno (casino/keno/bet), answered in Stake's keno shape.
     void placeGoatedKeno(const GameBetRequest &request);
     QString m_goatedAutobetSessionId; // autobet_session_id sent with Goated keno / mines bets

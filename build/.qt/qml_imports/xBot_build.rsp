@@ -1,0 +1,9 @@
+-rootPath
+C:/Users/Legion/Documents/BOTDICEQQ/xbot-clean
+-cmake-output
+-output-file
+C:/Users/Legion/Documents/BOTDICEQQ/xbot-clean/build/.qt/qml_imports/xBot_build.cmake
+-importPath
+C:/Users/Legion/Documents/BOTDICEQQ/xbot-clean/build
+-importPath
+C:/Users/Legion/AppData/Local/Qt/6.10.3/msvc2022_64/qml

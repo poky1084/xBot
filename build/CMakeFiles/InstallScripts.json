@@ -1,0 +1,8 @@
+{
+	"InstallScripts" : 
+	[
+		"C:/Users/Legion/Documents/BOTDICEQQ/xbot-clean/build/cmake_install.cmake",
+		"C:/Users/Legion/Documents/BOTDICEQQ/xbot-clean/build/src/third_party/lua/cmake_install.cmake"
+	],
+	"Parallel" : false
+}
