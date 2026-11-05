@@ -1,6 +1,6 @@
 # xBot
 
-xBot is a desktop dice and limbo betting bot for **Windows**, written in C++ with Qt 6. It can bet on nine casinos: **Stake**, **Shuffle**, **Goated**, **Wolfbet**, **Duel**, **Paradice**, **Pasino**, **Tower.bet** and **Winna**. You can bet by hand, run auto-bet with on-win and on-loss rules, build rules in the **Condition Builder**, or write your own strategy in **Lua** or **JavaScript**. The layout is modelled on qBittorrent.
+xBot is a desktop dice, limbo and casino-games betting bot for **Windows**, written in C++ with Qt 6. It can bet on nine casinos: **Stake**, **Shuffle**, **Goated**, **Wolfbet**, **Duel**, **Paradice**, **Pasino**, **Tower.bet** and **Winna**. You can bet by hand, run auto-bet with on-win and on-loss rules, build rules in the **Condition Builder**, or write your own strategy in **Lua** or **JavaScript**. The layout is modelled on qBittorrent.
 
 Every new launch starts in **simulation mode**, which uses play money and a provably fair seed generator that works like Stake's. Real-money betting only starts after you turn it on yourself in *Tools → Options → Live betting*.
 
@@ -59,16 +59,25 @@ If the WebView2 Runtime is missing, the login buttons are disabled, and Stake (C
 | **Stake.com** (and Primedice) | Dice, Limbo + Stake's games (see [Stake games in code mode](#stake-games-in-code-mode)) | *Cookie (cf_clearance)* → hidden WebView2 browser, or *Browser extension* | API key (`x-access-token`), optional `cf_clearance` | ✅ | Editable (`stake.com`, `stake.bet`, `stake.us`, `stake.games`, `stake.pet`, `stake.kim`, `stake.mba`, `stake.ac`, `stake.jp`, `stake.bz`, `stake.krd`, `stake.ceo`, `staketr.com`, `stake1021.com`, `stake1067.com`, `stake3075.com`, `primedice.com`, `primedice.games`, …) |
 | **Shuffle.com** | Dice, Limbo, Keno, Mines, Plinko, Wheel, Tower, Chicken, Hilo, Blackjack | *Direct mode* (HTTPS + WebSocket from the app), or *Browser extension* | Token, `CORRELATION_USER_ID`, `BROWSER_ID` | ✅ | Editable (`shuffle.com` or a mirror) |
 | **Goated.com** | Dice, Limbo, Keno, Mines, Plinko, Wheel, Diamonds, Tower, Goat Run, Hilo, Blackjack | *Direct mode* (HTTPS), or *Browser extension* | Token (`g3_token`) | ✅ | Fixed (`goated.com`) |
-| **Wolfbet.com** | Dice, Limbo | *Direct mode* (HTTPS), or *Browser extension* | Token (the `token` cookie) | ❌ | Fixed (`wolfbet.com`) |
-| **Duel.com** | Dice, Limbo | *Direct mode* (hidden WebView2 page), or *Browser extension* | Token (`duel` cookie), UUID (`security:uuid`), optional `cf_clearance` | ❌ | Editable (`duel.com` or a mirror) |
+| **Wolfbet.com** | Dice, Limbo, Keno, Plinko, Hilo | *Direct mode* (HTTPS), or *Browser extension* | Token (the `token` cookie) | ❌ | Fixed (`wolfbet.com`) |
+| **Duel.com** | Dice, Limbo, Keno, Mines, Plinko, Beef (cross-road), Hilo, Blackjack | *Direct mode* (hidden WebView2 page), or *Browser extension* | Token (`duel` cookie), UUID (`security:uuid`), optional `cf_clearance` | ❌ | Editable (`duel.com` or a mirror) |
 | **Paradice.in** | Dice | *Direct mode* (HTTPS GraphQL), or *Browser extension* | Token (localStorage `token`, a JWT) | ❌ | Fixed (`paradice.in`) |
-| **Pasino.com** | Dice, Limbo | *Direct mode* (HTTPS), or *Browser extension* | Token (localStorage `token`, 64 hex characters) | ❌ | Fixed (`pasino.com`) |
-| **Tower.bet** | Dice, Limbo | *Direct mode* (HTTPS behind Cloudflare), or *Browser extension* | Token (`__tt` cookie), `cf_clearance`, User-Agent | ❌ | Fixed (`tower.bet`) |
+| **Pasino.com** | Dice, Limbo, Keno, Mines, Plinko, Blackjack (no insurance) | *Direct mode* (HTTPS), or *Browser extension* | Token (localStorage `token`, 64 hex characters) | ❌ | Fixed (`pasino.com`) |
+| **Tower.bet** | Dice, Limbo, Plinko, Wheel (risk only, no segments) | *Direct mode* (HTTPS behind Cloudflare), or *Browser extension* | Token (`__tt` cookie), `cf_clearance`, User-Agent | ❌ | Fixed (`tower.bet`) |
 | **Winna.com** | Dice, Limbo | *Direct mode* (HTTPS behind Cloudflare), or *Browser extension* | Session (`connect.sid` + the other winna.com cookies), `cf_clearance`, User-Agent, Device ID (`wn-antifraud-device-id`) | ✅ | Fixed (`winna.com`) |
 
 **House edge:** the app's win chance and multiplier assume a 1 % house edge (multiplier = 99 / chance). Stake, Shuffle, Goated, Wolfbet, Paradice and Winna dice use the same edge. **Duel (0.1 %)**, **Tower (2 %)** and **Pasino (5 %)** dice use a different one, so xBot converts the win chance it sends so that the multiplier you set is the one paid: 2x is sent as 49.95 % on Duel, 49.000 % on Tower (over 51.000) and 47.50 % on Pasino. The bet list still shows the app's target. Limbo sends the multiplier itself, so it is exact everywhere.
 
 **Seeds:** Stake, Shuffle, Goated, Duel and **Winna** set the client seed you choose. Pasino sends the client seed with every bet, so setting it only changes the seed used from then on. Wolfbet and Paradice can only renew the server seed, so xBot bets on with the current client seed. Tower has no seed support in xBot yet.
+
+**Games on the other casinos:** besides dice and limbo, xBot plays the casinos' own versions of Stake's games (table above). It turns every casino's answers into Stake's format, so the Manual / Auto Bet tabs, the bet list, scripts' `bet` / `currentBet` objects and `round()` work the same everywhere. Notes per casino:
+
+- **Wolfbet:** Keno and Plinko risk low / medium / high (no *classic* / *expert*). Hilo: *high* = higher or same, *low* = lower or same (an Ace: *high* is strictly higher; a King: *low* is strictly lower; *Equal* only on an Ace or a King); skip and cash out supported; an open round is loaded with `hilo/status`.
+- **Duel:** Keno risk classic / low / medium / high; Mines and Beef are played in one request (autobet); Plinko risk low / medium / high; Hilo has all six guesses (higher, lower, higher or same, lower or same, equal, skip) and cash out; Blackjack with insurance; open hilo rounds and blackjack hands are loaded (`hilo/active`, `GET blackjack`) and finished first.
+- **Pasino:** Blackjack has **no insurance** (scripts' `BLACKJACK_INSURANCE` is refused, `BLACKJACK_NOINSURANCE` does nothing); an open hand is loaded with `blackjack/session`. When Pasino answers *"active session"* / *"finish your manual session"* right after a bet (it is still settling the last one), xBot quietly sends the bet again after a short pause.
+- **Tower.bet:** Plinko risk low / medium / high; Wheel uses only the risk (the Segments input is hidden and scripts don't need `segments`). Tower's `isWin` is true for any payout above 0, so xBot decides wins by the payout.
+- **Blackjack on Duel and Pasino:** a *double* or *split* the casino does not offer at that moment (e.g. double after a hit) is played as *hit* below 17 and *stand* from 17.
+- A game a casino does not have fails with *"Blackjack is not available on Winna – pick another game or switch the casino."*
 
 **Balance after a bet:** Tower (`newBalance`) and Pasino (`balance`) report the balance after every bet, and xBot sets the session balance to that figure.
 
@@ -102,11 +111,11 @@ Lists are cached, so the dropdown fills straight away next time. A currency the 
 
 | Area | Contents |
 |---|---|
-| **Menu bar** | **File** (Exit) · **Casino** (Stake / Shuffle / Goated / Wolfbet / Duel / Paradice / Pasino / Tower / Winna) · **Game** (the games the selected casino offers: Dice / Limbo, on Stake also its other games, on Shuffle also Keno, Mines, Plinko, Wheel, Tower, Chicken, Hilo and Blackjack, on Goated also Keno, Mines, Plinko, Wheel, Diamonds, Tower, Goat Run, Hilo and Blackjack) · **View** (Show sidebar, Show bet list, Show bottom panel, Show log, Strategy editor, Dark theme) · **Bot** (Start / Pause / Stop auto-bet, Roll once, Reset session, Clear history, Rotate seed) · **Tools** (Statistics, Options, Condition builder) · **Help** (About) |
+| **Menu bar** | **File** (Exit) · **Casino** (Stake / Shuffle / Goated / Wolfbet / Duel / Paradice / Pasino / Tower / Winna) · **Game** (the games the selected casino offers: Dice / Limbo, on Stake also its other games, on Shuffle also Keno, Mines, Plinko, Wheel, Tower, Chicken, Hilo and Blackjack, on Goated also Keno, Mines, Plinko, Wheel, Diamonds, Tower, Goat Run, Hilo and Blackjack, on Wolfbet also Keno, Plinko and Hilo, on Duel also Keno, Mines, Plinko, Beef, Hilo and Blackjack, on Pasino also Keno, Mines, Plinko and Blackjack, on Tower also Plinko and Wheel) · **View** (Show sidebar, Show bet list, Show bottom panel, Show log, Strategy editor, Dark theme) · **Bot** (Start / Pause / Stop auto-bet, Roll once, Reset session, Clear history, Rotate seed) · **Tools** (Statistics, Options, Condition builder) · **Help** (About) |
 | **Toolbar** | New window (+), Reset session, Start, Pause, Stop, Rotate seed, Statistics, Options, Condition builder, Strategy editor (#), and a filter box for the bet list (*Filter by nonce or roll…*) |
-| **Status / Session sidebar** (dockable) | **Status:** mode (Simulation / Live), casino, connection state. **Session:** Balance, Profit, Wager, Wins, Losses, Win rate, Big wins (10x+), Highest bet, highest and lowest profit, Highest / Lowest / Current streak, Running time |
-| **Bet list** | Time, Bet ID, Casino, Game, Nonce, Amount, Target, Roll, Multiplier, Payout, Profit. Right-click a live bet to **copy its Bet ID** (on Stake also the IID) or **open the bet in the browser** (not available for Duel, Paradice, Pasino, Tower and Winna bets, which only offer copying the Bet ID). The list follows new bets until you scroll, and follows again when you scroll back to the top. |
-| **Bottom panel tabs** | **Manual Bet** · **Auto Bet** · **Profit Chart** (running profit graph) · **Provably Fair** |
+| **Status / Session sidebar** (dockable) | **Status:** mode (Simulation / Live), casino, connection state. **Session:** Balance, Profit, Wager, Wins, Losses, RTP (payouts ÷ wagered, cut to 2 decimals; 100.00 % before the first bet, green from 100 %), Big wins (10x+), Highest bet, highest and lowest profit, Highest / Lowest / Current streak, Running time |
+| **Bet list** | Time, Bet ID, Casino, Game, Nonce, Amount, Target, Roll, Multiplier, Payout, Profit. All columns are bold; winning rows are green, losing rows grey (the Roll column keeps its own colors). The road-crossing games (Chicken, Goat Run, Beef) show as `cross`. Right-click a live bet to **copy its Bet ID** (on Stake also the IID) or **open the bet in the browser** (not available for Duel, Paradice, Pasino, Tower and Winna bets, which only offer copying the Bet ID). The list follows new bets until you scroll, and follows again when you scroll back to the top. |
+| **Bottom panel tabs** | **Manual Bet** · **Auto Bet** · **Profit Chart** (the profit of the last 100 bets; green above 0, red below, shaded; hover shows `#bet profit`) · **Provably Fair** |
 | **Log** (dockable, hidden by default) | Time / Level / Message, with Copy and Clear log |
 | **Strategy editor** (dockable, `#` button) | The Lua / JavaScript editor with Run, Stop, Open, Save, Save as, Help, and a Console tab |
 | **Status bar** | Bets, P/L, Wagered, betting speed |
@@ -261,6 +270,8 @@ In **Browser extension** mode, xBot doesn't talk to the casino directly. All req
 - **Bet amount**, **Win chance %**, **Multiplier**, **Profit on win**, and a range bar that shows the win/lose zones and where the last roll landed.
 - **Dice:** the **Roll Under ⇄ / Roll Over ⇄** button flips the side. Then press **Roll Dice** (or Enter).
 - **Limbo:** set the target multiplier, then press **Bet Limbo**.
+- **Other games** (keno, mines, plinko, …): the game's own inputs replace Win chance / Multiplier. **Rows** (plinko) and **Steps** (cross / chicken / goat run / beef) are drop-down lists that only offer what the casino allows for the chosen difficulty. Inputs a casino does not use are hidden (e.g. Segments on Tower.bet's wheel), and risks / difficulties it lacks are left out (e.g. Duel's beef shows *extreme* instead of *expert*).
+- **Hilo and blackjack:** play with the buttons under the bet amount; the cards and each hand's moves are shown on the right (no big result line). A round still open on the casino is shown when you pick the game. The tab is only as tall as its content.
 
 ### Rules
 
@@ -381,7 +392,7 @@ Scripts don't use the Manual or Auto Bet tabs, or the Options client seed. They 
 | `chance` | number | **dice** | Win chance in % (0.01 – 99.99, rounded to 2 dp) |
 | `bethigh` | boolean | dice | `true` = roll over, `false` = roll under (default) |
 | `target` | number | **limbo** | Target multiplier (1.01 – 1,000,000). `chance` and `bethigh` are ignored in limbo. |
-| `game` | string | no | `"dice"` or `"limbo"` (default: the game selected in the Game menu). On Stake also `"keno"`, `"mines"`, `"plinko"`, `"wheel"`, `"hilo"`, `"blackjack"`, `"baccarat"`, `"roulette"`, `"tower"` (Stake's Dragon Tower), `"flip"`, `"rps"`, `"pump"`, `"snakes"`, `"cases"`, `"darts"`, `"diamonds"`, `"videopoker"`, `"bluesamurai"`, `"scarabspin"`, `"tomeoflife"`, `"bars"`, `"chicken"`, `"tarot"`, `"drill"`, `"packs"`, `"moles"`, `"primedice"` (Primedice X); on Goated also `"goatrun"` (Goat Run, Goated only) — each with its own variables, see [Stake games in code mode](#stake-games-in-code-mode). Can be changed in `dobet()`. |
+| `game` | string | no | `"dice"` or `"limbo"` (default: the game selected in the Game menu). On Stake also `"keno"`, `"mines"`, `"plinko"`, `"wheel"`, `"hilo"`, `"blackjack"`, `"baccarat"`, `"roulette"`, `"tower"` (Stake's Dragon Tower), `"flip"`, `"rps"`, `"pump"`, `"snakes"`, `"cases"`, `"darts"`, `"diamonds"`, `"videopoker"`, `"bluesamurai"`, `"scarabspin"`, `"tomeoflife"`, `"bars"`, `"chicken"`, `"tarot"`, `"drill"`, `"packs"`, `"moles"`, `"primedice"` (Primedice X); `"cross"` — the casino's road-crossing game: Chicken on Stake / Shuffle, Goat Run on Goated, Beef on Duel (`"chicken"`, `"goatrun"`, `"beef"` still work) — each with its own variables, see [Stake games in code mode](#stake-games-in-code-mode). Set at the top of the script, it also switches the Game menu (and the tabs and window title) when the run starts; changed in `dobet()`, only the window title follows. |
 | `casino` | string | no | `"stake"`, `"shuffle"`, `"goated"`, `"wolfbet"`, `"duel"`, `"paradice"`, `"pasino"`, `"tower"` or `"winna"`. Switches the casino the next bets go to, **without resetting the session**. The casino must already be logged in in Options. |
 | `currency` | string | no | Currency code, e.g. `"btc"` or `"usdt"` (default: the current bet currency). In live mode the account needs a balance in it. The session is kept (bets, profit, history and graph go on); only the balance becomes the new currency's. |
 
@@ -507,7 +518,7 @@ end
 
 Besides dice and limbo, scripts can play Stake's own games. Set `game` to one of the names below plus that game's variables, the same way you set `chance` for dice. Crash and Slide are not supported.
 
-- **Stake only, live only.** On another casino the bet fails with *"… is only available on Stake"*, and in simulation with *"… can only be played live on Stake"*. Exception: **keno**, **mines**, **plinko**, **wheel**, **tower**, **chicken**, **hilo** and **blackjack** also play on **Shuffle** (and **keno**, **mines**, **plinko**, **wheel**, **diamonds**, **tower**, **hilo** and **blackjack** on **Goated** too), with the same variables, `round()` moves, `bet` object and results (xBot turns Shuffle's answers into Stake's format; blackjack side bets are not played). On Shuffle and Goated, hilo's *Equal* is only possible on an Ace or a King.
+- **Live only; the casino must have the game.** On a casino without it the bet fails with *"… is not available on <casino>"*, and in simulation with *"… can only be played live on Stake"*. Besides Stake: **keno**, **mines**, **plinko**, **wheel**, **tower**, **cross** (chicken), **hilo** and **blackjack** play on **Shuffle**; **keno**, **mines**, **plinko**, **wheel**, **diamonds**, **tower**, **cross** (goat run), **hilo** and **blackjack** on **Goated**; **keno**, **plinko** and **hilo** on **Wolfbet**; **keno**, **mines**, **plinko**, **cross** (beef), **hilo** and **blackjack** on **Duel**; **keno**, **mines**, **plinko** and **blackjack** on **Pasino**; **plinko** and **wheel** on **Tower.bet** — with the same variables, `round()` moves, `bet` object and results (xBot turns every casino's answers into Stake's format; blackjack side bets are not played). On Shuffle, Goated and Wolfbet, hilo's *Equal* is only possible on an Ace or a King. Pasino blackjack has no insurance. See [Supported casinos](#supported-casinos) for the risks / difficulties each casino offers.
 - **No defaults in code mode.** Every variable listed for the game must be set by the script (in the script body, or in `dobet()` before it is read back). If one is missing, the run doesn't start, or stops, with *"keno needs these variables set in the script: numbers, risk"*. The only optional one is video poker's `target` (`nil` / `null` = the optimal hold). The Manual / Auto Bet tabs are not used in code mode.
 - **Variables** are read back after the script body and after every `dobet()`, like `nextbet`.
 - **Positions are 1-based** (1 = the first tile / egg / hole); xBot subtracts 1 before sending them to Stake. The `bet` object you get back still holds Stake's 0-based numbers.
@@ -518,7 +529,7 @@ Besides dice and limbo, scripts can play Stake's own games. Set `game` to one of
 | `"keno"` | `numbers` — 1 to 10 numbers, 1–40 (duplicates and out-of-range numbers are skipped) · `risk` — `"low"`, `"classic"`, `"medium"` or `"high"` | `roll` = number of hits · `lastBet.roll` = the drawn numbers, 1-based, e.g. `{3, 17, 22, …}` |
 | `"mines"` | `fields` — tiles to reveal, 1 (top-left) – 25 (bottom-right), row by row · `mines` — mines count 1–24. A game left open is cashed out. | `roll` = payout multiplier · `lastBet.roll` = the mine positions, 1-based, e.g. `{4, 12, 25}` (Roll column: `safe` or `mine N`) |
 | `"plinko"` | `rows` — 8–16 · `risk` — `"low"`, `"medium"`, `"high"` or `"expert"` | Payout multiplier |
-| `"wheel"` | `segments` — 10, 20, 30, 40 or 50 · `risk` — `"low"`, `"medium"` or `"high"` | Result segment |
+| `"wheel"` | `segments` — 10, 20, 30, 40 or 50 (not needed on Tower.bet) · `risk` — `"low"`, `"medium"` or `"high"` | Result segment |
 | `"hilo"` | `startcard` — `{rank = "A", suit = "H"}` (Lua) / `{rank: "A", suit: "H"}` (JS), or text such as `"A"`, `"KH"`, `"10S"` · a `round()` function that decides every move (see below) | Payout multiplier (Target column: the cards) |
 | `"blackjack"` | a `round()` function that decides every move (see below) | Payout multiplier |
 | `"baccarat"` | `nextbet = {player = 0, banker = 0.004, tie = 0}` — the stake on each side; the total is the bet. Or a number in `nextbet` **plus** `side` — `"player"`, `"banker"` or `"tie"`. | Payout multiplier (Roll column: the result) |
@@ -531,8 +542,7 @@ Besides dice and limbo, scripts can play Stake's own games. Set `game` to one of
 | `"cases"` | `difficulty` — `"easy"`, `"medium"`, `"hard"` or `"expert"` | Case result |
 | `"darts"` | `difficulty` — `"easy"`, `"medium"`, `"hard"` or `"expert"` | Payout multiplier |
 | `"tarot"` | `difficulty` — `"easy"`, `"medium"`, `"hard"` or `"expert"` | Payout multiplier |
-| `"chicken"` | `steps` — 1–20 · `difficulty` — `"easy"`, `"medium"`, `"hard"` or `"expert"` | Death point |
-| `"goatrun"` (Goated only) | `steps` — the lane to hop to: 1–24 on easy, 1–22 medium, 1–20 hard, 1–15 expert · `difficulty` — `"easy"`, `"medium"`, `"hard"` or `"expert"` | First accident lane |
+| `"cross"` (also `"chicken"`, `"goatrun"`, `"beef"`) | `steps` — lanes to cross · `difficulty` — `"easy"`, `"medium"`, `"hard"` or `"expert"` (`"extreme"` = `"expert"`). Steps at most: Stake 20; Shuffle and Duel 19 / 17 / 15 / 10; Goated 24 / 22 / 20 / 15 (easy / medium / hard / expert). Plays Chicken on Stake / Shuffle, Goat Run on Goated, Beef on Duel. | Death point (Duel: the lane hit, 1-based) |
 | `"drill"` | `target` — target multiplier 1.01–999 · `pick` — 1 (blue), 2 (yellow) or 3 (green) | Picked drill's multiplier |
 | `"moles"` | `moles` — 1–10 · `picks` — one hole per round, 1-based (repeats allowed, e.g. `{1, 2, 2, 2, 3, 7}`) | Last round with a hit |
 | `"bars"` | `tiles` — list of tiles, sent as written · `difficulty` — `"easy"`, `"medium"`, `"hard"` or `"expert"` | Payout multiplier |
@@ -548,11 +558,11 @@ A hilo or blackjack hand takes several moves. After the deal and after every mov
 | Game | `round()` returns | Constants |
 |---|---|---|
 | Hilo | `HILO_BET_HIGH` (5), `HILO_BET_LOW` (4), `HILO_BET_EQUAL` (2), `HILO_SKIP` (7), `HILO_CASHOUT` (3) — or a guess as text: `"higher"`, `"lower"`, `"equal"`, `"higherEqual"`, `"lowerEqual"`, `"skip"`, `"cashout"` | For the current card, HIGH means *higher or equal* (an Ace: *higher*, a King: *equal*), LOW means *lower or equal* (an Ace: *equal*, a King: *lower*). |
-| Blackjack | `"BLACKJACK_HIT"`, `"BLACKJACK_STAND"`, `"BLACKJACK_DOUBLE"`, `"BLACKJACK_SPLIT"`, `"BLACKJACK_INSURANCE"`, `"BLACKJACK_NOINSURANCE"` (or `"hit"`, `"stand"`, …) | If Stake refuses the move as invalid, xBot tries *no insurance*, then *stand*. |
+| Blackjack | `"BLACKJACK_HIT"`, `"BLACKJACK_STAND"`, `"BLACKJACK_DOUBLE"`, `"BLACKJACK_SPLIT"`, `"BLACKJACK_INSURANCE"`, `"BLACKJACK_NOINSURANCE"` (or `"hit"`, `"stand"`, …) | If Stake refuses the move as invalid, xBot tries *no insurance*, then *stand*. On Duel and Pasino a double / split the casino does not offer right now is played as *hit* (below 17) or *stand*. Pasino has no insurance: `BLACKJACK_INSURANCE` stops the run with an error, `BLACKJACK_NOINSURANCE` does nothing. |
 
 Useful fields of `currentBet`: hilo `currentBet.state.startCard.rank`, `currentBet.state.rounds` (each with `card.rank`, `card.suit`, `guess`, `payoutMultiplier`); blackjack `currentBet.state.player[1].value` / `.actions` and `currentBet.state.dealer[1].cards` (Lua tables start at 1; in JavaScript use `[0]`).
 
-If an earlier hilo, blackjack, video poker or mines game is still open on Stake (e.g. after a lost connection), the next bet first fetches it and finishes it.
+If an earlier hilo, blackjack, video poker or mines game is still open on Stake (e.g. after a lost connection), the next bet first fetches it and finishes it. The same goes for open hilo / blackjack rounds on Shuffle, Goated, Wolfbet (hilo), Duel and Pasino (blackjack); the Manual Bet tab shows such a round when you pick the game.
 
 #### Example: keno (Lua)
 
@@ -968,10 +978,10 @@ difficulty = "medium"
 nextbet = 0
 ```
 
-#### Chicken
+#### Cross (Chicken / Goat Run / Beef)
 
 ```javascript
-game = "chicken"
+game = "cross"        // Chicken on Stake / Shuffle, Goat Run on Goated, Beef on Duel
 steps = 1
 difficulty = "medium"
 nextbet = 0
