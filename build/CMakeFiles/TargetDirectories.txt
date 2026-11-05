@@ -1,6 +1,0 @@
-C:/Users/Legion/Documents/BOTDICEQQ/xbot-clean/build/CMakeFiles/xBot.dir
-C:/Users/Legion/Documents/BOTDICEQQ/xbot-clean/build/CMakeFiles/xBot_qmlimportscan.dir
-C:/Users/Legion/Documents/BOTDICEQQ/xbot-clean/build/CMakeFiles/ALL_BUILD.dir
-C:/Users/Legion/Documents/BOTDICEQQ/xbot-clean/build/CMakeFiles/ZERO_CHECK.dir
-C:/Users/Legion/Documents/BOTDICEQQ/xbot-clean/build/src/third_party/lua/CMakeFiles/lua54.dir
-C:/Users/Legion/Documents/BOTDICEQQ/xbot-clean/build/src/third_party/lua/CMakeFiles/ALL_BUILD.dir

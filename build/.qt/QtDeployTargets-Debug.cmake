@@ -1,5 +1,0 @@
-set(__QT_DEPLOY_TARGET_lua54_FILE C:/Users/Legion/Documents/BOTDICEQQ/xbot-clean/build/src/third_party/lua/Debug/lua54.lib)
-set(__QT_DEPLOY_TARGET_lua54_TYPE STATIC_LIBRARY)
-set(__QT_DEPLOY_TARGET_xBot_FILE C:/Users/Legion/Documents/BOTDICEQQ/xbot-clean/build/Debug/xBot.exe)
-set(__QT_DEPLOY_TARGET_xBot_TYPE EXECUTABLE)
-set(__QT_DEPLOY_TARGET_xBot_RUNTIME_DLLS C:/Users/Legion/AppData/Local/Qt/6.10.3/msvc2022_64/bin/Qt6Widgetsd.dll;C:/Users/Legion/AppData/Local/Qt/6.10.3/msvc2022_64/bin/Qt6Svgd.dll;C:/Users/Legion/AppData/Local/Qt/6.10.3/msvc2022_64/bin/Qt6WebSocketsd.dll;C:/Users/Legion/AppData/Local/Qt/6.10.3/msvc2022_64/bin/Qt6Qmld.dll;C:/Users/Legion/vcpkg/installed/x64-windows/bin/WebView2Loader.dll;C:/Users/Legion/AppData/Local/Qt/6.10.3/msvc2022_64/bin/Qt6Guid.dll;C:/Users/Legion/AppData/Local/Qt/6.10.3/msvc2022_64/bin/Qt6Networkd.dll;C:/Users/Legion/AppData/Local/Qt/6.10.3/msvc2022_64/bin/Qt6Cored.dll)
