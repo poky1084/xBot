@@ -158,11 +158,24 @@ void GameParamsWidget::rebuild()
         bool spanRow = false;         // check boxes and notes use the whole row
         switch (spec.type) {
         case ParamType::Int: {
-            auto *spin = new QSpinBox;
             int top = int(spec.max > spec.min ? spec.max : 1000000);
             const double cap = StakeGames::casinoMaximum(m_casino, m_game, spec.key, values);
             if (cap >= 0.0)
                 top = std::min(top, int(cap)); // the casino's own limit (Shuffle chicken lanes)
+            if (spec.dropdown) {
+                // A drop-down list of every allowed value (steps: 1 .. the casino's maximum).
+                auto *combo = new QComboBox;
+                const int want = v.isDouble() ? int(std::llround(v.toDouble())) : int(spec.def.toDouble());
+                for (int n = int(spec.min); n <= top; ++n)
+                    combo->addItem(QString::number(n), n);
+                const int idx = combo->findData(std::clamp(want, int(spec.min), std::max(int(spec.min), top)));
+                combo->setCurrentIndex(idx >= 0 ? idx : 0);
+                combo->setMaxVisibleItems(12);
+                connect(combo, &QComboBox::currentIndexChanged, this, [this] { storeCurrent(); });
+                editor = combo;
+                break;
+            }
+            auto *spin = new QSpinBox;
             spin->setRange(int(spec.min), top);
             spin->setValue(v.isDouble() ? int(std::llround(v.toDouble())) : int(spec.def.toDouble()));
             spin->setKeyboardTracking(false);
@@ -436,6 +449,8 @@ QJsonValue GameParamsWidget::readEditor(const Field &field) const
     const ParamSpec &spec = field.spec;
     switch (spec.type) {
     case ParamType::Int:
+        if (const auto *combo = qobject_cast<const QComboBox *>(field.editor))
+            return combo->currentData().toInt(); // drop-down Int
         return static_cast<QSpinBox *>(field.editor)->value();
     case ParamType::Number:
         return static_cast<QDoubleSpinBox *>(field.editor)->value();
@@ -498,13 +513,29 @@ void GameParamsWidget::storeCurrent()
     // A casino limit that depends on another input (Shuffle chicken: lanes per difficulty).
     m_building = true; // a lowered maximum moves the value: no nested store
     for (const Field &f : std::as_const(m_fields)) {
-        auto *spin = qobject_cast<QSpinBox *>(f.editor);
-        if (!spin || f.spec.type != StakeGames::ParamType::Int)
+        if (f.spec.type != StakeGames::ParamType::Int)
             continue;
         const double cap = StakeGames::casinoMaximum(m_casino, m_game, f.spec.key, values);
         if (cap < 0.0)
             continue;
         const int top = std::min(int(f.spec.max > f.spec.min ? f.spec.max : 1000000), int(cap));
+        if (auto *combo = qobject_cast<QComboBox *>(f.editor)) {
+            // Drop-down Int: refill it with min .. the new maximum, keeping the value if it fits.
+            const int count = std::max(0, top - int(f.spec.min) + 1);
+            if (combo->count() != count) {
+                const int keep = std::min(combo->currentData().toInt(), top);
+                combo->clear();
+                for (int n = int(f.spec.min); n <= top; ++n)
+                    combo->addItem(QString::number(n), n);
+                const int idx = combo->findData(std::max(int(f.spec.min), keep));
+                combo->setCurrentIndex(idx >= 0 ? idx : 0);
+                values.insert(f.spec.key, combo->currentData().toInt());
+            }
+            continue;
+        }
+        auto *spin = qobject_cast<QSpinBox *>(f.editor);
+        if (!spin)
+            continue;
         if (spin->maximum() != top) {
             spin->setMaximum(top);
             values.insert(f.spec.key, spin->value());

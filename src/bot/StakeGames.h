@@ -19,6 +19,8 @@ namespace StakeGames
 // `casinoKey` is LiveSettings::nameOf() ("stake", "shuffle", ...). Stake has every game,
 // Paradice only dice, the other casinos dice and limbo.
 QList<Game> gamesForCasino(const QString &casinoKey);
+// The game's name as the casino calls it (Duel's Chicken is "Beef"); gameDisplayName() otherwise.
+QString gameLabel(const QString &casinoKey, Game game);
 bool casinoSupports(const QString &casinoKey, Game game);
 // Choices of a game input that a casino does not offer (Shuffle plinko: no "expert" risk).
 // The Manual / Auto Bet tabs leave them out while that casino is selected.
@@ -64,6 +66,9 @@ struct ParamSpec
     // its text color ("#rrggbb", empty = the theme's). Empty lists = the values as they are.
     QStringList choiceLabels;
     QStringList choiceColors;
+    // Int: a drop-down list of min .. max (the casino's own maximum when lower) instead of a
+    // spin box (steps of the road-crossing games).
+    bool dropdown = false;
 };
 
 // The Manual / Auto Bet tab inputs for `game`, as in the C# bot's game panels (empty for

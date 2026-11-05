@@ -501,6 +501,13 @@ ParamSpec spec(const QString &key, const QString &label, ParamType type, const Q
     return s;
 }
 
+// The same input as a drop-down list (ParamSpec::dropdown).
+ParamSpec dropdownSpec(ParamSpec s)
+{
+    s.dropdown = true;
+    return s;
+}
+
 QJsonArray ints(std::initializer_list<int> values)
 {
     QJsonArray a;
@@ -562,31 +569,39 @@ QList<Game> gamesForCasino(const QString &casinoKey)
     if (k == QLatin1String("shuffle"))
         return {Game::Dice, Game::Limbo, Game::Keno, Game::Mines, Game::Plinko, Game::Wheel,
                 Game::DragonTower, Game::Chicken, Game::Hilo, Game::Blackjack};
+    if (k == QLatin1String("duel"))
+        return {Game::Dice, Game::Limbo, Game::Keno, Game::Mines, Game::Plinko, Game::Chicken, Game::Hilo,
+                Game::Blackjack}; // Chicken = Duel's Beef (cross-road)
     if (k == QLatin1String("wolfbet"))
         return {Game::Dice, Game::Limbo, Game::Keno, Game::Plinko, Game::Hilo};
-    return {Game::Dice, Game::Limbo}; // Duel, Pasino, Tower, Winna
+    return {Game::Dice, Game::Limbo}; // Pasino, Tower, Winna
 }
 
 QStringList unsupportedChoices(const QString &casinoKey, Game game, const QString &key)
 {
     const QString k = casinoKey.trimmed().toLower();
-    if ((k == QLatin1String("shuffle") || k == QLatin1String("goated") || k == QLatin1String("wolfbet"))
+    if ((k == QLatin1String("shuffle") || k == QLatin1String("goated") || k == QLatin1String("wolfbet")
+         || k == QLatin1String("duel"))
         && game == Game::Plinko && key == QLatin1String("risk"))
         return {QStringLiteral("expert")}; // low / medium / high only
     if (k == QLatin1String("wolfbet") && game == Game::Keno && key == QLatin1String("risk"))
         return {QStringLiteral("classic")}; // low / medium / high only
+    // Road-crossing difficulty: Duel's Beef calls its top level "extreme", the others "expert".
+    if (game == Game::Chicken && key == QLatin1String("difficulty"))
+        return {k == QLatin1String("duel") ? QStringLiteral("expert") : QStringLiteral("extreme")};
     return {};
 }
 
 double casinoMaximum(const QString &casinoKey, Game game, const QString &key, const QJsonObject &values)
 {
-    if (casinoKey.trimmed().compare(QLatin1String("shuffle"), Qt::CaseInsensitive) == 0
+    if ((casinoKey.trimmed().compare(QLatin1String("shuffle"), Qt::CaseInsensitive) == 0
+         || casinoKey.trimmed().compare(QLatin1String("duel"), Qt::CaseInsensitive) == 0)
         && game == Game::Chicken && key == QLatin1String("steps")) {
-        // Shuffle's lanes per difficulty.
+        // Shuffle's lanes per difficulty (Duel's Beef: the same 19 / 17 / 15 / 10).
         const QString d = values.value(QStringLiteral("difficulty")).toString().toLower();
         if (d == QLatin1String("medium")) return 17.0;
         if (d == QLatin1String("hard")) return 15.0;
-        if (d == QLatin1String("expert")) return 10.0;
+        if (d == QLatin1String("expert") || d == QLatin1String("extreme")) return 10.0;
         return 19.0; // easy
     }
     if (game == Game::GoatRun && key == QLatin1String("steps")) {
@@ -598,6 +613,13 @@ double casinoMaximum(const QString &casinoKey, Game game, const QString &key, co
         return 24.0; // easy
     }
     return -1.0;
+}
+
+QString gameLabel(const QString &casinoKey, Game game)
+{
+    if (game == Game::Chicken && casinoKey.trimmed().compare(QLatin1String("duel"), Qt::CaseInsensitive) == 0)
+        return QStringLiteral("Beef");
+    return gameDisplayName(game);
 }
 
 bool casinoSupports(const QString &casinoKey, Game game)
@@ -711,12 +733,14 @@ QList<ParamSpec> paramSpecs(Game game)
         return {spec(QStringLiteral("moles"), QStringLiteral("Moles:"), T::Int, 3, {}, 1, 10),
                 spec(QStringLiteral("molePicks"), QStringLiteral("Picks (1-based):"), T::IntList, ints({1}),
                      {}, 0, 0, QStringLiteral("1 = the first hole (sent to Stake as 0)"))};
-    case Game::Chicken:
-        return {spec(QStringLiteral("difficulty"), QStringLiteral("Difficulty:"), T::Choice, QStringLiteral("easy"), kEasyToExpert),
-                spec(QStringLiteral("steps"), QStringLiteral("Steps:"), T::Int, 1, {}, 1, 20)};
+    case Game::Chicken: // "extreme" = Duel Beef's top level (shown there instead of "expert")
+        return {spec(QStringLiteral("difficulty"), QStringLiteral("Difficulty:"), T::Choice, QStringLiteral("easy"),
+                     {QStringLiteral("easy"), QStringLiteral("medium"), QStringLiteral("hard"),
+                      QStringLiteral("expert"), QStringLiteral("extreme")}),
+                dropdownSpec(spec(QStringLiteral("steps"), QStringLiteral("Steps:"), T::Int, 1, {}, 1, 20))};
     case Game::GoatRun: // lanes to hop: easy 24, medium 22, hard 20, expert 15 at most
         return {spec(QStringLiteral("difficulty"), QStringLiteral("Difficulty:"), T::Choice, QStringLiteral("easy"), kEasyToExpert),
-                spec(QStringLiteral("steps"), QStringLiteral("Steps:"), T::Int, 1, {}, 1, 24)};
+                dropdownSpec(spec(QStringLiteral("steps"), QStringLiteral("Steps:"), T::Int, 1, {}, 1, 24))};
     case Game::Drill:
         return {spec(QStringLiteral("target"), QStringLiteral("Target Multi:"), T::Number, 1.01, {}, 1.01, 999),
                 spec(QStringLiteral("pick"), QStringLiteral("Pick:"), T::DrillPick, 1, {}, 1, 3,
@@ -1209,15 +1233,25 @@ bool buildBetRequest(Game game, double amount, const QString &currency, const QJ
         ep = QStringLiteral("_api/casino/bars/bet");
         break;
     }
-    case Game::Chicken:
-        b.insert(QStringLiteral("difficulty"), toText(val("difficulty"), QStringLiteral("medium")));
+    case Game::Chicken: {
+        // "extreme" (Duel Beef's name) and "expert" are the same level: sent as "expert" (Duel's
+        // request maps both to its 4).
+        QString d = toText(val("difficulty"), QStringLiteral("medium")).toLower();
+        if (d == QLatin1String("extreme"))
+            d = QStringLiteral("expert");
+        b.insert(QStringLiteral("difficulty"), d);
         b.insert(QStringLiteral("round"), toInt(val("steps"), 1));
         ep = QStringLiteral("_api/casino/chicken/bet");
         break;
-    case Game::GoatRun: // Goated only (StakeClient::placeGoatedGoatRun reads difficulty / round)
-        b.insert(QStringLiteral("difficulty"), toText(val("difficulty"), QStringLiteral("easy")));
+    }
+    case Game::GoatRun: { // Goated only (StakeClient::placeGoatedGoatRun reads difficulty / round)
+        QString d = toText(val("difficulty"), QStringLiteral("easy")).toLower();
+        if (d == QLatin1String("extreme"))
+            d = QStringLiteral("expert");
+        b.insert(QStringLiteral("difficulty"), d);
         b.insert(QStringLiteral("round"), toInt(val("steps"), 1));
         break;
+    }
     case Game::Tarot:
         b.insert(QStringLiteral("difficulty"), toText(val("difficulty"), QStringLiteral("medium")));
         ep = QStringLiteral("_api/casino/tarot/bet");

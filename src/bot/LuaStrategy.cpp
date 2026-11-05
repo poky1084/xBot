@@ -846,7 +846,7 @@ LuaStrategy::Status LuaStrategy::init(const QString &source, double balance,
     // optionally bethigh, default = roll under) or target (limbo) must be set by
     // the script itself.
     {
-        const QByteArray g = gameName(runCfg.game).toUtf8();
+        const QByteArray g = scriptGameName(runCfg.game).toUtf8();
         lua_pushstring(m_L, g.constData());
         lua_setglobal(m_L, "game");
     }
@@ -1013,12 +1013,12 @@ bool LuaStrategy::readOutputs(double &nextBet, BotConfig &runCfg)
         const QString g = QString::fromUtf8(lua_tostring(m_L, -1)).trimmed().toLower();
         Game parsed = Game::Dice;
         if (gameFromName(g, &parsed)) {
-            runCfg.game = parsed;
+            // "cross" keeps the casino's own road-crossing game (Goat Run on Goated).
+            if (!(isCrossGame(parsed) && isCrossGame(runCfg.game)))
+                runCfg.game = parsed;
         } else {
             lua_pop(m_L, 1);
-            QStringList names;
-            for (Game known : allGames())
-                names << gameName(known);
+            const QStringList names = scriptGameNames();
             m_error = QStringLiteral("game \"%1\" is not supported (crash and slide are not available); "
                                      "use one of: %2").arg(g, names.join(QStringLiteral(", ")));
             return false;
@@ -1085,7 +1085,7 @@ bool LuaStrategy::readOutputs(double &nextBet, BotConfig &runCfg)
                                                                        readJson("nextbet"), hasRound);
         if (!missing.isEmpty()) {
             m_error = QStringLiteral("%1 needs these variables set in the script: %2")
-                          .arg(gameName(runCfg.game), missing.join(QStringLiteral(", ")));
+                          .arg(scriptGameName(runCfg.game), missing.join(QStringLiteral(", ")));
             return false;
         }
         double total = 0.0;

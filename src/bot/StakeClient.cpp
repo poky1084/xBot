@@ -460,6 +460,233 @@ QJsonObject goatedHiloAsStake(const QJsonObject &bet, QString *lastRank)
     return out;
 }
 
+// ---------------------------------------------------------------- Duel blackjack helpers
+// A Duel blackjack bet ({"id","nonce","status" (1 = open, 5 = settled),"amount_currency" (the
+// stake of one hand),"amount_won" (payout, stake included),"blackjack":{"player":{"hands":[{"cards":
+// [{"rank","suit","face_down"}],"value","result","has_doubled"}],"has_split","active_hand_index"},
+// "dealer":{"hands":[...]},"available_actions":["hit","stand","double","split"],
+// "insurance_available","insurance_taken"}}) as a Stake blackjack bet. Duel sends no per-hand
+// action history, so Stake's hand actions (hit / double / stand / split / insurance) are rebuilt
+// from the cards and flags.
+QJsonObject duelBlackjackAsStake(const QJsonObject &bet, bool insuranceDecidedHere = false)
+{
+    const QJsonObject bj = bet.value(QStringLiteral("blackjack")).toObject();
+    const QJsonObject playerSide = bj.value(QStringLiteral("player")).toObject();
+    const QJsonArray hands = playerSide.value(QStringLiteral("hands")).toArray();
+    const QJsonArray dealerHands = bj.value(QStringLiteral("dealer")).toObject().value(QStringLiteral("hands")).toArray();
+    const QJsonArray available = bj.value(QStringLiteral("available_actions")).toArray();
+    const bool insuranceAvailable = bj.value(QStringLiteral("insurance_available")).toBool(false);
+    // 1 = open, 5 = settled (won or lost). A hand waiting for the insurance choice has another
+    // status, so a hand that still lists moves counts as open too.
+    const int status = int(numberOf(bet.value(QStringLiteral("status"))));
+    const bool active = status == 1 || (status != 5 && !available.isEmpty());
+    // Duel's names -> Stake's ("no_insurance" -> "noInsurance").
+    const auto stakeName = [](const QString &a) {
+        const QString l = a.trimmed().toLower();
+        if (l == QLatin1String("no_insurance") || l == QLatin1String("noinsurance"))
+            return QStringLiteral("noInsurance");
+        return shuffleToStakeAction(l);
+    };
+    bool insuranceListed = false;
+    for (const QJsonValue &a : available) {
+        const QString n = stakeName(a.toString());
+        insuranceListed = insuranceListed || n == QLatin1String("insurance") || n == QLatin1String("noInsurance");
+    }
+    const bool split = playerSide.value(QStringLiteral("has_split")).toBool(false) || hands.size() > 1;
+    const int activeIndex = int(numberOf(playerSide.value(QStringLiteral("active_hand_index"))));
+
+    // Face-up cards only (the hole card comes as {"rank":"","face_down":true}).
+    const auto cardsOf = [](const QJsonObject &hand) {
+        QJsonArray out;
+        for (const QJsonValue &v : hand.value(QStringLiteral("cards")).toArray()) {
+            const QJsonObject c = v.toObject();
+            if (c.value(QStringLiteral("face_down")).toBool(false)
+                || c.value(QStringLiteral("rank")).toString().isEmpty())
+                continue;
+            QJsonObject card;
+            card.insert(QStringLiteral("rank"), c.value(QStringLiteral("rank")).toString().toUpper());
+            card.insert(QStringLiteral("suit"), c.value(QStringLiteral("suit")).toString().toUpper());
+            out.append(card);
+        }
+        return out;
+    };
+
+    const QJsonArray dealerCards = dealerHands.isEmpty() ? QJsonArray() : cardsOf(dealerHands.first().toObject());
+    const bool dealerAce = !dealerCards.isEmpty()
+                           && dealerCards.first().toObject().value(QStringLiteral("rank")).toString() == QLatin1String("A");
+    // Insurance: taken -> "insurance"; declined (here, or a move was already made after the deal)
+    // or not offered -> "noInsurance"; offered and still open -> no marker, so the buttons /
+    // the built-in play decide it first.
+    const bool taken = bj.value(QStringLiteral("insurance_taken")).toBool(false);
+    bool movedOn = hands.size() > 1;
+    for (const QJsonValue &h : hands)
+        movedOn = movedOn || h.toObject().value(QStringLiteral("cards")).toArray().size() > 2;
+    // Open while Duel lists "insurance" / "no_insurance" as the moves; after the choice it lists
+    // hit / stand / double again (insurance_available stays true either way).
+    const bool decided = taken || insuranceDecidedHere || movedOn
+                         || !bj.value(QStringLiteral("insurance_result")).isNull()
+                         || bj.value(QStringLiteral("insurance_expected_value_has_been_added")).toBool(false);
+    const bool insuranceOpen = active && (insuranceListed || (insuranceAvailable && !decided && available.isEmpty()));
+    QStringList insurance;
+    if (taken)
+        insurance << QStringLiteral("insurance");
+    else if (dealerAce && !insuranceOpen)
+        insurance << QStringLiteral("noInsurance"); // not offered / declined
+
+    QJsonArray player;
+    int units = 0; // stakes on the table: one per hand, two for a doubled hand
+    for (int i = 0; i < hands.size(); ++i) {
+        const QJsonObject h = hands.at(i).toObject();
+        const QJsonArray cards = cardsOf(h);
+        const bool doubled = h.value(QStringLiteral("has_doubled")).toBool(false);
+        units += doubled ? 2 : 1;
+        QJsonArray actions;
+        const int extra = std::max(0, int(cards.size()) - 2);
+        for (int k = 0; k < extra; ++k)
+            actions.append(doubled && k == extra - 1 ? QStringLiteral("double") : QStringLiteral("hit"));
+        // A hand that is over without bust / 21 / double was stood on.
+        const bool over = !active || i < activeIndex || !h.value(QStringLiteral("result")).isNull();
+        const int value = blackjackValue(cards);
+        if (over && !doubled && value < 21)
+            actions.append(QStringLiteral("stand"));
+        QStringList extraActions;
+        if (i == 0)
+            extraActions << insurance;
+        if (split)
+            extraActions << QStringLiteral("split");
+        player.append(stakeHandOf(cards, actions, split, extraActions));
+    }
+
+    QJsonArray dealerActions;
+    dealerActions.append(QStringLiteral("deal"));
+    if (!active && dealerCards.size() > 1) {
+        dealerActions.append(QStringLiteral("reveal"));
+        for (int i = 2; i < dealerCards.size(); ++i)
+            dealerActions.append(QStringLiteral("hit"));
+    }
+    QJsonObject dealer = stakeHandOf(dealerCards, {}, true);
+    dealer.insert(QStringLiteral("actions"), dealerActions);
+
+    QJsonObject state;
+    state.insert(QStringLiteral("player"), player);
+    state.insert(QStringLiteral("dealer"), QJsonArray{dealer});
+
+    QJsonArray allowed;
+    for (const QJsonValue &a : available) {
+        const QString n = stakeName(a.toString());
+        if (!allowed.contains(n))
+            allowed.append(n);
+    }
+    if (insuranceOpen) {
+        if (!allowed.contains(QStringLiteral("insurance")))
+            allowed.append(QStringLiteral("insurance"));
+        if (!allowed.contains(QStringLiteral("noInsurance")))
+            allowed.append(QStringLiteral("noInsurance"));
+    }
+
+    // The whole stake (split / doubled hands and an insurance of half a bet included) and the
+    // payout, stake included.
+    const double perHand = numberOf(bet.value(QStringLiteral("amount_currency")));
+    const double amount = perHand * std::max(1, units) + (taken ? perHand / 2.0 : 0.0);
+    const double payout = active ? 0.0 : numberOf(bet.value(QStringLiteral("amount_won")));
+    const QJsonValue idv = bet.value(QStringLiteral("id"));
+
+    QJsonObject out;
+    out.insert(QStringLiteral("id"), idv.isDouble() ? QString::number(qint64(idv.toDouble())) : idv.toString());
+    out.insert(QStringLiteral("amount"), amount);
+    out.insert(QStringLiteral("payout"), payout);
+    out.insert(QStringLiteral("payoutMultiplier"), active || !(amount > 0.0) ? 0.0 : payout / amount);
+    out.insert(QStringLiteral("active"), active);
+    out.insert(QStringLiteral("game"), QStringLiteral("blackjack"));
+    out.insert(QStringLiteral("state"), state);
+    if (active)
+        out.insert(QStringLiteral("allowedActions"), allowed);
+    if (bet.contains(QStringLiteral("nonce")))
+        out.insert(QStringLiteral("nonce"), bet.value(QStringLiteral("nonce")));
+    return out;
+}
+
+// ---------------------------------------------------------------- Duel hilo helpers
+// Duel's guesses <-> Stake's.
+QString duelHiloGuessAsStake(const QString &g)
+{
+    if (g == QLatin1String("higher_equal")) return QStringLiteral("higherEqual");
+    if (g == QLatin1String("lower_equal")) return QStringLiteral("lowerEqual");
+    if (g == QLatin1String("same")) return QStringLiteral("equal");
+    return g; // higher, lower, skip
+}
+
+// A Duel hilo round ({"round_id","nonce","status" (0 = open, 3 = cashed out),"actions":[{"sequence_index",
+// "card":"KS","guess" (null for the start card),"multiplier_after"}],"amount_currency" (the stake),
+// "amount_won" (payout, stake included),"is_win"}) as a Stake hilo bet.
+QJsonObject duelHiloAsStake(const QJsonObject &round, int *lastSeq)
+{
+    const bool active = int(numberOf(round.value(QStringLiteral("status")))) == 0;
+    const QJsonArray actions = round.value(QStringLiteral("actions")).toArray();
+    const double amount = numberOf(round.value(QStringLiteral("amount_currency")));
+    const bool won = round.value(QStringLiteral("is_win")).toBool(false);
+    const double payout = active ? 0.0 : numberOf(round.value(QStringLiteral("amount_won")));
+    const bool lost = !active && !(payout > 0.0) && !won;
+
+    QJsonObject startCard;
+    QJsonArray rounds;
+    int seq = 0;
+    int lastGuess = -1; // index in `rounds` of the last real guess (not a skip)
+    for (const QJsonValue &v : actions) {
+        const QJsonObject a = v.toObject();
+        seq = std::max(seq, int(numberOf(a.value(QStringLiteral("sequence_index")))));
+        const QJsonObject card = goatedCard(a.value(QStringLiteral("card")).toString());
+        if (a.value(QStringLiteral("guess")).isNull() || a.value(QStringLiteral("guess")).isUndefined()) {
+            if (startCard.isEmpty())
+                startCard = card;
+            continue;
+        }
+        const QString guess = duelHiloGuessAsStake(a.value(QStringLiteral("guess")).toString().toLower());
+        QJsonObject r;
+        r.insert(QStringLiteral("card"), card);
+        r.insert(QStringLiteral("guess"), guess);
+        r.insert(QStringLiteral("payoutMultiplier"), numberOf(a.value(QStringLiteral("multiplier_after"))));
+        if (guess != QLatin1String("skip"))
+            lastGuess = int(rounds.size());
+        rounds.append(r);
+    }
+    if (lost && lastGuess >= 0) {
+        // The card that lost the round.
+        QJsonObject r = rounds.at(lastGuess).toObject();
+        r.insert(QStringLiteral("payoutMultiplier"), 0.0);
+        rounds[lastGuess] = r;
+    }
+
+    QJsonObject state;
+    state.insert(QStringLiteral("startCard"), startCard);
+    state.insert(QStringLiteral("rounds"), rounds);
+    QJsonObject out;
+    const QJsonValue idv = round.value(QStringLiteral("round_id"));
+    out.insert(QStringLiteral("id"), idv.isDouble() ? QString::number(qint64(idv.toDouble())) : idv.toString());
+    out.insert(QStringLiteral("amount"), amount);
+    out.insert(QStringLiteral("payout"), payout);
+    out.insert(QStringLiteral("payoutMultiplier"), active || !(amount > 0.0) ? 0.0 : payout / amount);
+    out.insert(QStringLiteral("active"), active);
+    out.insert(QStringLiteral("game"), QStringLiteral("hilo"));
+    out.insert(QStringLiteral("state"), state);
+    if (round.contains(QStringLiteral("nonce")))
+        out.insert(QStringLiteral("nonce"), round.value(QStringLiteral("nonce")));
+    if (lastSeq)
+        *lastSeq = seq;
+    return out;
+}
+
+// The round object of a Duel hilo answer: data.round, round, data or the answer itself.
+QJsonObject duelHiloRoundOf(const QJsonObject &json)
+{
+    const QJsonObject data = json.value(QStringLiteral("data")).toObject();
+    for (const QJsonObject &o : {data.value(QStringLiteral("round")).toObject(),
+                                 json.value(QStringLiteral("round")).toObject(), data, json})
+        if (o.contains(QStringLiteral("round_id")) && o.value(QStringLiteral("actions")).isArray())
+            return o;
+    return {};
+}
+
 // ---------------------------------------------------------------- Wolfbet hilo helpers
 // Wolfbet numbers its cards 0-51: suit * 13 + rank, suits diamonds, hearts, spades, clubs
 // (0-3) and ranks A, 2, ... 10, J, Q, K (0-12). 4 = 5 of diamonds, 23 = J of hearts, 27 = 2 of
@@ -1548,6 +1775,26 @@ void StakeClient::placeGame(const GameBetRequest &request)
         placeWolfbetHilo(request);
         return;
     }
+    if (isDuel() && request.game == Game::Blackjack) {
+        placeDuelBlackjack(request);
+        return;
+    }
+    if (isDuel() && request.game == Game::Hilo) {
+        placeDuelHilo(request);
+        return;
+    }
+    if (isDuel() && request.game == Game::Keno) {
+        placeDuelKeno(request);
+        return;
+    }
+    if (isDuel() && request.game == Game::Plinko) {
+        placeDuelPlinko(request);
+        return;
+    }
+    if (isDuel() && request.game == Game::Mines) {
+        placeDuelMines(request);
+        return;
+    }
     if (isWolfbet() && request.game == Game::Keno) {
         placeWolfbetKeno(request);
         return;
@@ -1580,8 +1827,24 @@ void StakeClient::placeGame(const GameBetRequest &request)
         placeGoatedTower(request);
         return;
     }
-    if (isGoated() && request.game == Game::GoatRun) {
-        placeGoatedGoatRun(request);
+    // "cross" (Chicken / Goat Run / Beef): every casino plays its own road-crossing game with the
+    // same difficulty / steps - Goat Run on Goated, Beef on Duel, Chicken elsewhere.
+    if (isGoated() && (request.game == Game::GoatRun || request.game == Game::Chicken)) {
+        GameBetRequest goat = request;
+        goat.game = Game::GoatRun;
+        placeGoatedGoatRun(goat);
+        return;
+    }
+    if (isDuel() && (request.game == Game::Chicken || request.game == Game::GoatRun)) {
+        GameBetRequest cross = request;
+        cross.game = Game::Chicken;
+        placeDuelCross(cross);
+        return;
+    }
+    if (request.game == Game::GoatRun && (isShuffle() || isStake())) {
+        GameBetRequest chicken = request;
+        chicken.game = Game::Chicken;
+        placeGame(chicken);
         return;
     }
     if (request.game == Game::GoatRun) {
@@ -1661,6 +1924,14 @@ void StakeClient::sendGameAction(Game game, const QString &endpoint, const QJson
     }
     if (isWolfbet() && game == Game::Hilo) {
         sendWolfbetHilo(endpoint, body, params, requestedAmount);
+        return;
+    }
+    if (isDuel() && game == Game::Blackjack) {
+        sendDuelBlackjack(body.value(QStringLiteral("action")).toString(), params, requestedAmount);
+        return;
+    }
+    if (isDuel() && game == Game::Hilo) {
+        sendDuelHilo(endpoint, body, params, requestedAmount);
         return;
     }
     postGameBet(game, endpoint, body, params, requestedAmount, false);
@@ -1749,6 +2020,20 @@ void StakeClient::fetchActiveGame(Game game, const QJsonObject &params, double r
     }
     if (isWolfbet() && game == Game::Hilo) {
         fetchWolfbetHilo(params, requestedAmount);
+        return;
+    }
+    if (isDuel() && game == Game::Blackjack) {
+        fetchDuelBlackjack(params, requestedAmount);
+        return;
+    }
+    if (isDuel() && game == Game::Hilo) {
+        fetchDuelHilo(params, requestedAmount);
+        return;
+    }
+    if (isDuel()) {
+        LiveBetResult r = failed(tr("%1: no open game found on Duel.").arg(gameDisplayName(game)),
+                                 QStringLiteral("existingGame"), false, false);
+        QTimer::singleShot(0, this, [this, r] { emit diceFinished(r); });
         return;
     }
     if (isWolfbet()) {
@@ -5569,6 +5854,1021 @@ void StakeClient::placeDuelLimbo(const LimboBetRequest &request)
     fields.insert(QStringLiteral("currency"), currencyId);
     fields.insert(QStringLiteral("instant"), false);
     sendDuelBet(QStringLiteral("api/v2/limbo/bet"), fields, request.amount, true, target, false, false);
+}
+
+namespace
+{
+bool isDuelTokenError(int status, const QString &text);
+}
+
+// ---------------------------------------------------------------- Duel blackjack
+// New hand: POST https://duel.com/api/v2/blackjack
+//   {"amount":"0.011","balance_type":106 (Duel's currency number),"deal_speed_level":null,
+//    "side_bets":[] (always empty: no side bets),"security_token":"<token>"}
+//   -> {"success":true,"data":{<bet>}}
+// Insurance: POST https://duel.com/api/v2/blackjack/<id>/insurance {"accept":true|false,"deal_speed_level":null}
+// Moves: POST https://duel.com/api/v2/blackjack/<data.id>/hit | stand | double | split
+//   {"active_hand_index":0,"active_hand_size":2 (cards in that hand),"active_hand_value":12,
+//    "hand_amount":1 (hands on the table),"deal_speed_level":null}
+//   -> {"success":true,"data":{"blackjackNext":{<bet>},"error":null}}
+// Open hand: GET https://duel.com/api/v2/blackjack -> <bet> (also accepted inside "data").
+// <bet>: see duelBlackjackAsStake().
+void StakeClient::placeDuelBlackjack(const GameBetRequest &request, bool tokenRetried)
+{
+    const auto failNow = [this](const QString &msg) {
+        const LiveBetResult r = failed(msg);
+        QTimer::singleShot(0, this, [this, r] { emit diceFinished(r); });
+    };
+    auto *duel = qobject_cast<DuelTransport *>(m_transport);
+    if (!duel) {
+        failNow(tr("No transport configured."));
+        return;
+    }
+    const int currencyId = DuelTransport::currencyId(m_currency);
+    if (currencyId == 0) {
+        failNow(tr("Duel: unknown currency \"%1\" (use one of: %2).")
+                    .arg(m_currency, DuelTransport::currencyCodes().join(QStringLiteral(", "))));
+        return;
+    }
+    QString amountText = QString::number(std::max(0.0, request.amount), 'f', 8);
+    while (amountText.contains(QLatin1Char('.')) && amountText.endsWith(QLatin1Char('0')))
+        amountText.chop(1);
+    if (amountText.endsWith(QLatin1Char('.')))
+        amountText.chop(1);
+
+    QPointer<DuelTransport> guard(duel);
+    duel->withSecurityToken([this, guard, request, amountText, currencyId,
+                             tokenRetried](const QString &token, const QString &tokenError, int tokenStatus) {
+        if (!guard || guard.data() != m_transport) {
+            emit diceFinished(failed(tr("Duel: the casino was switched before the bet was sent.")));
+            return;
+        }
+        if (token.isEmpty()) {
+            const bool retry = tokenStatus == 0 || tokenStatus == 429 || tokenStatus >= 500
+                               || isRetryable({}, tokenError);
+            if (tokenStatus == 0)
+                emit sessionLost(tokenError);
+            emit diceFinished(failed(tr("Duel: could not get a security token: %1").arg(tokenError),
+                                     {}, retry, false));
+            return;
+        }
+        QJsonObject body;
+        body.insert(QStringLiteral("amount"), amountText);
+        body.insert(QStringLiteral("balance_type"), currencyId);
+        body.insert(QStringLiteral("deal_speed_level"), QJsonValue(QJsonValue::Null));
+        body.insert(QStringLiteral("side_bets"), QJsonArray());
+        body.insert(QStringLiteral("security_token"), token);
+        guard->post(QStringLiteral("api/v2/blackjack"), body,
+                    [this, guard, request, tokenRetried](const TransportReply &reply) {
+            // Security token expired / rejected: nothing was dealt. Same hand with a new token.
+            const QString text = reply.ok ? goatedErrorText(reply.json) : reply.error;
+            const bool dealt = reply.ok && reply.json.value(QStringLiteral("data")).isObject();
+            if (!dealt && !tokenRetried && guard && isDuelTokenError(reply.status, text)) {
+                guard->invalidateSecurityToken();
+                placeDuelBlackjack(request, true);
+                return;
+            }
+            handleDuelBlackjackReply(reply, request.params, request.amount, true);
+        });
+    });
+}
+
+void StakeClient::sendDuelBlackjack(const QString &stakeAction, const QJsonObject &params, double requestedAmount)
+{
+    const auto failNow = [this](const QString &msg) {
+        const LiveBetResult r = failed(msg);
+        QTimer::singleShot(0, this, [this, r] { emit diceFinished(r); });
+    };
+    if ((stakeAction == QLatin1String("insurance") || stakeAction == QLatin1String("noInsurance"))
+        && m_duelBjId > 0) {
+        // POST api/v2/blackjack/<id>/insurance {"accept": true | false, "deal_speed_level": null}
+        QJsonObject body;
+        body.insert(QStringLiteral("accept"), stakeAction == QLatin1String("insurance"));
+        body.insert(QStringLiteral("deal_speed_level"), QJsonValue(QJsonValue::Null));
+        m_duelBjInsuranceDecidedId = m_duelBjId;
+        m_transport->post(QStringLiteral("api/v2/blackjack/%1/insurance").arg(m_duelBjId), body,
+                          [this, params, requestedAmount](const TransportReply &reply) {
+            handleDuelBlackjackReply(reply, params, requestedAmount, false);
+        });
+        return;
+    }
+    if (stakeAction != QLatin1String("hit") && stakeAction != QLatin1String("stand")
+        && stakeAction != QLatin1String("double") && stakeAction != QLatin1String("split")) {
+        failNow(tr("Duel blackjack: unknown action \"%1\".").arg(stakeAction));
+        return;
+    }
+    if (m_duelBjId <= 0) {
+        failNow(tr("Duel blackjack: no open hand."));
+        return;
+    }
+    // The hand the move is for, as the site sends it.
+    const QJsonObject playerSide = m_duelBjState.value(QStringLiteral("player")).toObject();
+    const QJsonArray hands = playerSide.value(QStringLiteral("hands")).toArray();
+    int index = int(numberOf(playerSide.value(QStringLiteral("active_hand_index"))));
+    if (index < 0 || index >= hands.size())
+        index = 0;
+    const QJsonObject hand = hands.isEmpty() ? QJsonObject() : hands.at(index).toObject();
+    QJsonObject body;
+    body.insert(QStringLiteral("active_hand_index"), index);
+    body.insert(QStringLiteral("active_hand_size"), int(hand.value(QStringLiteral("cards")).toArray().size()));
+    body.insert(QStringLiteral("active_hand_value"), int(numberOf(hand.value(QStringLiteral("value")))));
+    body.insert(QStringLiteral("hand_amount"), std::max(1, int(hands.size())));
+    body.insert(QStringLiteral("deal_speed_level"), QJsonValue(QJsonValue::Null));
+    m_transport->post(QStringLiteral("api/v2/blackjack/%1/%2").arg(m_duelBjId).arg(stakeAction), body,
+                      [this, params, requestedAmount](const TransportReply &reply) {
+        handleDuelBlackjackReply(reply, params, requestedAmount, false);
+    });
+}
+
+void StakeClient::fetchDuelBlackjack(const QJsonObject &params, double requestedAmount, const QString &startError)
+{
+    auto *duel = qobject_cast<DuelTransport *>(m_transport);
+    if (!duel) {
+        const LiveBetResult r = failed(tr("Blackjack: no open hand."), QStringLiteral("existingGame"), true, false);
+        QTimer::singleShot(0, this, [this, r] { emit diceFinished(r); });
+        return;
+    }
+    duel->get(QStringLiteral("api/v2/blackjack"), [this, params, requestedAmount, startError](const TransportReply &reply) {
+        handleDuelBlackjackReply(reply, params, requestedAmount, false, true, startError);
+    });
+}
+
+void StakeClient::handleDuelBlackjackReply(const TransportReply &reply, const QJsonObject &params,
+                                           double requestedAmount, bool firstRequest, bool activeQuery,
+                                           const QString &startError)
+{
+    const auto nothingOpen = [this, startError, &reply] {
+        m_duelBjId = 0;
+        m_duelBjState = QJsonObject();
+        if (!startError.isEmpty()) {
+            // The new hand was refused, but no open hand was found: report Duel's own message and
+            // the GET answer, and stop there (no endless new hand / open hand loop).
+            const QString got = reply.ok
+                ? QString::fromUtf8(QJsonDocument(reply.json).toJson(QJsonDocument::Compact)).left(600)
+                : tr("HTTP %1 %2").arg(reply.status).arg(reply.error);
+            emit diceFinished(failed(tr("Duel blackjack: %1 (open hand request answered: %2)").arg(startError, got)));
+            return;
+        }
+        // Same answer as Stake's active-bet fetch when nothing is open.
+        LiveBetResult r = failed(tr("Blackjack: no open hand."), QStringLiteral("existingGame"), true, false);
+        r.retryDelayMs = 500;
+        emit diceFinished(r);
+    };
+    if (activeQuery) {
+        // The bet at the top level (as captured) or inside "data"; nothing open: no bet / settled.
+        const QJsonObject &j = reply.json;
+        const QJsonObject open = j.value(QStringLiteral("blackjack")).isObject()
+                                     ? j : j.value(QStringLiteral("data")).toObject();
+        if (!reply.ok || !open.value(QStringLiteral("blackjack")).isObject()) {
+            nothingOpen();
+            return;
+        }
+        const qint64 openId = qint64(numberOf(open.value(QStringLiteral("id"))));
+        const QJsonObject bet = duelBlackjackAsStake(open, openId > 0 && openId == m_duelBjInsuranceDecidedId);
+        if (!bet.value(QStringLiteral("active")).toBool()) {
+            nothingOpen();
+            return;
+        }
+        LiveBetResult r = gameResult(Game::Blackjack, bet, params, requestedAmount);
+        r.active = true; // continue it with the next move
+        r.win = false;
+        m_duelBjId = qint64(numberOf(open.value(QStringLiteral("id"))));
+        m_duelBjState = open.value(QStringLiteral("blackjack")).toObject();
+        emit diceFinished(r);
+        return;
+    }
+    if (!reply.ok) {
+        const bool isTimeout = (reply.status == 0);
+        const bool unknown = (reply.status >= 500);
+        if (reply.status == 0)
+            emit sessionLost(reply.error);
+        emit diceFinished(failed(reply.error, {}, isTimeout, unknown));
+        return;
+    }
+    const QJsonObject &json = reply.json;
+    const QJsonObject data = json.value(QStringLiteral("data")).toObject();
+    // New hand: data is the bet; a move: data.blackjackNext.
+    const QJsonObject raw = data.value(QStringLiteral("blackjackNext")).isObject()
+                                ? data.value(QStringLiteral("blackjackNext")).toObject() : data;
+    const bool successFalse = json.contains(QStringLiteral("success"))
+                              && !json.value(QStringLiteral("success")).toBool();
+    if (successFalse || reply.status >= 400 || !raw.value(QStringLiteral("blackjack")).isObject()) {
+        QString errText = goatedErrorText(json);
+        const QJsonValue dataError = data.value(QStringLiteral("error"));
+        if (errText.isEmpty() && dataError.isString())
+            errText = dataError.toString();
+        else if (errText.isEmpty() && dataError.isObject())
+            errText = dataError.toObject().value(QStringLiteral("message")).toString();
+        if (errText.isEmpty() && (successFalse || reply.status >= 400))
+            errText = tr("Duel blackjack request rejected (HTTP %1).").arg(reply.status);
+        if (!errText.isEmpty()) {
+            if (firstRequest && (containsCI(errText, "active") || containsCI(errText, "already")
+                                 || containsCI(errText, "progress") || containsCI(errText, "unfinished")
+                                 || containsCI(errText, "existing") || containsCI(errText, "ongoing"))) {
+                // A hand is still open (an earlier run, the website): load it to finish it first.
+                fetchDuelBlackjack(params, requestedAmount, errText);
+                return;
+            }
+            LiveBetResult r = failed(errText, {}, isRetryable({}, errText), false);
+            r.retryDelayMs = fastRetryDelayMs({}, errText);
+            emit diceFinished(r);
+            return;
+        }
+        const QString text = QString::fromUtf8(QJsonDocument(json).toJson(QJsonDocument::Compact)).left(400);
+        emit diceFinished(failed(tr("Unexpected Duel blackjack response: %1").arg(text), {}, false, true));
+        return;
+    }
+    const qint64 rawId = qint64(numberOf(raw.value(QStringLiteral("id"))));
+    const QJsonObject bet = duelBlackjackAsStake(raw, rawId > 0 && rawId == m_duelBjInsuranceDecidedId);
+    const LiveBetResult r = gameResult(Game::Blackjack, bet, params, requestedAmount);
+    if (r.active) {
+        m_duelBjId = qint64(numberOf(raw.value(QStringLiteral("id"))));
+        m_duelBjState = raw.value(QStringLiteral("blackjack")).toObject();
+    } else {
+        m_duelBjId = 0;
+        m_duelBjState = QJsonObject();
+    }
+    emit diceFinished(r);
+}
+
+// ---------------------------------------------------------------- Duel keno
+// POST https://duel.com/api/v2/keno/bet
+//   {"amount":"0","currency":"106" (Duel's currency number, as text),"security_token":"<token>",
+//    "selected_positions":[29,1,27,...] (1-40),"difficulty":1 (1 classic, 2 low, 3 medium, 4 high),
+//    "reveal_speed_level":null}
+// Answer: {"success":true,"data":{"id","status":3,"amount_currency" (stake),"amount_won" (payout),
+//   "selected_positions","multiplier" (payout multiplier),"difficulty_level","drawn_numbers":[...] (1-40)}}
+void StakeClient::placeDuelKeno(const GameBetRequest &request, bool tokenRetried)
+{
+    const auto failNow = [this](const QString &msg) {
+        const LiveBetResult r = failed(msg);
+        QTimer::singleShot(0, this, [this, r] { emit diceFinished(r); });
+    };
+    auto *duel = qobject_cast<DuelTransport *>(m_transport);
+    if (!duel) {
+        failNow(tr("No transport configured."));
+        return;
+    }
+    const int currencyId = DuelTransport::currencyId(m_currency);
+    if (currencyId == 0) {
+        failNow(tr("Duel: unknown currency \"%1\" (use one of: %2).")
+                    .arg(m_currency, DuelTransport::currencyCodes().join(QStringLiteral(", "))));
+        return;
+    }
+    QString endpoint;
+    QJsonObject stakeBody;
+    QString err;
+    if (!StakeGames::buildBetRequest(Game::Keno, request.amount, m_currency, request.params,
+                                     &endpoint, &stakeBody, &err)) {
+        failNow(err);
+        return;
+    }
+    static const QMap<QString, int> difficulties = {{QStringLiteral("classic"), 1}, {QStringLiteral("low"), 2},
+                                                    {QStringLiteral("medium"), 3}, {QStringLiteral("high"), 4}};
+    const QString risk = stakeBody.value(QStringLiteral("risk")).toString().toLower();
+    const int difficulty = difficulties.value(risk, 0);
+    if (difficulty == 0) {
+        failNow(tr("Duel keno: unknown risk \"%1\" (classic, low, medium or high).").arg(risk));
+        return;
+    }
+    QJsonArray positions; // Stake's 0-based numbers -> the board's 1-40
+    for (const QJsonValue &n : stakeBody.value(QStringLiteral("numbers")).toArray())
+        positions.append(n.toInt() + 1);
+    QString amountText = QString::number(std::max(0.0, request.amount), 'f', 8);
+    while (amountText.contains(QLatin1Char('.')) && amountText.endsWith(QLatin1Char('0')))
+        amountText.chop(1);
+    if (amountText.endsWith(QLatin1Char('.')))
+        amountText.chop(1);
+
+    QPointer<DuelTransport> guard(duel);
+    duel->withSecurityToken([this, guard, request, amountText, currencyId, positions, difficulty,
+                             tokenRetried](const QString &token, const QString &tokenError, int tokenStatus) {
+        if (!guard || guard.data() != m_transport) {
+            emit diceFinished(failed(tr("Duel: the casino was switched before the bet was sent.")));
+            return;
+        }
+        if (token.isEmpty()) {
+            const bool retry = tokenStatus == 0 || tokenStatus == 429 || tokenStatus >= 500
+                               || isRetryable({}, tokenError);
+            if (tokenStatus == 0)
+                emit sessionLost(tokenError);
+            emit diceFinished(failed(tr("Duel: could not get a security token: %1").arg(tokenError),
+                                     {}, retry, false));
+            return;
+        }
+        QJsonObject body;
+        body.insert(QStringLiteral("amount"), amountText);
+        body.insert(QStringLiteral("currency"), QString::number(currencyId)); // "106", as text
+        body.insert(QStringLiteral("security_token"), token);
+        body.insert(QStringLiteral("selected_positions"), positions);
+        body.insert(QStringLiteral("difficulty"), difficulty);
+        body.insert(QStringLiteral("reveal_speed_level"), QJsonValue(QJsonValue::Null));
+        guard->post(QStringLiteral("api/v2/keno/bet"), body,
+                    [this, guard, request, tokenRetried](const TransportReply &reply) {
+            const QJsonObject data = reply.json.value(QStringLiteral("data")).toObject();
+            const bool placed = reply.ok && data.value(QStringLiteral("drawn_numbers")).isArray();
+            const QString text = reply.ok ? goatedErrorText(reply.json) : reply.error;
+            if (!placed && !tokenRetried && guard && isDuelTokenError(reply.status, text)) {
+                guard->invalidateSecurityToken();
+                placeDuelKeno(request, true);
+                return;
+            }
+            if (!reply.ok) {
+                const bool isTimeout = (reply.status == 0);
+                const bool unknown = (reply.status >= 500);
+                if (reply.status == 0)
+                    emit sessionLost(reply.error);
+                emit diceFinished(failed(reply.error, {}, isTimeout, unknown));
+                return;
+            }
+            if (!placed) {
+                QString errText = text;
+                if (errText.isEmpty() && reply.status >= 400)
+                    errText = tr("Duel keno bet rejected (HTTP %1).").arg(reply.status);
+                if (!errText.isEmpty()) {
+                    LiveBetResult r = failed(errText, {}, isRetryable({}, errText), false);
+                    r.retryDelayMs = fastRetryDelayMs({}, errText);
+                    emit diceFinished(r);
+                    return;
+                }
+                const QString raw = QString::fromUtf8(QJsonDocument(reply.json).toJson(QJsonDocument::Compact)).left(400);
+                emit diceFinished(failed(tr("Unexpected Duel keno response: %1").arg(raw), {}, false, true));
+                return;
+            }
+            // Stake's keno shape (0-based numbers): state {risk, selectedNumbers, drawnNumbers}.
+            const auto zeroBased = [](const QJsonValue &v) {
+                QJsonArray out;
+                for (const QJsonValue &n : v.toArray())
+                    out.append(int(numberOf(n)) - 1);
+                return out;
+            };
+            static const char *risks[] = {"", "classic", "low", "medium", "high"};
+            const int level = int(numberOf(data.value(QStringLiteral("difficulty_level"))));
+            const double amount = data.contains(QStringLiteral("amount_currency"))
+                                      ? numberOf(data.value(QStringLiteral("amount_currency"))) : request.amount;
+            const double mult = numberOf(data.value(QStringLiteral("multiplier")));
+            double payout = amount * mult;
+            const double won = numberOf(data.value(QStringLiteral("amount_won")));
+            if (won > 0.0)
+                payout = won; // the server's payout (stake included) when it is there
+            QJsonObject state;
+            state.insert(QStringLiteral("risk"), level >= 1 && level <= 4 ? QString::fromLatin1(risks[level])
+                                                                          : QString());
+            state.insert(QStringLiteral("selectedNumbers"), zeroBased(data.value(QStringLiteral("selected_positions"))));
+            state.insert(QStringLiteral("drawnNumbers"), zeroBased(data.value(QStringLiteral("drawn_numbers"))));
+            const QJsonValue idv = data.value(QStringLiteral("id"));
+            QJsonObject bet;
+            bet.insert(QStringLiteral("id"), idv.isDouble() ? QString::number(qint64(idv.toDouble())) : idv.toString());
+            bet.insert(QStringLiteral("amount"), amount);
+            bet.insert(QStringLiteral("payout"), payout);
+            bet.insert(QStringLiteral("payoutMultiplier"), mult);
+            bet.insert(QStringLiteral("active"), false);
+            bet.insert(QStringLiteral("game"), QStringLiteral("keno"));
+            bet.insert(QStringLiteral("state"), state);
+            if (data.contains(QStringLiteral("nonce")))
+                bet.insert(QStringLiteral("nonce"), data.value(QStringLiteral("nonce")));
+            emit diceFinished(gameResult(Game::Keno, bet, request.params, request.amount));
+        });
+    });
+}
+
+// ---------------------------------------------------------------- Duel Beef (cross-road)
+// POST https://duel.com/api/v2/cross-road/autobet
+//   {"difficulty":1 (1 easy, 2 medium, 3 hard, 4 extreme),"amount":"0.011","currency":106,
+//    "steps":19 (lanes to cross: easy 19, medium 17, hard 15, extreme 10 at most),
+//    "security_token":"<token>"}
+// Answer: {"success":true,"data":{"round":{"id","status" (2 = hit),"is_win","amount_currency" (stake),
+//   "amount_won" (payout),"path_length","current_step","autobet_steps","multiplier" (the target's,
+//   also on a loss),"difficulty_level","mines_positions" (lanes with a hit, 0-based),...}}}
+void StakeClient::placeDuelCross(const GameBetRequest &request, bool tokenRetried)
+{
+    const auto failNow = [this](const QString &msg) {
+        const LiveBetResult r = failed(msg);
+        QTimer::singleShot(0, this, [this, r] { emit diceFinished(r); });
+    };
+    auto *duel = qobject_cast<DuelTransport *>(m_transport);
+    if (!duel) {
+        failNow(tr("No transport configured."));
+        return;
+    }
+    const int currencyId = DuelTransport::currencyId(m_currency);
+    if (currencyId == 0) {
+        failNow(tr("Duel: unknown currency \"%1\" (use one of: %2).")
+                    .arg(m_currency, DuelTransport::currencyCodes().join(QStringLiteral(", "))));
+        return;
+    }
+    QString endpoint;
+    QJsonObject stakeBody;
+    QString err;
+    if (!StakeGames::buildBetRequest(Game::Chicken, request.amount, m_currency, request.params,
+                                     &endpoint, &stakeBody, &err)) {
+        failNow(err);
+        return;
+    }
+    static const QMap<QString, int> levels = {{QStringLiteral("easy"), 1}, {QStringLiteral("medium"), 2},
+                                              {QStringLiteral("hard"), 3}, {QStringLiteral("expert"), 4},
+                                              {QStringLiteral("extreme"), 4}};
+    const QString difficulty = stakeBody.value(QStringLiteral("difficulty")).toString().toLower();
+    const int level = levels.value(difficulty, 0);
+    if (level == 0) {
+        failNow(tr("Duel Beef: difficulty must be easy, medium, hard or extreme (not \"%1\").").arg(difficulty));
+        return;
+    }
+    const int steps = stakeBody.value(QStringLiteral("round")).toInt(1);
+    const int maxSteps = int(StakeGames::casinoMaximum(QStringLiteral("duel"), Game::Chicken, QStringLiteral("steps"),
+                                                       QJsonObject{{QStringLiteral("difficulty"), difficulty}}));
+    if (steps < 1 || (maxSteps > 0 && steps > maxSteps)) {
+        failNow(tr("Duel Beef: steps must be 1 - %1 on %2.").arg(maxSteps).arg(difficulty));
+        return;
+    }
+    QString amountText = QString::number(std::max(0.0, request.amount), 'f', 8);
+    while (amountText.contains(QLatin1Char('.')) && amountText.endsWith(QLatin1Char('0')))
+        amountText.chop(1);
+    if (amountText.endsWith(QLatin1Char('.')))
+        amountText.chop(1);
+
+    QPointer<DuelTransport> guard(duel);
+    duel->withSecurityToken([this, guard, request, amountText, currencyId, level, steps, difficulty,
+                             tokenRetried](const QString &token, const QString &tokenError, int tokenStatus) {
+        if (!guard || guard.data() != m_transport) {
+            emit diceFinished(failed(tr("Duel: the casino was switched before the bet was sent.")));
+            return;
+        }
+        if (token.isEmpty()) {
+            const bool retry = tokenStatus == 0 || tokenStatus == 429 || tokenStatus >= 500
+                               || isRetryable({}, tokenError);
+            if (tokenStatus == 0)
+                emit sessionLost(tokenError);
+            emit diceFinished(failed(tr("Duel: could not get a security token: %1").arg(tokenError),
+                                     {}, retry, false));
+            return;
+        }
+        QJsonObject body;
+        body.insert(QStringLiteral("difficulty"), level);
+        body.insert(QStringLiteral("amount"), amountText);
+        body.insert(QStringLiteral("currency"), currencyId);
+        body.insert(QStringLiteral("steps"), steps);
+        body.insert(QStringLiteral("security_token"), token);
+        guard->post(QStringLiteral("api/v2/cross-road/autobet"), body,
+                    [this, guard, request, steps, difficulty, tokenRetried](const TransportReply &reply) {
+            QJsonObject round = reply.json.value(QStringLiteral("data")).toObject()
+                                    .value(QStringLiteral("round")).toObject();
+            if (round.isEmpty())
+                round = reply.json.value(QStringLiteral("round")).toObject();
+            const bool placed = reply.ok && !round.isEmpty()
+                                && (round.contains(QStringLiteral("is_win")) || round.contains(QStringLiteral("status")));
+            const QString text = reply.ok ? goatedErrorText(reply.json) : reply.error;
+            if (!placed && !tokenRetried && guard && isDuelTokenError(reply.status, text)) {
+                guard->invalidateSecurityToken();
+                placeDuelCross(request, true);
+                return;
+            }
+            if (!reply.ok) {
+                const bool isTimeout = (reply.status == 0);
+                const bool unknown = (reply.status >= 500);
+                if (reply.status == 0)
+                    emit sessionLost(reply.error);
+                emit diceFinished(failed(reply.error, {}, isTimeout, unknown));
+                return;
+            }
+            if (!placed) {
+                QString errText = text;
+                if (errText.isEmpty() && reply.status >= 400)
+                    errText = tr("Duel Beef bet rejected (HTTP %1).").arg(reply.status);
+                if (!errText.isEmpty()) {
+                    LiveBetResult r = failed(errText, {}, isRetryable({}, errText), false);
+                    r.retryDelayMs = fastRetryDelayMs({}, errText);
+                    emit diceFinished(r);
+                    return;
+                }
+                const QString raw = QString::fromUtf8(QJsonDocument(reply.json).toJson(QJsonDocument::Compact)).left(400);
+                emit diceFinished(failed(tr("Unexpected Duel Beef response: %1").arg(raw), {}, false, true));
+                return;
+            }
+            const double amount = round.contains(QStringLiteral("amount_currency"))
+                                      ? numberOf(round.value(QStringLiteral("amount_currency"))) : request.amount;
+            const double won = numberOf(round.value(QStringLiteral("amount_won")));
+            // "multiplier" is the target's even after a hit: the win flag / payout decide.
+            const bool win = round.value(QStringLiteral("is_win")).isBool()
+                                 ? round.value(QStringLiteral("is_win")).toBool()
+                                 : int(numberOf(round.value(QStringLiteral("status")))) == 1;
+            const double mult = win ? numberOf(round.value(QStringLiteral("multiplier"))) : 0.0;
+            const double payout = win ? (won > 0.0 ? won : amount * mult) : 0.0;
+            // Stake's chicken shape: state {difficulty, round (lanes to cross), _deathPoint (the lane
+            // hit, 1-based: the first hit lane within the steps)}.
+            const QJsonArray hits = round.value(QStringLiteral("mines_positions")).toArray();
+            int death = -1;
+            for (const QJsonValue &h : hits) {
+                const int lane = int(numberOf(h));
+                if (lane < steps && (death < 0 || lane < death))
+                    death = lane;
+            }
+            QJsonObject state;
+            // Duel's own name for the top level.
+            state.insert(QStringLiteral("difficulty"), difficulty == QLatin1String("expert") ? QStringLiteral("extreme")
+                                                                                          : difficulty);
+            state.insert(QStringLiteral("round"), steps);
+            state.insert(QStringLiteral("cars"), hits);
+            if (!win && death >= 0)
+                state.insert(QStringLiteral("_deathPoint"), death + 1);
+            const QJsonValue idv = round.value(QStringLiteral("id"));
+            QJsonObject bet;
+            bet.insert(QStringLiteral("id"), idv.isDouble() ? QString::number(qint64(idv.toDouble())) : idv.toString());
+            bet.insert(QStringLiteral("amount"), amount);
+            bet.insert(QStringLiteral("payout"), payout);
+            bet.insert(QStringLiteral("payoutMultiplier"), amount > 0.0 && win ? payout / amount : mult);
+            bet.insert(QStringLiteral("active"), false);
+            bet.insert(QStringLiteral("game"), QStringLiteral("chicken"));
+            bet.insert(QStringLiteral("state"), state);
+            if (round.contains(QStringLiteral("nonce")))
+                bet.insert(QStringLiteral("nonce"), round.value(QStringLiteral("nonce")));
+            emit diceFinished(gameResult(Game::Chicken, bet, request.params, request.amount));
+        });
+    });
+}
+
+// ---------------------------------------------------------------- Duel mines
+// POST https://duel.com/api/v2/mines/autobet
+//   {"mines_count":24,"amount":"0.011","currency":106,"positions":[24] (0 = top-left .. 24),
+//    "security_token":"<token>"}
+// Answer: {"success":true,"data":{"round":{"id","status" (1 = won, 2 = hit a mine),"is_win",
+//   "amount_currency" (stake),"amount_won" (payout),"mines_count","revealed_positions",
+//   "multiplier","mines_positions" (0-24),...}}}
+void StakeClient::placeDuelMines(const GameBetRequest &request, bool tokenRetried)
+{
+    const auto failNow = [this](const QString &msg) {
+        const LiveBetResult r = failed(msg);
+        QTimer::singleShot(0, this, [this, r] { emit diceFinished(r); });
+    };
+    auto *duel = qobject_cast<DuelTransport *>(m_transport);
+    if (!duel) {
+        failNow(tr("No transport configured."));
+        return;
+    }
+    const int currencyId = DuelTransport::currencyId(m_currency);
+    if (currencyId == 0) {
+        failNow(tr("Duel: unknown currency \"%1\" (use one of: %2).")
+                    .arg(m_currency, DuelTransport::currencyCodes().join(QStringLiteral(", "))));
+        return;
+    }
+    // Tiles and mines count as Stake's request has them (tiles 1-25 already sent 0-based, like Duel).
+    QString endpoint;
+    QJsonObject stakeBody;
+    QString err;
+    if (!StakeGames::buildBetRequest(Game::Mines, request.amount, m_currency, request.params,
+                                     &endpoint, &stakeBody, &err)) {
+        failNow(err);
+        return;
+    }
+    const int minesCount = stakeBody.value(QStringLiteral("minesCount")).toInt(1);
+    const QJsonArray positions = stakeBody.value(QStringLiteral("fields")).toArray();
+    QString amountText = QString::number(std::max(0.0, request.amount), 'f', 8);
+    while (amountText.contains(QLatin1Char('.')) && amountText.endsWith(QLatin1Char('0')))
+        amountText.chop(1);
+    if (amountText.endsWith(QLatin1Char('.')))
+        amountText.chop(1);
+
+    QPointer<DuelTransport> guard(duel);
+    duel->withSecurityToken([this, guard, request, amountText, currencyId, minesCount, positions,
+                             tokenRetried](const QString &token, const QString &tokenError, int tokenStatus) {
+        if (!guard || guard.data() != m_transport) {
+            emit diceFinished(failed(tr("Duel: the casino was switched before the bet was sent.")));
+            return;
+        }
+        if (token.isEmpty()) {
+            const bool retry = tokenStatus == 0 || tokenStatus == 429 || tokenStatus >= 500
+                               || isRetryable({}, tokenError);
+            if (tokenStatus == 0)
+                emit sessionLost(tokenError);
+            emit diceFinished(failed(tr("Duel: could not get a security token: %1").arg(tokenError),
+                                     {}, retry, false));
+            return;
+        }
+        QJsonObject body;
+        body.insert(QStringLiteral("mines_count"), minesCount);
+        body.insert(QStringLiteral("amount"), amountText);
+        body.insert(QStringLiteral("currency"), currencyId);
+        body.insert(QStringLiteral("positions"), positions);
+        body.insert(QStringLiteral("security_token"), token);
+        guard->post(QStringLiteral("api/v2/mines/autobet"), body,
+                    [this, guard, request, tokenRetried](const TransportReply &reply) {
+            QJsonObject round = reply.json.value(QStringLiteral("data")).toObject()
+                                    .value(QStringLiteral("round")).toObject();
+            if (round.isEmpty())
+                round = reply.json.value(QStringLiteral("round")).toObject();
+            const bool placed = reply.ok && round.value(QStringLiteral("mines_positions")).isArray();
+            const QString text = reply.ok ? goatedErrorText(reply.json) : reply.error;
+            if (!placed && !tokenRetried && guard && isDuelTokenError(reply.status, text)) {
+                guard->invalidateSecurityToken();
+                placeDuelMines(request, true);
+                return;
+            }
+            if (!reply.ok) {
+                const bool isTimeout = (reply.status == 0);
+                const bool unknown = (reply.status >= 500);
+                if (reply.status == 0)
+                    emit sessionLost(reply.error);
+                emit diceFinished(failed(reply.error, {}, isTimeout, unknown));
+                return;
+            }
+            if (!placed) {
+                QString errText = text;
+                if (errText.isEmpty() && reply.status >= 400)
+                    errText = tr("Duel mines bet rejected (HTTP %1).").arg(reply.status);
+                if (!errText.isEmpty()) {
+                    LiveBetResult r = failed(errText, {}, isRetryable({}, errText), false);
+                    r.retryDelayMs = fastRetryDelayMs({}, errText);
+                    emit diceFinished(r);
+                    return;
+                }
+                const QString raw = QString::fromUtf8(QJsonDocument(reply.json).toJson(QJsonDocument::Compact)).left(400);
+                emit diceFinished(failed(tr("Unexpected Duel mines response: %1").arg(raw), {}, false, true));
+                return;
+            }
+            const double amount = round.contains(QStringLiteral("amount_currency"))
+                                      ? numberOf(round.value(QStringLiteral("amount_currency"))) : request.amount;
+            const double won = numberOf(round.value(QStringLiteral("amount_won")));
+            // A mine hit still reports "multiplier": "1": the win flag / payout decide.
+            const bool win = round.value(QStringLiteral("is_win")).isBool()
+                                 ? round.value(QStringLiteral("is_win")).toBool()
+                                 : int(numberOf(round.value(QStringLiteral("status")))) == 1;
+            const double mult = win ? numberOf(round.value(QStringLiteral("multiplier"))) : 0.0;
+            const double payout = win ? (won > 0.0 ? won : amount * mult) : 0.0;
+            // Stake's mines shape: state {mines, minesCount, rounds: [{field, payoutMultiplier}]}.
+            const QJsonArray revealed = round.value(QStringLiteral("revealed_positions")).toArray();
+            const QJsonArray mines = round.value(QStringLiteral("mines_positions")).toArray();
+            QJsonArray rounds;
+            for (const QJsonValue &f : revealed) {
+                const int field = int(numberOf(f));
+                bool isMine = false;
+                for (const QJsonValue &m : mines)
+                    isMine = isMine || int(numberOf(m)) == field;
+                QJsonObject r;
+                r.insert(QStringLiteral("field"), field);
+                r.insert(QStringLiteral("payoutMultiplier"), isMine ? 0.0 : mult);
+                rounds.append(r);
+            }
+            QJsonArray minesOut;
+            for (const QJsonValue &m : mines)
+                minesOut.append(int(numberOf(m)));
+            QJsonObject state;
+            state.insert(QStringLiteral("mines"), minesOut);
+            state.insert(QStringLiteral("minesCount"), int(numberOf(round.value(QStringLiteral("mines_count")))));
+            state.insert(QStringLiteral("rounds"), rounds);
+            const QJsonValue idv = round.value(QStringLiteral("id"));
+            QJsonObject bet;
+            bet.insert(QStringLiteral("id"), idv.isDouble() ? QString::number(qint64(idv.toDouble())) : idv.toString());
+            bet.insert(QStringLiteral("amount"), amount);
+            bet.insert(QStringLiteral("payout"), payout);
+            bet.insert(QStringLiteral("payoutMultiplier"), amount > 0.0 && win ? payout / amount : mult);
+            bet.insert(QStringLiteral("active"), false);
+            bet.insert(QStringLiteral("game"), QStringLiteral("mines"));
+            bet.insert(QStringLiteral("state"), state);
+            if (round.contains(QStringLiteral("nonce")))
+                bet.insert(QStringLiteral("nonce"), round.value(QStringLiteral("nonce")));
+            emit diceFinished(gameResult(Game::Mines, bet, request.params, request.amount));
+        });
+    });
+}
+
+// ---------------------------------------------------------------- Duel plinko
+// POST https://duel.com/api/v2/games/plinko/bet
+//   {"rows":12,"risk_level":1 (1 low, 2 medium, 3 high),"amount":"0.01103889","currency":106,
+//    "security_token":"<token>","instant":false}
+// Answer (201): {"success":true,"data":{"id","rows","risk_level":"low","final_slot" (the bucket),
+//   "payout_multiplier","amount_currency" (stake),"win_amount" (payout),"profit","nonce",...}}
+void StakeClient::placeDuelPlinko(const GameBetRequest &request, bool tokenRetried)
+{
+    const auto failNow = [this](const QString &msg) {
+        const LiveBetResult r = failed(msg);
+        QTimer::singleShot(0, this, [this, r] { emit diceFinished(r); });
+    };
+    auto *duel = qobject_cast<DuelTransport *>(m_transport);
+    if (!duel) {
+        failNow(tr("No transport configured."));
+        return;
+    }
+    const int currencyId = DuelTransport::currencyId(m_currency);
+    if (currencyId == 0) {
+        failNow(tr("Duel: unknown currency \"%1\" (use one of: %2).")
+                    .arg(m_currency, DuelTransport::currencyCodes().join(QStringLiteral(", "))));
+        return;
+    }
+    QString endpoint;
+    QJsonObject stakeBody;
+    QString err;
+    if (!StakeGames::buildBetRequest(Game::Plinko, request.amount, m_currency, request.params,
+                                     &endpoint, &stakeBody, &err)) {
+        failNow(err);
+        return;
+    }
+    const QJsonObject vars = stakeBody.value(QStringLiteral("variables")).toObject();
+    static const QMap<QString, int> levels = {{QStringLiteral("low"), 1}, {QStringLiteral("medium"), 2},
+                                              {QStringLiteral("high"), 3}};
+    const QString risk = vars.value(QStringLiteral("risk")).toString().toLower();
+    const int riskLevel = levels.value(risk, 0);
+    if (riskLevel == 0) {
+        failNow(tr("Duel plinko: risk must be low, medium or high (not \"%1\").").arg(risk));
+        return;
+    }
+    const int rows = vars.value(QStringLiteral("rows")).toInt(8);
+    QString amountText = QString::number(std::max(0.0, request.amount), 'f', 8);
+    while (amountText.contains(QLatin1Char('.')) && amountText.endsWith(QLatin1Char('0')))
+        amountText.chop(1);
+    if (amountText.endsWith(QLatin1Char('.')))
+        amountText.chop(1);
+
+    QPointer<DuelTransport> guard(duel);
+    duel->withSecurityToken([this, guard, request, amountText, currencyId, rows, riskLevel,
+                             tokenRetried](const QString &token, const QString &tokenError, int tokenStatus) {
+        if (!guard || guard.data() != m_transport) {
+            emit diceFinished(failed(tr("Duel: the casino was switched before the bet was sent.")));
+            return;
+        }
+        if (token.isEmpty()) {
+            const bool retry = tokenStatus == 0 || tokenStatus == 429 || tokenStatus >= 500
+                               || isRetryable({}, tokenError);
+            if (tokenStatus == 0)
+                emit sessionLost(tokenError);
+            emit diceFinished(failed(tr("Duel: could not get a security token: %1").arg(tokenError),
+                                     {}, retry, false));
+            return;
+        }
+        QJsonObject body;
+        body.insert(QStringLiteral("rows"), rows);
+        body.insert(QStringLiteral("risk_level"), riskLevel);
+        body.insert(QStringLiteral("amount"), amountText);
+        body.insert(QStringLiteral("currency"), currencyId);
+        body.insert(QStringLiteral("security_token"), token);
+        body.insert(QStringLiteral("instant"), false);
+        guard->post(QStringLiteral("api/v2/games/plinko/bet"), body,
+                    [this, guard, request, tokenRetried](const TransportReply &reply) {
+            const QJsonObject data = reply.json.value(QStringLiteral("data")).toObject();
+            const bool placed = reply.ok && data.contains(QStringLiteral("payout_multiplier"));
+            const QString text = reply.ok ? goatedErrorText(reply.json) : reply.error;
+            if (!placed && !tokenRetried && guard && isDuelTokenError(reply.status, text)) {
+                guard->invalidateSecurityToken();
+                placeDuelPlinko(request, true);
+                return;
+            }
+            if (!reply.ok) {
+                const bool isTimeout = (reply.status == 0);
+                const bool unknown = (reply.status >= 500);
+                if (reply.status == 0)
+                    emit sessionLost(reply.error);
+                emit diceFinished(failed(reply.error, {}, isTimeout, unknown));
+                return;
+            }
+            if (!placed) {
+                QString errText = text;
+                if (errText.isEmpty() && reply.status >= 400)
+                    errText = tr("Duel plinko bet rejected (HTTP %1).").arg(reply.status);
+                if (!errText.isEmpty()) {
+                    LiveBetResult r = failed(errText, {}, isRetryable({}, errText), false);
+                    r.retryDelayMs = fastRetryDelayMs({}, errText);
+                    emit diceFinished(r);
+                    return;
+                }
+                const QString raw = QString::fromUtf8(QJsonDocument(reply.json).toJson(QJsonDocument::Compact)).left(400);
+                emit diceFinished(failed(tr("Unexpected Duel plinko response: %1").arg(raw), {}, false, true));
+                return;
+            }
+            const double amount = data.contains(QStringLiteral("amount_currency"))
+                                      ? numberOf(data.value(QStringLiteral("amount_currency"))) : request.amount;
+            const double mult = numberOf(data.value(QStringLiteral("payout_multiplier")));
+            double payout = amount * mult;
+            if (data.contains(QStringLiteral("win_amount")))
+                payout = numberOf(data.value(QStringLiteral("win_amount"))); // stake included
+            // Stake's plinko shape: state {risk, rows, point (the bucket the ball fell into)}.
+            QJsonObject state;
+            state.insert(QStringLiteral("risk"), data.value(QStringLiteral("risk_level")).toString().toLower());
+            state.insert(QStringLiteral("rows"), int(numberOf(data.value(QStringLiteral("rows")))));
+            if (data.contains(QStringLiteral("final_slot")))
+                state.insert(QStringLiteral("point"), int(numberOf(data.value(QStringLiteral("final_slot")))));
+            const QJsonValue idv = data.value(QStringLiteral("id"));
+            QJsonObject bet;
+            bet.insert(QStringLiteral("id"), idv.isDouble() ? QString::number(qint64(idv.toDouble())) : idv.toString());
+            bet.insert(QStringLiteral("amount"), amount);
+            bet.insert(QStringLiteral("payout"), payout);
+            bet.insert(QStringLiteral("payoutMultiplier"), mult);
+            bet.insert(QStringLiteral("active"), false);
+            bet.insert(QStringLiteral("game"), QStringLiteral("plinko"));
+            bet.insert(QStringLiteral("state"), state);
+            if (data.contains(QStringLiteral("nonce")))
+                bet.insert(QStringLiteral("nonce"), data.value(QStringLiteral("nonce")));
+            emit diceFinished(gameResult(Game::Plinko, bet, request.params, request.amount));
+        });
+    });
+}
+
+// ---------------------------------------------------------------- Duel hilo
+// New round: POST https://duel.com/api/v2/hilo/bet
+//   {"amount":"0.011","balance_type":106,"start_card":"2H","security_token":"<token>"}
+// Guess: POST https://duel.com/api/v2/hilo/<round_id>/guess
+//   {"guess":"higher"|"lower"|"higher_equal"|"lower_equal"|"same"|"skip",
+//    "expected_sequence_index":<the round's last sequence_index>}
+// Cash out: POST https://duel.com/api/v2/hilo/<round_id>/cashout {}
+// Open round: GET https://duel.com/api/v2/hilo/active (same answer, "status": 0 while open).
+// Every answer: {"success":true,"data":{"round":{...}}} - see duelHiloAsStake().
+void StakeClient::placeDuelHilo(const GameBetRequest &request, bool tokenRetried)
+{
+    const auto failNow = [this](const QString &msg) {
+        const LiveBetResult r = failed(msg);
+        QTimer::singleShot(0, this, [this, r] { emit diceFinished(r); });
+    };
+    auto *duel = qobject_cast<DuelTransport *>(m_transport);
+    if (!duel) {
+        failNow(tr("No transport configured."));
+        return;
+    }
+    const int currencyId = DuelTransport::currencyId(m_currency);
+    if (currencyId == 0) {
+        failNow(tr("Duel: unknown currency \"%1\" (use one of: %2).")
+                    .arg(m_currency, DuelTransport::currencyCodes().join(QStringLiteral(", "))));
+        return;
+    }
+    QString endpoint;
+    QJsonObject stakeBody;
+    QString err;
+    if (!StakeGames::buildBetRequest(Game::Hilo, request.amount, m_currency, request.params,
+                                     &endpoint, &stakeBody, &err)) {
+        failNow(err);
+        return;
+    }
+    const QJsonObject card = stakeBody.value(QStringLiteral("startCard")).toObject();
+    QString rank = card.value(QStringLiteral("rank")).toString().toUpper();
+    if (rank == QLatin1String("T"))
+        rank = QStringLiteral("10");
+    const QString startCard = rank + card.value(QStringLiteral("suit")).toString().toUpper(); // "2H", "10S"
+    QString amountText = QString::number(std::max(0.0, request.amount), 'f', 8);
+    while (amountText.contains(QLatin1Char('.')) && amountText.endsWith(QLatin1Char('0')))
+        amountText.chop(1);
+    if (amountText.endsWith(QLatin1Char('.')))
+        amountText.chop(1);
+
+    QPointer<DuelTransport> guard(duel);
+    duel->withSecurityToken([this, guard, request, amountText, currencyId, startCard,
+                             tokenRetried](const QString &token, const QString &tokenError, int tokenStatus) {
+        if (!guard || guard.data() != m_transport) {
+            emit diceFinished(failed(tr("Duel: the casino was switched before the bet was sent.")));
+            return;
+        }
+        if (token.isEmpty()) {
+            const bool retry = tokenStatus == 0 || tokenStatus == 429 || tokenStatus >= 500
+                               || isRetryable({}, tokenError);
+            if (tokenStatus == 0)
+                emit sessionLost(tokenError);
+            emit diceFinished(failed(tr("Duel: could not get a security token: %1").arg(tokenError),
+                                     {}, retry, false));
+            return;
+        }
+        QJsonObject body;
+        body.insert(QStringLiteral("amount"), amountText);
+        body.insert(QStringLiteral("balance_type"), currencyId);
+        body.insert(QStringLiteral("start_card"), startCard);
+        body.insert(QStringLiteral("security_token"), token);
+        guard->post(QStringLiteral("api/v2/hilo/bet"), body,
+                    [this, guard, request, tokenRetried](const TransportReply &reply) {
+            const QString text = reply.ok ? goatedErrorText(reply.json) : reply.error;
+            const bool started = reply.ok && !duelHiloRoundOf(reply.json).isEmpty();
+            if (!started && !tokenRetried && guard && isDuelTokenError(reply.status, text)) {
+                guard->invalidateSecurityToken();
+                placeDuelHilo(request, true);
+                return;
+            }
+            handleDuelHiloReply(reply, request.params, request.amount, true);
+        });
+    });
+}
+
+void StakeClient::sendDuelHilo(const QString &endpoint, const QJsonObject &stakeBody, const QJsonObject &params,
+                               double requestedAmount)
+{
+    const auto failNow = [this](const QString &msg) {
+        const LiveBetResult r = failed(msg);
+        QTimer::singleShot(0, this, [this, r] { emit diceFinished(r); });
+    };
+    if (m_duelHiloId <= 0) {
+        failNow(tr("Duel hilo: no open round."));
+        return;
+    }
+    if (endpoint.contains(QLatin1String("cashout"))) {
+        m_transport->post(QStringLiteral("api/v2/hilo/%1/cashout").arg(m_duelHiloId), QJsonObject(),
+                          [this, params, requestedAmount](const TransportReply &reply) {
+            handleDuelHiloReply(reply, params, requestedAmount, false);
+        });
+        return;
+    }
+    // Stake's guesses -> Duel's (Duel has all six).
+    const QString g = stakeBody.value(QStringLiteral("guess")).toString();
+    QString guess;
+    if (g == QLatin1String("higher") || g == QLatin1String("lower") || g == QLatin1String("skip"))
+        guess = g;
+    else if (g == QLatin1String("higherEqual"))
+        guess = QStringLiteral("higher_equal");
+    else if (g == QLatin1String("lowerEqual"))
+        guess = QStringLiteral("lower_equal");
+    else if (g == QLatin1String("equal"))
+        guess = QStringLiteral("same");
+    if (guess.isEmpty()) {
+        failNow(tr("Duel hilo: unknown guess \"%1\".").arg(g));
+        return;
+    }
+    QJsonObject body;
+    body.insert(QStringLiteral("guess"), guess);
+    body.insert(QStringLiteral("expected_sequence_index"), m_duelHiloSeq);
+    m_transport->post(QStringLiteral("api/v2/hilo/%1/guess").arg(m_duelHiloId), body,
+                      [this, params, requestedAmount](const TransportReply &reply) {
+        handleDuelHiloReply(reply, params, requestedAmount, false);
+    });
+}
+
+void StakeClient::fetchDuelHilo(const QJsonObject &params, double requestedAmount, const QString &startError)
+{
+    auto *duel = qobject_cast<DuelTransport *>(m_transport);
+    if (!duel) {
+        const LiveBetResult r = failed(tr("Hilo: no open round."), QStringLiteral("existingGame"), true, false);
+        QTimer::singleShot(0, this, [this, r] { emit diceFinished(r); });
+        return;
+    }
+    duel->get(QStringLiteral("api/v2/hilo/active"), [this, params, requestedAmount, startError](const TransportReply &reply) {
+        handleDuelHiloReply(reply, params, requestedAmount, false, true, startError);
+    });
+}
+
+void StakeClient::handleDuelHiloReply(const TransportReply &reply, const QJsonObject &params,
+                                      double requestedAmount, bool firstRequest, bool activeQuery,
+                                      const QString &startError)
+{
+    const QJsonObject round = reply.ok ? duelHiloRoundOf(reply.json) : QJsonObject();
+    if (activeQuery) {
+        const bool open = !round.isEmpty() && int(numberOf(round.value(QStringLiteral("status")))) == 0;
+        if (!open) {
+            m_duelHiloId = 0;
+            m_duelHiloSeq = 0;
+            if (!startError.isEmpty()) {
+                // The new round was refused, but no open round was found: report Duel's message and
+                // the GET answer (no endless new round / open round loop).
+                const QString got = reply.ok
+                    ? QString::fromUtf8(QJsonDocument(reply.json).toJson(QJsonDocument::Compact)).left(600)
+                    : tr("HTTP %1 %2").arg(reply.status).arg(reply.error);
+                emit diceFinished(failed(tr("Duel hilo: %1 (open round request answered: %2)").arg(startError, got)));
+                return;
+            }
+            LiveBetResult r = failed(tr("Hilo: no open round."), QStringLiteral("existingGame"), true, false);
+            r.retryDelayMs = 500;
+            emit diceFinished(r);
+            return;
+        }
+    }
+    if (!reply.ok) {
+        const bool isTimeout = (reply.status == 0);
+        const bool unknown = (reply.status >= 500);
+        if (reply.status == 0)
+            emit sessionLost(reply.error);
+        emit diceFinished(failed(reply.error, {}, isTimeout, unknown));
+        return;
+    }
+    if (round.isEmpty()) {
+        const QJsonObject &json = reply.json;
+        QString errText = goatedErrorText(json);
+        const QJsonValue dataError = json.value(QStringLiteral("data")).toObject().value(QStringLiteral("error"));
+        if (errText.isEmpty() && dataError.isString())
+            errText = dataError.toString();
+        else if (errText.isEmpty() && dataError.isObject())
+            errText = dataError.toObject().value(QStringLiteral("message")).toString();
+        if (errText.isEmpty() && reply.status >= 400)
+            errText = tr("Duel hilo request rejected (HTTP %1).").arg(reply.status);
+        if (!errText.isEmpty()) {
+            if (firstRequest && (containsCI(errText, "active") || containsCI(errText, "already")
+                                 || containsCI(errText, "progress") || containsCI(errText, "unfinished")
+                                 || containsCI(errText, "existing") || containsCI(errText, "ongoing"))) {
+                // A round is still open (an earlier run, the website): load it to finish it first.
+                fetchDuelHilo(params, requestedAmount, errText);
+                return;
+            }
+            LiveBetResult r = failed(errText, {}, isRetryable({}, errText), false);
+            r.retryDelayMs = fastRetryDelayMs({}, errText);
+            emit diceFinished(r);
+            return;
+        }
+        const QString text = QString::fromUtf8(QJsonDocument(json).toJson(QJsonDocument::Compact)).left(400);
+        emit diceFinished(failed(tr("Unexpected Duel hilo response: %1").arg(text), {}, false, true));
+        return;
+    }
+    const QJsonObject bet = duelHiloAsStake(round, &m_duelHiloSeq);
+    LiveBetResult r = gameResult(Game::Hilo, bet, params, requestedAmount);
+    if (activeQuery) {
+        r.active = true;
+        r.win = false;
+    }
+    if (r.active) {
+        m_duelHiloId = qint64(numberOf(round.value(QStringLiteral("round_id"))));
+    } else {
+        m_duelHiloId = 0;
+        m_duelHiloSeq = 0;
+    }
+    emit diceFinished(r);
 }
 
 namespace

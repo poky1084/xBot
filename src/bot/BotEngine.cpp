@@ -508,11 +508,14 @@ void BotEngine::loadOpenGame(const BotConfig &cfg)
 {
     if (cfg.game != Game::Hilo && cfg.game != Game::Blackjack)
         return;
-    if (!liveMode() || m_running || m_inFlight || m_startPending || m_rollPending)
+    // Never while a run starts / runs (a script's game = "blackjack" switches the Game menu
+    // while the run is being set up: an open-game request then would hold the first bet).
+    if (!liveMode() || m_running || m_scriptActive || m_inFlight || m_startPending || m_rollPending)
         return;
     if (!m_live->isStake() && !m_live->isShuffle() && !m_live->isGoated()
-        && !(m_live->isWolfbet() && cfg.game == Game::Hilo))
-        return; // hilo and blackjack: Stake, Shuffle and Goated; hilo also on Wolfbet
+        && !(m_live->isWolfbet() && cfg.game == Game::Hilo)
+        && !m_live->isDuel())
+        return; // hilo and blackjack: Stake, Shuffle, Goated and Duel; hilo also on Wolfbet
     if (!liveReady(nullptr))
         return;
     // Always ask the casino (the round may have been played on, or finished, on the website
@@ -764,7 +767,7 @@ void BotEngine::start()
         emit scriptError(QString()); // clears the editor's status line
         if (!isDiceOrLimbo(m_runCfg.game))
             emit logMessage(tr("%1 strategy active (%2, first bet %3).")
-                                .arg(lang, gameName(m_runCfg.game))
+                                .arg(lang, scriptGameName(m_runCfg.game))
                                 .arg(m_nextBetSize, 0, 'f', 8),
                             false);
         else if (m_runCfg.game == Game::Limbo)
@@ -783,6 +786,11 @@ void BotEngine::start()
         //notifyGameChange();
         m_titleGameValid = false;
         announceRunGame(); // the script's first game in the window title
+        // The game set at the top of the script (game = "blackjack") becomes the Game menu's
+        // choice too (Manual / Auto Bet tabs and title follow). Later switches in dobet() only
+        // change the title.
+        m_announcedGame = m_runCfg.game;
+        emit gameChanged(m_runCfg.game);
     } else if (m_conditions.active())
         emit logMessage(tr("Condition builder active: %1 block(s), first bet %2. "
                            "Only the Auto Bet base bet is used.")
@@ -1072,10 +1080,10 @@ void BotEngine::switchGame(const BotConfig &betCfg)
         // Script run: set the script's `game` variable. Its next dobet() sees it, the values it
         // sets (target for limbo, chance / bethigh for dice) are read back and the bet after
         // that is placed in the new game. A bet already scheduled uses the old game.
-        m_script->setGlobalString("game", gameName(game));
+        m_script->setGlobalString("game", scriptGameName(game));
         m_announcedGame = game;
         emit logMessage(tr("Game switched to %1 - the script's next dobet() uses it.")
-                            .arg(gameName(game)),
+                            .arg(scriptGameName(game)),
                         false);
         return;
     }
@@ -1100,7 +1108,7 @@ void BotEngine::switchGame(const BotConfig &betCfg)
         return;
     }
     if (!isDiceOrLimbo(game))
-        emit logMessage(tr("Game switched to %1.").arg(gameName(game)), false);
+        emit logMessage(tr("Game switched to %1.").arg(scriptGameName(game)), false);
     else if (game == Game::Limbo)
         emit logMessage(tr("Game switched to limbo (target %1x).")
                             .arg(m_runCfg.multiplierTarget, 0, 'f', 2),
@@ -1162,7 +1170,7 @@ void BotEngine::updateAutoSettings(const BotConfig &cfg, bool condMode, const Bl
 
     if (oddsEdited) {
         if (!isDiceOrLimbo(m_runCfg.game))
-            emit logMessage(tr("Auto-bet updated: %1 settings.").arg(gameName(m_runCfg.game)), false);
+            emit logMessage(tr("Auto-bet updated: %1 settings.").arg(scriptGameName(m_runCfg.game)), false);
         else if (m_runCfg.game == Game::Limbo)
             emit logMessage(tr("Auto-bet updated: limbo target %1x.")
                                 .arg(m_runCfg.multiplierTarget, 0, 'f', 2),
@@ -1181,6 +1189,13 @@ void BotEngine::updateAutoSettings(const BotConfig &cfg, bool condMode, const Bl
 
 void BotEngine::announceRunGame()
 {
+    // "cross" from a script: the casino's own road-crossing game (Goat Run on Goated, Chicken
+    // elsewhere), so the title / menus never show a game the casino does not have.
+    if (isCrossGame(m_runCfg.game)) {
+        const QString casino = (!m_runCfg.casino.isEmpty() ? m_runCfg.casino
+                                : m_casinoGetter ? m_casinoGetter() : QString()).trimmed().toLower();
+        m_runCfg.game = casino == QLatin1String("goated") ? Game::GoatRun : Game::Chicken;
+    }
     if (m_titleGameValid && m_runCfg.game == m_titleGame)
         return;
     m_titleGame = m_runCfg.game;
@@ -1193,7 +1208,7 @@ void BotEngine::notifyGameChange()
     if (m_runCfg.game == m_announcedGame)
         return;
     m_announcedGame = m_runCfg.game;
-    emit logMessage(tr("Game switched to %1.").arg(gameName(m_announcedGame)), false);
+    emit logMessage(tr("Game switched to %1.").arg(scriptGameName(m_announcedGame)), false);
     emit gameChanged(m_announcedGame);
 }
 

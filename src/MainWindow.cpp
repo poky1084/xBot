@@ -693,7 +693,18 @@ MainWindow::MainWindow(int slot, bool freshWebSession, QWidget *parent)
         if (m_luaDock)
             m_luaDock->appendConsole(msg, isError);
     });
-    connect(m_engine, &BotEngine::gameChanged, this, [this](Game game) { setGame(game); });
+    // A script's starting game (game = "blackjack" at its top): the Game menu switches to it when
+    // the casino has it (only the window title follows otherwise).
+    connect(m_engine, &BotEngine::gameChanged, this, [this](Game game) {
+        if (game == m_game)
+            return;
+        if (StakeGames::casinoSupports(LiveSettings::nameOf(m_live.casino), game)) {
+            setGame(game);
+            onLogMessage(tr("Game switched to %1 (set by the script).")
+                             .arg(StakeGames::gameLabel(LiveSettings::nameOf(m_live.casino), game)),
+                         false);
+        }
+    });
     // A script switched game (game = "blackjack"): the window title shows it while the run lasts.
     connect(m_engine, &BotEngine::runGameChanged, this, [this](Game game) {
         m_runGame = game;
@@ -1530,7 +1541,8 @@ void MainWindow::updateWindowTitle()
     // The main window keeps the plain title; "+" windows show their number:
     // #2 = first "+" window, #3 = the next, … (settings slot + 1). The game being played
     // follows the casino ("xBot - Stake: Keno").
-    const QString game = gameDisplayName(m_runGameShown ? m_runGame : m_game);
+    const QString game = StakeGames::gameLabel(LiveSettings::nameOf(m_live.casino),
+                                                m_runGameShown ? m_runGame : m_game);
     if (m_slot == 0)
         setWindowTitle(tr("xBot - %1: %2").arg(casinoDisplayName(m_live.casino), game));
     else
@@ -1565,6 +1577,8 @@ void MainWindow::loadOpenGameIfShown()
         return;
     if (m_game != Game::Hilo && m_game != Game::Blackjack)
         return;
+    if (m_engine->isRunning() || m_engine->startPending())
+        return; // the run plays (and finishes) any open round itself
     m_engine->loadOpenGame(manualConfig());
 }
 
@@ -1695,6 +1709,9 @@ void MainWindow::updateGameMenu()
     for (auto it = m_gameActions.begin(); it != m_gameActions.end(); ++it) {
         const bool offered = StakeGames::casinoSupports(site, it.key());
         it.value()->setVisible(offered);
+        // The casino's own name for the game (Duel: "Beef" for Chicken).
+        if (!isDiceOrLimbo(it.key()))
+            it.value()->setText(StakeGames::gameLabel(site, it.key()));
         if (offered && !isDiceOrLimbo(it.key()))
             stakeGames = true;
     }

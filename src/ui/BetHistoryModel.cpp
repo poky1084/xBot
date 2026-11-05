@@ -72,7 +72,7 @@ QVariant BetHistoryModel::data(const QModelIndex &index, int role) const
             return {};
         return rec.casino.at(0).toUpper() + rec.casino.mid(1);
     case ColGame:
-        return gameName(rec.game);
+        return scriptGameName(rec.game); // the road-crossing games as "cross"
     case ColIndex:
         // Newest row on top carries the total bet count, counting down downwards.
         return QString::number(int(rec.index));
@@ -250,7 +250,7 @@ bool BetHistoryModel::passes(const BetRecord &b) const
         || QString::number(b.nonce).contains(m_search, Qt::CaseInsensitive)
         || QString::number(b.roll, 'f', 2).contains(m_search, Qt::CaseInsensitive)
         || b.rollText.contains(m_search, Qt::CaseInsensitive)
-        || gameName(b.game).contains(m_search, Qt::CaseInsensitive);
+        || scriptGameName(b.game).contains(m_search, Qt::CaseInsensitive);
     return passesFilter && passesSearch;
 }
 

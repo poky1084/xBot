@@ -384,7 +384,7 @@ JsStrategy::Status JsStrategy::init(const QString &source, double balance, doubl
             poker.call({m_engine->globalObject()});
     }
 
-    m_engine->globalObject().setProperty(QStringLiteral("game"), gameName(runCfg.game));
+    m_engine->globalObject().setProperty(QStringLiteral("game"), scriptGameName(runCfg.game));
     if (!runCfg.casino.isEmpty())
         m_engine->globalObject().setProperty(QStringLiteral("casino"), runCfg.casino);
     if (!runCfg.currency.isEmpty())
@@ -499,11 +499,11 @@ bool JsStrategy::readOutputs(double &nextBet, BotConfig &runCfg)
         const QString g = game.toString().trimmed().toLower();
         Game parsed = Game::Dice;
         if (gameFromName(g, &parsed)) {
-            runCfg.game = parsed;
+            // "cross" keeps the casino's own road-crossing game (Goat Run on Goated).
+            if (!(isCrossGame(parsed) && isCrossGame(runCfg.game)))
+                runCfg.game = parsed;
         } else {
-            QStringList names;
-            for (Game known : allGames())
-                names << gameName(known);
+            const QStringList names = scriptGameNames();
             m_error = QStringLiteral("game \"%1\" is not supported (crash and slide are not available); "
                                      "use one of: %2").arg(g, names.join(QStringLiteral(", ")));
             return false;
@@ -564,7 +564,7 @@ bool JsStrategy::readOutputs(double &nextBet, BotConfig &runCfg)
             runCfg.game, params, readJson("nextbet"), readGlobal("round").isCallable());
         if (!missing.isEmpty()) {
             m_error = QStringLiteral("%1 needs these variables set in the script: %2")
-                          .arg(gameName(runCfg.game), missing.join(QStringLiteral(", ")));
+                          .arg(scriptGameName(runCfg.game), missing.join(QStringLiteral(", ")));
             return false;
         }
         double total = 0.0;

@@ -229,6 +229,40 @@ private:
     void handleGoatedHiloReply(const TransportReply &reply, const QJsonObject &params, double requestedAmount,
                                bool firstRequest, bool activeQuery);
     QString m_goatedHiloRank; // the card the next guess is about
+    // Duel blackjack: POST api/v2/blackjack (new hand, with the security token), then
+    // POST api/v2/blackjack/<id>/hit | stand | double | split.
+    void placeDuelBlackjack(const GameBetRequest &request, bool tokenRetried = false);
+    void sendDuelBlackjack(const QString &stakeAction, const QJsonObject &params, double requestedAmount);
+    // The open hand: GET api/v2/blackjack (the bet itself, "status" 1 while open).
+    // startError: the new hand was refused with this message; when no open hand is found after
+    // all, that message (and the GET answer) is reported instead of "no open hand".
+    void fetchDuelBlackjack(const QJsonObject &params, double requestedAmount, const QString &startError = {});
+    void handleDuelBlackjackReply(const TransportReply &reply, const QJsonObject &params, double requestedAmount,
+                                  bool firstRequest, bool activeQuery = false, const QString &startError = {});
+    qint64 m_duelBjId = 0;          // the open hand's id (used in the action URLs)
+    QJsonObject m_duelBjState;      // its last "blackjack" object (hand index / size / value for actions)
+    // The hand insurance was accepted / declined for here: Duel's answer looks the same after
+    // "no insurance" as before the choice (insurance_available true, insurance_taken false).
+    qint64 m_duelBjInsuranceDecidedId = 0;
+    // Duel keno: POST api/v2/keno/bet (numbers 1-40, difficulty 1 classic .. 4 high).
+    void placeDuelKeno(const GameBetRequest &request, bool tokenRetried = false);
+    // Duel Beef (cross-road, played as Chicken): POST api/v2/cross-road/autobet
+    // (difficulty 1 easy .. 4 extreme, steps).
+    void placeDuelCross(const GameBetRequest &request, bool tokenRetried = false);
+    // Duel mines: POST api/v2/mines/autobet (all tiles in one request, 0-24).
+    void placeDuelMines(const GameBetRequest &request, bool tokenRetried = false);
+    // Duel plinko: POST api/v2/games/plinko/bet (rows, risk_level 1 low / 2 medium / 3 high).
+    void placeDuelPlinko(const GameBetRequest &request, bool tokenRetried = false);
+    // Duel hilo: POST api/v2/hilo/bet (new round, with the security token), then
+    // POST api/v2/hilo/<round_id>/guess | cashout; open round: GET api/v2/hilo/active.
+    void placeDuelHilo(const GameBetRequest &request, bool tokenRetried = false);
+    void sendDuelHilo(const QString &endpoint, const QJsonObject &stakeBody, const QJsonObject &params,
+                      double requestedAmount);
+    void fetchDuelHilo(const QJsonObject &params, double requestedAmount, const QString &startError = {});
+    void handleDuelHiloReply(const TransportReply &reply, const QJsonObject &params, double requestedAmount,
+                             bool firstRequest, bool activeQuery = false, const QString &startError = {});
+    qint64 m_duelHiloId = 0;   // the open round's round_id (used in the URLs)
+    int m_duelHiloSeq = 0;     // its last sequence_index (sent as expected_sequence_index)
     // Wolfbet keno: POST api/v2/keno/manual/play (numbers 1-40, risk low / medium / high).
     void placeWolfbetKeno(const GameBetRequest &request);
     // Wolfbet plinko: POST api/v2/plinko/manual/play (rows, risk low / medium / high).

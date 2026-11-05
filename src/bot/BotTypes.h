@@ -200,6 +200,29 @@ inline QString gameDisplayName(Game g)
     return QStringLiteral("Dice");
 }
 
+// The road-crossing games (Stake / Shuffle Chicken, Duel's Beef, Goated's Goat Run) are one game
+// for scripts and the bet list: "cross".
+inline bool isCrossGame(Game g)
+{
+    return g == Game::Chicken || g == Game::GoatRun;
+}
+
+// The name scripts see / set and the bet list shows: gameName(), "cross" for the road-crossing games.
+inline QString scriptGameName(Game g)
+{
+    return isCrossGame(g) ? QStringLiteral("cross") : gameName(g);
+}
+
+// Every name a script can use for `game` (the road-crossing games once, as "cross").
+inline QStringList scriptGameNames()
+{
+    QStringList names;
+    for (Game g : allGames())
+        if (!names.contains(scriptGameName(g)))
+            names << scriptGameName(g);
+    return names;
+}
+
 // Parses a script / settings game name ("keno", "Video Poker" and "video-poker" also work;
 // "dragontower", the old name of "tower", too).
 inline bool gameFromName(const QString &name, Game *out)
@@ -216,6 +239,10 @@ inline bool gameFromName(const QString &name, Game *out)
         n = QStringLiteral("bluesamurai");
     else if (n == QLatin1String("dragontower")) // the old name (saved settings, older scripts)
         n = QStringLiteral("tower");
+    // "cross": the road-crossing game of whatever casino is used - Stake / Shuffle Chicken, Duel's
+    // Beef (cross-road), Goated's Goat Run (StakeClient::placeGame picks the casino's own one).
+    else if (n == QLatin1String("cross") || n == QLatin1String("crossroad") || n == QLatin1String("beef"))
+        n = QStringLiteral("chicken");
     for (Game g : allGames()) {
         if (gameName(g) == n) {
             if (out)
