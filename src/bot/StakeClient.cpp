@@ -1173,6 +1173,19 @@ bool StakeClient::isParadice() const
     return qobject_cast<ParadiceTransport *>(m_transport) != nullptr;
 }
 
+QString StakeClient::casinoName() const
+{
+    if (isShuffle()) return QStringLiteral("Shuffle");
+    if (isGoated()) return QStringLiteral("Goated");
+    if (isWolfbet()) return QStringLiteral("Wolfbet");
+    if (isDuel()) return QStringLiteral("Duel");
+    if (isParadice()) return QStringLiteral("Paradice");
+    if (isPasino()) return QStringLiteral("Pasino");
+    if (isTower()) return QStringLiteral("Tower.bet");
+    if (isWinna()) return QStringLiteral("Winna");
+    return QStringLiteral("Stake");
+}
+
 bool StakeClient::isPasino() const
 {
     return qobject_cast<PasinoTransport *>(m_transport) != nullptr;
@@ -1907,6 +1920,14 @@ void StakeClient::placeGame(const GameBetRequest &request)
         placePasinoBlackjack(request);
         return;
     }
+    if (isTower() && request.game == Game::Plinko) {
+        placeTowerPlinko(request);
+        return;
+    }
+    if (isTower() && request.game == Game::Wheel) {
+        placeTowerWheel(request);
+        return;
+    }
     if (isPasino() && request.game == Game::Keno) {
         placePasinoKeno(request);
         return;
@@ -1988,8 +2009,8 @@ void StakeClient::placeGame(const GameBetRequest &request)
         return;
     }
     if (request.game == Game::GoatRun) {
-        failLater(failed(tr("Goat Run is only available on Goated - switch the casino to Goated or pick "
-                            "another game.")));
+        failLater(failed(tr("%1 is not available on %2 - pick another game or switch the casino.")
+                             .arg(gameDisplayName(request.game), casinoName())));
         return;
     }
     if (isShuffle() && request.game == Game::Hilo) {
@@ -2021,8 +2042,8 @@ void StakeClient::placeGame(const GameBetRequest &request)
         return;
     }
     if (!isStake()) {
-        failLater(failed(tr("%1 is only available on Stake - switch the casino to Stake or pick "
-                            "another game.").arg(gameDisplayName(request.game))));
+        failLater(failed(tr("%1 is not available on %2 - pick another game or switch the casino.")
+                             .arg(gameDisplayName(request.game), casinoName())));
         return;
     }
 
@@ -6086,6 +6107,196 @@ void StakeClient::placeTowerDice(const DiceBetRequest &request)
 //   multiplier rolled),"isWin":true,"choice":"2","betAmount","payout":"2" (multiplier paid, "0" on
 //   a loss),"winAmount","profit","nonce":86,"userSeed":{…},"account":{"hash","newBalance"}}.
 // Limbo pays exactly the target multiplier, so no house-edge conversion is needed.
+// Tower.bet plinko: POST https://tower.bet/api/plinko/bet
+//   {"symbol":"DECOY","amount":"0.01","risk":"low"|"medium"|"high","rows":8 (8-16)}
+// Answer (201): {"hash","game":"plinko","number" (the bucket),"result"/"payout" (the multiplier),
+//   "betAmount","winAmount" (payout, stake included),"profit" (net),"nonce",
+//   "account":{"newBalance"},...}. "isWin" is true for any payout above 0 (also 0.5x), so the
+//   payout decides.
+void StakeClient::placeTowerPlinko(const GameBetRequest &request)
+{
+    const auto failNow = [this](const QString &msg) {
+        const LiveBetResult r = failed(msg);
+        QTimer::singleShot(0, this, [this, r] { emit diceFinished(r); });
+    };
+    QString endpoint;
+    QJsonObject stakeBody;
+    QString err;
+    if (!StakeGames::buildBetRequest(Game::Plinko, request.amount, m_currency, request.params,
+                                     &endpoint, &stakeBody, &err)) {
+        failNow(err);
+        return;
+    }
+    const QJsonObject vars = stakeBody.value(QStringLiteral("variables")).toObject();
+    const QString risk = vars.value(QStringLiteral("risk")).toString().toLower();
+    if (risk != QLatin1String("low") && risk != QLatin1String("medium") && risk != QLatin1String("high")) {
+        failNow(tr("Tower plinko: risk must be low, medium or high (not \"%1\").").arg(risk));
+        return;
+    }
+    const int rows = vars.value(QStringLiteral("rows")).toInt(8);
+    QJsonObject body;
+    body.insert(QStringLiteral("symbol"), TowerTransport::apiCurrency(m_currency));
+    body.insert(QStringLiteral("amount"), QString::number(request.amount, 'f', 8));
+    body.insert(QStringLiteral("risk"), risk);
+    body.insert(QStringLiteral("rows"), rows);
+    const QJsonObject params = request.params;
+    const double requestedAmount = request.amount;
+    m_transport->post(QStringLiteral("plinko/bet"), body,
+                      [this, params, requestedAmount, risk, rows](const TransportReply &reply) {
+        if (!reply.ok) {
+            const bool isTimeout = (reply.status == 0);
+            const bool unknown = (reply.status >= 500 && reply.status != 503);
+            if (reply.status == 0)
+                emit sessionLost(reply.error);
+            emit diceFinished(failed(reply.error, {}, isTimeout, unknown));
+            return;
+        }
+        const QJsonObject &json = reply.json;
+        if (reply.status >= 400 || json.contains(QStringLiteral("errors"))) {
+            QString errText = firstErrorText(json, nullptr);
+            if (errText.isEmpty())
+                errText = json.value(QStringLiteral("message")).toString();
+            if (errText.isEmpty())
+                errText = tr("Tower plinko bet rejected (HTTP %1).").arg(reply.status);
+            LiveBetResult r = failed(errText, {}, isRetryable({}, errText), false);
+            r.retryDelayMs = fastRetryDelayMs({}, errText);
+            emit diceFinished(r);
+            return;
+        }
+        if (!json.contains(QStringLiteral("result")) && !json.contains(QStringLiteral("payout"))) {
+            const QString raw = QString::fromUtf8(QJsonDocument(json).toJson(QJsonDocument::Compact)).left(400);
+            emit diceFinished(failed(tr("Unexpected Tower plinko response (no result found): %1").arg(raw),
+                                     {}, false, true));
+            return;
+        }
+        const double amount = json.contains(QStringLiteral("betAmount"))
+                                  ? numberOf(json.value(QStringLiteral("betAmount"))) : requestedAmount;
+        double mult = numberOf(json.value(QStringLiteral("payout")));
+        if (!(mult > 0.0))
+            mult = numberOf(json.value(QStringLiteral("result")));
+        double payout = amount * mult;
+        if (json.contains(QStringLiteral("profit")))
+            payout = std::max(0.0, amount + numberOf(json.value(QStringLiteral("profit"))));
+        else if (json.contains(QStringLiteral("winAmount")))
+            payout = numberOf(json.value(QStringLiteral("winAmount")));
+        // Stake's plinko shape: state {risk, rows, point (the bucket the ball fell into)}.
+        QJsonObject state;
+        state.insert(QStringLiteral("risk"), risk);
+        state.insert(QStringLiteral("rows"), rows);
+        if (json.contains(QStringLiteral("number")))
+            state.insert(QStringLiteral("point"), int(numberOf(json.value(QStringLiteral("number")))));
+        QJsonObject bet;
+        bet.insert(QStringLiteral("id"), json.value(QStringLiteral("hash")).toString());
+        bet.insert(QStringLiteral("amount"), amount);
+        bet.insert(QStringLiteral("payout"), payout);
+        bet.insert(QStringLiteral("payoutMultiplier"), amount > 0.0 ? payout / amount : mult);
+        bet.insert(QStringLiteral("active"), false);
+        bet.insert(QStringLiteral("game"), QStringLiteral("plinko"));
+        bet.insert(QStringLiteral("state"), state);
+        if (json.contains(QStringLiteral("nonce")))
+            bet.insert(QStringLiteral("nonce"), json.value(QStringLiteral("nonce")));
+        LiveBetResult r = gameResult(Game::Plinko, bet, params, requestedAmount);
+        const QJsonObject account = json.value(QStringLiteral("account")).toObject();
+        if (account.contains(QStringLiteral("newBalance")))
+            r.balanceAfter = numberOf(account.value(QStringLiteral("newBalance")));
+        emit diceFinished(r);
+    });
+}
+
+// Tower.bet wheel: POST https://tower.bet/api/wheel/bet
+//   {"symbol":"DECOY","amount":"0.01","choice":"low"|"medium"|"high"} (no segments on Tower)
+// Answer (201): {"hash","game":"wheel","number" (the segment),"result":"1.2x","payout":"1.2",
+//   "betAmount","winAmount" (payout),"profit" (net),"nonce","account":{"newBalance"},...}
+void StakeClient::placeTowerWheel(const GameBetRequest &request)
+{
+    const auto failNow = [this](const QString &msg) {
+        const LiveBetResult r = failed(msg);
+        QTimer::singleShot(0, this, [this, r] { emit diceFinished(r); });
+    };
+    QString endpoint;
+    QJsonObject stakeBody;
+    QString err;
+    if (!StakeGames::buildBetRequest(Game::Wheel, request.amount, m_currency, request.params,
+                                     &endpoint, &stakeBody, &err)) {
+        failNow(err);
+        return;
+    }
+    const QString risk = stakeBody.value(QStringLiteral("risk")).toString().toLower();
+    if (risk != QLatin1String("low") && risk != QLatin1String("medium") && risk != QLatin1String("high")) {
+        failNow(tr("Tower wheel: risk must be low, medium or high (not \"%1\").").arg(risk));
+        return;
+    }
+    QJsonObject body;
+    body.insert(QStringLiteral("symbol"), TowerTransport::apiCurrency(m_currency));
+    body.insert(QStringLiteral("amount"), QString::number(request.amount, 'f', 8));
+    body.insert(QStringLiteral("choice"), risk);
+    const QJsonObject params = request.params;
+    const double requestedAmount = request.amount;
+    m_transport->post(QStringLiteral("wheel/bet"), body, [this, params, requestedAmount, risk](const TransportReply &reply) {
+        if (!reply.ok) {
+            const bool isTimeout = (reply.status == 0);
+            const bool unknown = (reply.status >= 500 && reply.status != 503);
+            if (reply.status == 0)
+                emit sessionLost(reply.error);
+            emit diceFinished(failed(reply.error, {}, isTimeout, unknown));
+            return;
+        }
+        const QJsonObject &json = reply.json;
+        if (reply.status >= 400 || json.contains(QStringLiteral("errors"))) {
+            QString errText = firstErrorText(json, nullptr);
+            if (errText.isEmpty())
+                errText = json.value(QStringLiteral("message")).toString();
+            if (errText.isEmpty())
+                errText = tr("Tower wheel bet rejected (HTTP %1).").arg(reply.status);
+            LiveBetResult r = failed(errText, {}, isRetryable({}, errText), false);
+            r.retryDelayMs = fastRetryDelayMs({}, errText);
+            emit diceFinished(r);
+            return;
+        }
+        if (!json.contains(QStringLiteral("result")) && !json.contains(QStringLiteral("payout"))) {
+            const QString raw = QString::fromUtf8(QJsonDocument(json).toJson(QJsonDocument::Compact)).left(400);
+            emit diceFinished(failed(tr("Unexpected Tower wheel response (no result found): %1").arg(raw),
+                                     {}, false, true));
+            return;
+        }
+        const double amount = json.contains(QStringLiteral("betAmount"))
+                                  ? numberOf(json.value(QStringLiteral("betAmount"))) : requestedAmount;
+        double mult = numberOf(json.value(QStringLiteral("payout")));
+        if (!(mult > 0.0)) {
+            QString res = json.value(QStringLiteral("result")).toString(); // "1.2x"
+            res.remove(QLatin1Char('x'));
+            mult = res.toDouble();
+        }
+        double payout = amount * mult;
+        if (json.contains(QStringLiteral("profit")))
+            payout = std::max(0.0, amount + numberOf(json.value(QStringLiteral("profit"))));
+        else if (json.contains(QStringLiteral("winAmount")))
+            payout = numberOf(json.value(QStringLiteral("winAmount")));
+        const double finalMult = amount > 0.0 ? payout / amount : mult;
+        // Stake's wheel shape: state {risk, segments (none on Tower), result (the multiplier)}.
+        QJsonObject state;
+        state.insert(QStringLiteral("risk"), risk);
+        state.insert(QStringLiteral("result"), finalMult);
+        if (json.contains(QStringLiteral("number")))
+            state.insert(QStringLiteral("segment"), int(numberOf(json.value(QStringLiteral("number")))));
+        QJsonObject bet;
+        bet.insert(QStringLiteral("id"), json.value(QStringLiteral("hash")).toString());
+        bet.insert(QStringLiteral("amount"), amount);
+        bet.insert(QStringLiteral("payout"), payout);
+        bet.insert(QStringLiteral("payoutMultiplier"), finalMult);
+        bet.insert(QStringLiteral("active"), false);
+        bet.insert(QStringLiteral("game"), QStringLiteral("wheel"));
+        bet.insert(QStringLiteral("state"), state);
+        if (json.contains(QStringLiteral("nonce")))
+            bet.insert(QStringLiteral("nonce"), json.value(QStringLiteral("nonce")));
+        LiveBetResult r = gameResult(Game::Wheel, bet, params, requestedAmount);
+        const QJsonObject account = json.value(QStringLiteral("account")).toObject();
+        if (account.contains(QStringLiteral("newBalance")))
+            r.balanceAfter = numberOf(account.value(QStringLiteral("newBalance")));
+        emit diceFinished(r);
+    });
+}
+
 void StakeClient::placeTowerLimbo(const LimboBetRequest &request)
 {
     const double target = std::round(request.multiplierTarget * 100.0) / 100.0;

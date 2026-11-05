@@ -21,6 +21,9 @@ namespace StakeGames
 QList<Game> gamesForCasino(const QString &casinoKey);
 // The game's name as the casino calls it (Duel's Chicken is "Beef"); gameDisplayName() otherwise.
 QString gameLabel(const QString &casinoKey, Game game);
+// An input the casino does not use for the game (Tower's wheel has no segments): not shown in
+// the Manual / Auto Bet tabs on that casino.
+bool casinoHidesParam(const QString &casinoKey, Game game, const QString &key);
 bool casinoSupports(const QString &casinoKey, Game game);
 // Choices of a game input that a casino does not offer (Shuffle plinko: no "expert" risk).
 // The Manual / Auto Bet tabs leave them out while that casino is selected.

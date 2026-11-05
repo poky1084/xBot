@@ -101,6 +101,7 @@ public:
     bool isTower() const;
     bool isWinna() const;
     bool isStake() const; // none of the above: Stake (or one of its mirrors)
+    QString casinoName() const; // "Stake", "Shuffle", "Duel", ... (the casino in use)
 
     // API currency code, lowercase ("btc", "usdt", ...).
     void setCurrency(const QString &currency);
@@ -337,6 +338,10 @@ private:
     QString m_currency;
     // Pasino sends the client seed with every bet ("client_seed"); set by rotateSeedPair().
     QString m_pasinoClientSeed;
+    // Tower.bet plinko: POST api/plinko/bet {symbol, amount, risk, rows}.
+    void placeTowerPlinko(const GameBetRequest &request);
+    // Tower.bet wheel: POST api/wheel/bet {symbol, amount, choice: low / medium / high} (no segments).
+    void placeTowerWheel(const GameBetRequest &request);
     // Pasino keno: POST keno/play (numbers 1-40, risk low / medium / high).
     void placePasinoKeno(const GameBetRequest &request);
     // Pasino plinko: POST plinko/play (pins = rows 8-16, risk_multiplier 1 low / 2 medium / 3 high).

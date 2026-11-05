@@ -560,8 +560,12 @@ bool JsStrategy::readOutputs(double &nextBet, BotConfig &runCfg)
                 params.insert(name, v);
         }
         // Code mode has no defaults: every variable of the game must be set by the script.
-        const QStringList missing = StakeGames::missingScriptVariables(
+        QStringList missing = StakeGames::missingScriptVariables(
             runCfg.game, params, readJson("nextbet"), readGlobal("round").isCallable());
+        // Inputs the casino does not use (Tower's wheel: no segments) are not required.
+        missing.removeIf([&runCfg](const QString &name) {
+            return StakeGames::casinoHidesParam(runCfg.casino, runCfg.game, name);
+        });
         if (!missing.isEmpty()) {
             m_error = QStringLiteral("%1 needs these variables set in the script: %2")
                           .arg(scriptGameName(runCfg.game), missing.join(QStringLiteral(", ")));

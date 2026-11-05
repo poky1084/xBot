@@ -150,7 +150,7 @@ void GameParamsWidget::rebuild()
 
     const QJsonObject values = valuesFor(m_game);
     for (const ParamSpec &spec : StakeGames::paramSpecs(m_game)) {
-        if (m_hiddenKeys.contains(spec.key))
+        if (m_hiddenKeys.contains(spec.key) || StakeGames::casinoHidesParam(m_casino, m_game, spec.key))
             continue;
         const QJsonValue v = values.value(spec.key);
         QWidget *editor = nullptr;   // the widget the value is read from

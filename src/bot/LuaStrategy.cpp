@@ -1081,8 +1081,12 @@ bool LuaStrategy::readOutputs(double &nextBet, BotConfig &runCfg)
         lua_getglobal(m_L, "round");
         const bool hasRound = lua_isfunction(m_L, -1);
         lua_pop(m_L, 1);
-        const QStringList missing = StakeGames::missingScriptVariables(runCfg.game, params,
+        QStringList missing = StakeGames::missingScriptVariables(runCfg.game, params,
                                                                        readJson("nextbet"), hasRound);
+        // Inputs the casino does not use (Tower's wheel: no segments) are not required.
+        missing.removeIf([&runCfg](const QString &name) {
+            return StakeGames::casinoHidesParam(runCfg.casino, runCfg.game, name);
+        });
         if (!missing.isEmpty()) {
             m_error = QStringLiteral("%1 needs these variables set in the script: %2")
                           .arg(scriptGameName(runCfg.game), missing.join(QStringLiteral(", ")));

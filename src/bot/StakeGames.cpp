@@ -576,14 +576,16 @@ QList<Game> gamesForCasino(const QString &casinoKey)
         return {Game::Dice, Game::Limbo, Game::Keno, Game::Plinko, Game::Hilo};
     if (k == QLatin1String("pasino"))
         return {Game::Dice, Game::Limbo, Game::Keno, Game::Mines, Game::Plinko, Game::Blackjack};
-    return {Game::Dice, Game::Limbo}; // Tower, Winna
+    if (k == QLatin1String("tower"))
+        return {Game::Dice, Game::Limbo, Game::Plinko, Game::Wheel};
+    return {Game::Dice, Game::Limbo}; // Winna
 }
 
 QStringList unsupportedChoices(const QString &casinoKey, Game game, const QString &key)
 {
     const QString k = casinoKey.trimmed().toLower();
     if ((k == QLatin1String("shuffle") || k == QLatin1String("goated") || k == QLatin1String("wolfbet")
-         || k == QLatin1String("duel") || k == QLatin1String("pasino"))
+         || k == QLatin1String("duel") || k == QLatin1String("pasino") || k == QLatin1String("tower"))
         && game == Game::Plinko && key == QLatin1String("risk"))
         return {QStringLiteral("expert")}; // low / medium / high only
     if ((k == QLatin1String("wolfbet") || k == QLatin1String("pasino")) && game == Game::Keno
@@ -616,6 +618,12 @@ double casinoMaximum(const QString &casinoKey, Game game, const QString &key, co
         return 24.0; // easy
     }
     return -1.0;
+}
+
+bool casinoHidesParam(const QString &casinoKey, Game game, const QString &key)
+{
+    const QString k = casinoKey.trimmed().toLower();
+    return k == QLatin1String("tower") && game == Game::Wheel && key == QLatin1String("segments");
 }
 
 QString gameLabel(const QString &casinoKey, Game game)
@@ -1762,7 +1770,9 @@ Summary summarize(Game game, const QJsonObject &bet, const QJsonObject &params)
         break;
     case Game::Wheel:
         s.roll = toNumber(st.value(QStringLiteral("result")), mult);
-        s.targetText = QStringLiteral("%1|%2").arg(text("risk"), text("segments"));
+        // Tower's wheel has no segments: the risk alone.
+        s.targetText = text("segments").isEmpty() ? text("risk")
+                                                  : QStringLiteral("%1|%2").arg(text("risk"), text("segments"));
         s.rollText = toText(st.value(QStringLiteral("result")));
         break;
     case Game::Keno: {
