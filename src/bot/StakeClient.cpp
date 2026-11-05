@@ -186,6 +186,28 @@ QString shuffleToStakeAction(const QString &a)
     return a.toLower();
 }
 
+// The round's payout multiplier from each hand's own result, for a 0 bet (no amounts to divide):
+// win 2x (blackjack 2.5x), push 1x, lose / bust 0; a doubled hand counts twice.
+double blackjackMultiplierFromResults(const QStringList &results, const QList<bool> &doubled)
+{
+    double paid = 0.0;
+    double staked = 0.0;
+    for (int i = 0; i < results.size(); ++i) {
+        const QString r = results.at(i).trimmed().toLower();
+        const double w = (i < doubled.size() && doubled.at(i)) ? 2.0 : 1.0;
+        double m = 0.0;
+        if (r == QLatin1String("blackjack"))
+            m = 2.5;
+        else if (r == QLatin1String("win") || r == QLatin1String("won"))
+            m = 2.0;
+        else if (r == QLatin1String("push") || r == QLatin1String("draw") || r == QLatin1String("tie"))
+            m = 1.0;
+        paid += w * m;
+        staked += w;
+    }
+    return staked > 0.0 ? paid / staked : 0.0;
+}
+
 // One hand in Stake's shape: {cards, value, actions} with Stake's "deal" first and its
 // "bust" / "blackjack" / "full" markers.
 QJsonObject stakeHandOf(const QJsonArray &cards, const QJsonArray &shuffleActions, bool split,
@@ -282,6 +304,22 @@ QJsonObject shuffleBlackjackAsStake(const QJsonObject &bet)
     if (!active) {
         const QJsonValue m = bet.value(QStringLiteral("multiplier"));
         mult = m.isNull() || m.isUndefined() ? (amount > 0.0 ? payout / amount : 0.0) : numberOf(m);
+        if (!(amount > 0.0) && !(mult > 0.0)) {
+            // A 0 bet pays 0 either way: the hands' own outcomes decide.
+            const auto doubledIn = [](const QJsonValue &actions) {
+                for (const QJsonValue &a : actions.toArray())
+                    if (a.toString().toUpper().startsWith(QLatin1String("DOUBLE")))
+                        return true;
+                return false;
+            };
+            QStringList results{bj.value(QStringLiteral("mainHandOutcome")).toString()};
+            QList<bool> doubledHands{doubledIn(bj.value(QStringLiteral("mainPlayerActions")))};
+            if (split) {
+                results << bj.value(QStringLiteral("splitHandOutcome")).toString();
+                doubledHands << doubledIn(bj.value(QStringLiteral("splitPlayerActions")));
+            }
+            mult = blackjackMultiplierFromResults(results, doubledHands);
+        }
     }
 
     QJsonObject out;
@@ -380,6 +418,22 @@ QJsonObject goatedBlackjackAsStake(const QJsonObject &bet)
     if (!active) {
         const QJsonValue m = bet.value(QStringLiteral("multiplier"));
         mult = m.isNull() || m.isUndefined() ? (amount > 0.0 ? payout / amount : 0.0) : numberOf(m);
+        if (!(amount > 0.0) && !(mult > 0.0)) {
+            // A 0 bet pays 0 either way: the hands' own outcomes decide.
+            const auto doubledIn = [](const QJsonValue &actions) {
+                for (const QJsonValue &a : actions.toArray())
+                    if (a.toString().toUpper().startsWith(QLatin1String("DOUBLE")))
+                        return true;
+                return false;
+            };
+            QStringList results{st.value(QStringLiteral("main_hand_outcome")).toString()};
+            QList<bool> doubledHands{doubledIn(st.value(QStringLiteral("main_player_actions")))};
+            if (split) {
+                results << st.value(QStringLiteral("split_hand_outcome")).toString();
+                doubledHands << doubledIn(st.value(QStringLiteral("split_player_actions")));
+            }
+            mult = blackjackMultiplierFromResults(results, doubledHands);
+        }
     }
 
     QJsonObject out;
@@ -411,8 +465,37 @@ QJsonObject goatedHiloAsStake(const QJsonObject &bet, QString *lastRank)
     const QJsonArray mults = bet.value(QStringLiteral("multipliers")).toArray();
     const bool active = bet.value(QStringLiteral("is_active")).toBool(false);
     const QJsonValue mv = bet.value(QStringLiteral("multiplier"));
-    const double finalMult = mv.isNull() || mv.isUndefined() ? 0.0 : numberOf(mv);
-    const bool lost = !active && !(finalMult > 0.0);
+    double finalMult = mv.isNull() || mv.isUndefined() ? 0.0 : numberOf(mv);
+    bool lost = !active && !(finalMult > 0.0);
+    if (lost && (mv.isNull() || mv.isUndefined())) {
+        // No final multiplier (e.g. a 0 bet): decide from the cards - the last guess (H / L, not
+        // a skip) against the card it drew; a won round keeps its last multiplier.
+        static const QStringList order = {QStringLiteral("A"), QStringLiteral("2"), QStringLiteral("3"),
+                                          QStringLiteral("4"), QStringLiteral("5"), QStringLiteral("6"),
+                                          QStringLiteral("7"), QStringLiteral("8"), QStringLiteral("9"),
+                                          QStringLiteral("10"), QStringLiteral("J"), QStringLiteral("Q"),
+                                          QStringLiteral("K")};
+        int last = -1;
+        for (int i = int(choices.size()) - 1; i >= 0; --i)
+            if (choices.at(i) != QLatin1Char('S')) {
+                last = i;
+                break;
+            }
+        if (last >= 0 && last + 1 < cards.size()) {
+            const int from = int(order.indexOf(goatedCard(cards.at(last)).value(QStringLiteral("rank")).toString()));
+            const int to = int(order.indexOf(goatedCard(cards.at(last + 1)).value(QStringLiteral("rank")).toString()));
+            const QChar c = choices.at(last);
+            bool won = false;
+            if (c == QLatin1Char('H'))
+                won = from == 0 ? to > from : (from == 12 ? to == from : to >= from);
+            else if (c == QLatin1Char('L'))
+                won = from == 12 ? to < from : (from == 0 ? to == from : to <= from);
+            if (won && !mults.isEmpty()) {
+                lost = false;
+                finalMult = numberOf(mults.at(std::min(int(mults.size()), last + 1) - 1));
+            }
+        }
+    }
 
     QJsonObject startCard = cards.isEmpty() ? QJsonObject() : goatedCard(cards.first());
     QString rank = startCard.value(QStringLiteral("rank")).toString();
@@ -575,7 +658,25 @@ QJsonObject pasinoBlackjackAsStake(const QJsonObject &json, double bet, const bo
                                      : (id.isDouble() ? QString::number(qint64(id.toDouble())) : QString()));
     out.insert(QStringLiteral("amount"), amount);
     out.insert(QStringLiteral("payout"), payout);
-    out.insert(QStringLiteral("payoutMultiplier"), active || !(amount > 0.0) ? 0.0 : payout / amount);
+    double mult = 0.0;
+    if (!active) {
+        if (amount > 0.0) {
+            mult = payout / amount;
+        } else {
+            // A 0 bet: the hands' own results (hand1_status / hand2_status).
+            QStringList results;
+            QList<bool> doubledHands;
+            for (int i = 0; i < (split ? 2 : 1); ++i) {
+                QString st = status[i];
+                if (st == QLatin1String("loss"))
+                    st = QStringLiteral("lose");
+                results << st;
+                doubledHands << doubled[i];
+            }
+            mult = blackjackMultiplierFromResults(results, doubledHands);
+        }
+    }
+    out.insert(QStringLiteral("payoutMultiplier"), mult);
     out.insert(QStringLiteral("active"), active);
     out.insert(QStringLiteral("game"), QStringLiteral("blackjack"));
     out.insert(QStringLiteral("state"), state);
@@ -719,7 +820,22 @@ QJsonObject duelBlackjackAsStake(const QJsonObject &bet, bool insuranceDecidedHe
     out.insert(QStringLiteral("id"), idv.isDouble() ? QString::number(qint64(idv.toDouble())) : idv.toString());
     out.insert(QStringLiteral("amount"), amount);
     out.insert(QStringLiteral("payout"), payout);
-    out.insert(QStringLiteral("payoutMultiplier"), active || !(amount > 0.0) ? 0.0 : payout / amount);
+    double mult = 0.0;
+    if (!active) {
+        if (amount > 0.0) {
+            mult = payout / amount;
+        } else {
+            // A 0 bet pays 0 either way: the result comes from each hand's own outcome.
+            QStringList results;
+            QList<bool> doubledHands;
+            for (const QJsonValue &h : hands) {
+                results << h.toObject().value(QStringLiteral("result")).toString();
+                doubledHands << h.toObject().value(QStringLiteral("has_doubled")).toBool(false);
+            }
+            mult = blackjackMultiplierFromResults(results, doubledHands);
+        }
+    }
+    out.insert(QStringLiteral("payoutMultiplier"), mult);
     out.insert(QStringLiteral("active"), active);
     out.insert(QStringLiteral("game"), QStringLiteral("blackjack"));
     out.insert(QStringLiteral("state"), state);
@@ -789,7 +905,12 @@ QJsonObject duelHiloAsStake(const QJsonObject &round, int *lastSeq)
     out.insert(QStringLiteral("id"), idv.isDouble() ? QString::number(qint64(idv.toDouble())) : idv.toString());
     out.insert(QStringLiteral("amount"), amount);
     out.insert(QStringLiteral("payout"), payout);
-    out.insert(QStringLiteral("payoutMultiplier"), active || !(amount > 0.0) ? 0.0 : payout / amount);
+    // A 0 bet pays 0 either way: a won round shows its last multiplier.
+    const double lastMult = rounds.isEmpty() ? 0.0
+        : rounds.at(rounds.size() - 1).toObject().value(QStringLiteral("payoutMultiplier")).toDouble();
+    out.insert(QStringLiteral("payoutMultiplier"), active ? 0.0
+                                                   : amount > 0.0 ? payout / amount
+                                                   : (won ? lastMult : 0.0));
     out.insert(QStringLiteral("active"), active);
     out.insert(QStringLiteral("game"), QStringLiteral("hilo"));
     out.insert(QStringLiteral("state"), state);
