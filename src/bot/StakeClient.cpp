@@ -1907,6 +1907,18 @@ void StakeClient::placeGame(const GameBetRequest &request)
         placePasinoBlackjack(request);
         return;
     }
+    if (isPasino() && request.game == Game::Keno) {
+        placePasinoKeno(request);
+        return;
+    }
+    if (isPasino() && request.game == Game::Plinko) {
+        placePasinoPlinko(request);
+        return;
+    }
+    if (isPasino() && request.game == Game::Mines) {
+        placePasinoMines(request);
+        return;
+    }
     if (isDuel() && request.game == Game::Hilo) {
         placeDuelHilo(request);
         return;
@@ -5394,6 +5406,305 @@ void StakeClient::placePasinoDice(const DiceBetRequest &request)
         r.betId = id.isString() ? id.toString() : QString::number(qint64(numberOf(id)));
         r.nonce = -1; // not part of the answer
         if (json.contains(QStringLiteral("balance"))) // the account balance after this bet
+            r.balanceAfter = numberOf(json.value(QStringLiteral("balance")));
+        emit diceFinished(r);
+    });
+}
+
+// Pasino keno: POST https://api.pasino.com/keno/play  (JSON sent as x-www-form-urlencoded)
+//   {"token","language","client_seed":"<64 chars>","bet_amt":"0.00100000","coin":"DOGE",
+//    "numbers_selected":[1,3,10,...] (1-40),"risk":"low"|"medium"|"high"}
+// Answer: {"win":1,"payout":1.4 (payout multiplier),"drawn_numbers":[...] (1-40),"selected_numbers",
+//   "common" (hits),"coin","balance","profit" (net),"bet_id","success":true}
+void StakeClient::placePasinoKeno(const GameBetRequest &request)
+{
+    const auto failNow = [this](const QString &msg) {
+        const LiveBetResult r = failed(msg);
+        QTimer::singleShot(0, this, [this, r] { emit diceFinished(r); });
+    };
+    QString endpoint;
+    QJsonObject stakeBody;
+    QString err;
+    if (!StakeGames::buildBetRequest(Game::Keno, request.amount, m_currency, request.params,
+                                     &endpoint, &stakeBody, &err)) {
+        failNow(err);
+        return;
+    }
+    const QString risk = stakeBody.value(QStringLiteral("risk")).toString().toLower();
+    if (risk != QLatin1String("low") && risk != QLatin1String("medium") && risk != QLatin1String("high")) {
+        failNow(tr("Pasino keno: risk must be low, medium or high (not \"%1\").").arg(risk));
+        return;
+    }
+    QJsonArray numbers; // Stake's 0-based numbers -> the board's 1-40
+    for (const QJsonValue &n : stakeBody.value(QStringLiteral("numbers")).toArray())
+        numbers.append(n.toInt() + 1);
+    ensurePasinoSeed(m_pasinoClientSeed);
+    QJsonObject body;
+    body.insert(QStringLiteral("client_seed"), m_pasinoClientSeed);
+    body.insert(QStringLiteral("bet_amt"), QString::number(request.amount, 'f', 8));
+    body.insert(QStringLiteral("coin"), PasinoTransport::apiCurrency(m_currency));
+    body.insert(QStringLiteral("numbers_selected"), numbers);
+    body.insert(QStringLiteral("risk"), risk);
+    const QJsonObject params = request.params;
+    const double requestedAmount = request.amount;
+    m_transport->post(QStringLiteral("keno/play"), body, [this, params, requestedAmount, risk](const TransportReply &reply) {
+        if (!reply.ok) {
+            const bool isTimeout = (reply.status == 0);
+            const bool unknown = (reply.status >= 500);
+            if (reply.status == 0)
+                emit sessionLost(reply.error);
+            emit diceFinished(failed(reply.error, {}, isTimeout, unknown));
+            return;
+        }
+        const QJsonObject &json = reply.json;
+        const QString errText = PasinoTransport::errorText(json);
+        if (!errText.isEmpty()) {
+            LiveBetResult r = failed(errText, {}, isRetryable({}, errText), false);
+            r.retryDelayMs = fastRetryDelayMs({}, errText);
+            emit diceFinished(r);
+            return;
+        }
+        if (!json.value(QStringLiteral("drawn_numbers")).isArray()) {
+            const QString raw = QString::fromUtf8(QJsonDocument(json).toJson(QJsonDocument::Compact)).left(400);
+            emit diceFinished(failed(tr("Unexpected Pasino keno response: %1").arg(raw), {}, false, true));
+            return;
+        }
+        // The stake comes back on top of the net "profit"; "payout" is the multiplier.
+        const double amount = requestedAmount;
+        double payout = json.contains(QStringLiteral("profit"))
+                            ? std::max(0.0, amount + numberOf(json.value(QStringLiteral("profit"))))
+                            : amount * numberOf(json.value(QStringLiteral("payout")));
+        const double mult = amount > 0.0 ? payout / amount : numberOf(json.value(QStringLiteral("payout")));
+        // Stake's keno shape (0-based numbers): state {risk, selectedNumbers, drawnNumbers}.
+        const auto zeroBased = [](const QJsonValue &v) {
+            QJsonArray out;
+            for (const QJsonValue &n : v.toArray())
+                out.append(int(numberOf(n)) - 1);
+            return out;
+        };
+        QJsonObject state;
+        state.insert(QStringLiteral("risk"), risk);
+        state.insert(QStringLiteral("selectedNumbers"), zeroBased(json.value(QStringLiteral("selected_numbers"))));
+        state.insert(QStringLiteral("drawnNumbers"), zeroBased(json.value(QStringLiteral("drawn_numbers"))));
+        const QJsonValue id = json.value(QStringLiteral("bet_id"));
+        QJsonObject bet;
+        bet.insert(QStringLiteral("id"), id.isString() ? id.toString() : QString::number(qint64(numberOf(id))));
+        bet.insert(QStringLiteral("amount"), amount);
+        bet.insert(QStringLiteral("payout"), payout);
+        bet.insert(QStringLiteral("payoutMultiplier"), mult);
+        bet.insert(QStringLiteral("active"), false);
+        bet.insert(QStringLiteral("game"), QStringLiteral("keno"));
+        bet.insert(QStringLiteral("state"), state);
+        LiveBetResult r = gameResult(Game::Keno, bet, params, requestedAmount);
+        if (json.contains(QStringLiteral("balance")))
+            r.balanceAfter = numberOf(json.value(QStringLiteral("balance")));
+        emit diceFinished(r);
+    });
+}
+
+// Pasino plinko: POST https://api.pasino.com/plinko/play  (JSON sent as x-www-form-urlencoded)
+//   {"token","language","bet_amt":"0.00100000","pins":"16" (rows 8-16),
+//    "risk_multiplier":"1" (1 low, 2 medium, 3 high),"coin":"DOGE","client_seed":"<64 chars>"}
+// Answer: {"win":0|1,"payout":0.5 (payout multiplier),"roll_number":8 (the bucket),"coin",
+//   "balance","bet_id","success":true}
+void StakeClient::placePasinoPlinko(const GameBetRequest &request)
+{
+    const auto failNow = [this](const QString &msg) {
+        const LiveBetResult r = failed(msg);
+        QTimer::singleShot(0, this, [this, r] { emit diceFinished(r); });
+    };
+    QString endpoint;
+    QJsonObject stakeBody;
+    QString err;
+    if (!StakeGames::buildBetRequest(Game::Plinko, request.amount, m_currency, request.params,
+                                     &endpoint, &stakeBody, &err)) {
+        failNow(err);
+        return;
+    }
+    const QJsonObject vars = stakeBody.value(QStringLiteral("variables")).toObject();
+    const QString risk = vars.value(QStringLiteral("risk")).toString().toLower();
+    const int level = risk == QLatin1String("low") ? 1 : risk == QLatin1String("medium") ? 2
+                    : risk == QLatin1String("high") ? 3 : 0;
+    if (level == 0) {
+        failNow(tr("Pasino plinko: risk must be low, medium or high (not \"%1\").").arg(risk));
+        return;
+    }
+    const int rows = vars.value(QStringLiteral("rows")).toInt(8);
+    if (rows < 8 || rows > 16) {
+        failNow(tr("Pasino plinko: rows must be 8 - 16 (not %1).").arg(rows));
+        return;
+    }
+    ensurePasinoSeed(m_pasinoClientSeed);
+    QJsonObject body;
+    body.insert(QStringLiteral("bet_amt"), QString::number(request.amount, 'f', 8));
+    body.insert(QStringLiteral("pins"), QString::number(rows));
+    body.insert(QStringLiteral("risk_multiplier"), QString::number(level));
+    body.insert(QStringLiteral("coin"), PasinoTransport::apiCurrency(m_currency));
+    body.insert(QStringLiteral("client_seed"), m_pasinoClientSeed);
+    const QJsonObject params = request.params;
+    const double requestedAmount = request.amount;
+    m_transport->post(QStringLiteral("plinko/play"), body,
+                      [this, params, requestedAmount, risk, rows](const TransportReply &reply) {
+        if (!reply.ok) {
+            const bool isTimeout = (reply.status == 0);
+            const bool unknown = (reply.status >= 500);
+            if (reply.status == 0)
+                emit sessionLost(reply.error);
+            emit diceFinished(failed(reply.error, {}, isTimeout, unknown));
+            return;
+        }
+        const QJsonObject &json = reply.json;
+        const QString errText = PasinoTransport::errorText(json);
+        if (!errText.isEmpty()) {
+            LiveBetResult r = failed(errText, {}, isRetryable({}, errText), false);
+            r.retryDelayMs = fastRetryDelayMs({}, errText);
+            emit diceFinished(r);
+            return;
+        }
+        if (!json.contains(QStringLiteral("payout"))) {
+            const QString raw = QString::fromUtf8(QJsonDocument(json).toJson(QJsonDocument::Compact)).left(400);
+            emit diceFinished(failed(tr("Unexpected Pasino plinko response: %1").arg(raw), {}, false, true));
+            return;
+        }
+        // "payout" is the multiplier (0.5 = half the stake back); a "profit" is used when there.
+        const double amount = requestedAmount;
+        const double mult = numberOf(json.value(QStringLiteral("payout")));
+        const double payout = json.contains(QStringLiteral("profit"))
+                                  ? std::max(0.0, amount + numberOf(json.value(QStringLiteral("profit"))))
+                                  : amount * mult;
+        // Stake's plinko shape: state {risk, rows, point (the bucket the ball fell into)}.
+        QJsonObject state;
+        state.insert(QStringLiteral("risk"), risk);
+        state.insert(QStringLiteral("rows"), rows);
+        if (json.contains(QStringLiteral("roll_number")))
+            state.insert(QStringLiteral("point"), int(numberOf(json.value(QStringLiteral("roll_number")))));
+        const QJsonValue id = json.value(QStringLiteral("bet_id"));
+        QJsonObject bet;
+        bet.insert(QStringLiteral("id"), id.isString() ? id.toString() : QString::number(qint64(numberOf(id))));
+        bet.insert(QStringLiteral("amount"), amount);
+        bet.insert(QStringLiteral("payout"), payout);
+        bet.insert(QStringLiteral("payoutMultiplier"), amount > 0.0 ? payout / amount : mult);
+        bet.insert(QStringLiteral("active"), false);
+        bet.insert(QStringLiteral("game"), QStringLiteral("plinko"));
+        bet.insert(QStringLiteral("state"), state);
+        LiveBetResult r = gameResult(Game::Plinko, bet, params, requestedAmount);
+        if (json.contains(QStringLiteral("balance")))
+            r.balanceAfter = numberOf(json.value(QStringLiteral("balance")));
+        emit diceFinished(r);
+    });
+}
+
+// Pasino mines: POST https://api.pasino.com/mines/instant-play  (JSON sent as x-www-form-urlencoded)
+//   {"token","language","bet_amt":"0.00100000","coin":"DOGE","mines":3,"client_seed":"<64 chars>",
+//    "sweeped_locations":[0,7,8,13,24] (0 = top-left .. 24)}
+// Answer: {"status":"CASHED_OUT"|...,"win":1,"payout":1.91 (multiplier),"balance","profit" (net),
+//   "sweeped_tiles":[...],"mine_locations":{"mines":[22,14,5]},"bet_id","success":true}
+void StakeClient::placePasinoMines(const GameBetRequest &request, int tries)
+{
+    const auto failNow = [this](const QString &msg) {
+        const LiveBetResult r = failed(msg);
+        QTimer::singleShot(0, this, [this, r] { emit diceFinished(r); });
+    };
+    // Tiles and mines count as Stake's request has them (tiles 1-25 already sent 0-based, like Pasino).
+    QString endpoint;
+    QJsonObject stakeBody;
+    QString err;
+    if (!StakeGames::buildBetRequest(Game::Mines, request.amount, m_currency, request.params,
+                                     &endpoint, &stakeBody, &err)) {
+        failNow(err);
+        return;
+    }
+    ensurePasinoSeed(m_pasinoClientSeed);
+    QJsonObject body;
+    body.insert(QStringLiteral("bet_amt"), QString::number(request.amount, 'f', 8));
+    body.insert(QStringLiteral("coin"), PasinoTransport::apiCurrency(m_currency));
+    body.insert(QStringLiteral("mines"), stakeBody.value(QStringLiteral("minesCount")).toInt(1));
+    body.insert(QStringLiteral("client_seed"), m_pasinoClientSeed);
+    body.insert(QStringLiteral("sweeped_locations"), stakeBody.value(QStringLiteral("fields")).toArray());
+    const QJsonObject params = request.params;
+    const double requestedAmount = request.amount;
+    m_transport->post(QStringLiteral("mines/instant-play"), body, [this, params, requestedAmount, request,
+                                                               tries](const TransportReply &reply) {
+        if (!reply.ok) {
+            const bool isTimeout = (reply.status == 0);
+            const bool unknown = (reply.status >= 500);
+            if (reply.status == 0)
+                emit sessionLost(reply.error);
+            emit diceFinished(failed(reply.error, {}, isTimeout, unknown));
+            return;
+        }
+        const QJsonObject &json = reply.json;
+        const QString errText = PasinoTransport::errorText(json);
+        if (!errText.isEmpty() && containsCI(errText, "manual session")) {
+            // "Please finish your manual session first": right after a bet Pasino is often still
+            // settling it (like blackjack's "active session"). Nothing was placed: the same bet is
+            // sent again quietly, waiting 0.4 s, 0.8 s, ... 2 s. Only a game really left open on
+            // the website keeps refusing; then the run stops with an explanation.
+            if (tries < 15) {
+                QTimer::singleShot(400 * std::min(tries + 1, 5), this, [this, request, tries] {
+                    if (isPasino())
+                        placePasinoMines(request, tries + 1);
+                    else
+                        emit diceFinished(failed(tr("Pasino: the casino was switched before the bet was sent.")));
+                });
+                return;
+            }
+            emit diceFinished(failed(tr("Pasino mines: still refused after %1 tries - if a mines game you started "
+                                        "on pasino.com is open, finish it there (cash out or hit a mine), then "
+                                        "start again. (%2)").arg(tries + 1).arg(errText)));
+            return;
+        }
+        if (!errText.isEmpty()) {
+            LiveBetResult r = failed(errText, {}, isRetryable({}, errText), false);
+            r.retryDelayMs = fastRetryDelayMs({}, errText);
+            emit diceFinished(r);
+            return;
+        }
+        const QJsonValue minesValue = json.value(QStringLiteral("mine_locations"));
+        const QJsonArray mines = minesValue.isObject() ? minesValue.toObject().value(QStringLiteral("mines")).toArray()
+                                                       : minesValue.toArray();
+        if (!json.contains(QStringLiteral("payout")) && !json.contains(QStringLiteral("profit"))) {
+            const QString raw = QString::fromUtf8(QJsonDocument(json).toJson(QJsonDocument::Compact)).left(400);
+            emit diceFinished(failed(tr("Unexpected Pasino mines response: %1").arg(raw), {}, false, true));
+            return;
+        }
+        const double amount = requestedAmount;
+        const QJsonValue w = json.value(QStringLiteral("win"));
+        const bool win = w.isBool() ? w.toBool() : (w.isUndefined() ? numberOf(json.value(QStringLiteral("profit"))) >= 0.0
+                                                                    : numberOf(w) > 0.0);
+        double payout = 0.0;
+        if (win)
+            payout = json.contains(QStringLiteral("profit"))
+                         ? std::max(0.0, amount + numberOf(json.value(QStringLiteral("profit"))))
+                         : amount * numberOf(json.value(QStringLiteral("payout")));
+        const double mult = win ? (amount > 0.0 ? payout / amount : numberOf(json.value(QStringLiteral("payout")))) : 0.0;
+        // Stake's mines shape: state {mines, minesCount, rounds: [{field, payoutMultiplier}]}.
+        QJsonArray minesOut;
+        for (const QJsonValue &m : mines)
+            minesOut.append(int(numberOf(m)));
+        QJsonArray rounds;
+        for (const QJsonValue &f : json.value(QStringLiteral("sweeped_tiles")).toArray()) {
+            const int field = int(numberOf(f));
+            QJsonObject r;
+            r.insert(QStringLiteral("field"), field);
+            r.insert(QStringLiteral("payoutMultiplier"), minesOut.contains(field) ? 0.0 : mult);
+            rounds.append(r);
+        }
+        QJsonObject state;
+        state.insert(QStringLiteral("mines"), minesOut);
+        state.insert(QStringLiteral("minesCount"), int(minesOut.size()));
+        state.insert(QStringLiteral("rounds"), rounds);
+        const QJsonValue id = json.value(QStringLiteral("bet_id"));
+        QJsonObject bet;
+        bet.insert(QStringLiteral("id"), id.isString() ? id.toString() : QString::number(qint64(numberOf(id))));
+        bet.insert(QStringLiteral("amount"), amount);
+        bet.insert(QStringLiteral("payout"), payout);
+        bet.insert(QStringLiteral("payoutMultiplier"), mult);
+        bet.insert(QStringLiteral("active"), false);
+        bet.insert(QStringLiteral("game"), QStringLiteral("mines"));
+        bet.insert(QStringLiteral("state"), state);
+        LiveBetResult r = gameResult(Game::Mines, bet, params, requestedAmount);
+        if (json.contains(QStringLiteral("balance")))
             r.balanceAfter = numberOf(json.value(QStringLiteral("balance")));
         emit diceFinished(r);
     });

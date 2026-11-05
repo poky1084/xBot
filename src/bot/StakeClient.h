@@ -337,6 +337,12 @@ private:
     QString m_currency;
     // Pasino sends the client seed with every bet ("client_seed"); set by rotateSeedPair().
     QString m_pasinoClientSeed;
+    // Pasino keno: POST keno/play (numbers 1-40, risk low / medium / high).
+    void placePasinoKeno(const GameBetRequest &request);
+    // Pasino plinko: POST plinko/play (pins = rows 8-16, risk_multiplier 1 low / 2 medium / 3 high).
+    void placePasinoPlinko(const GameBetRequest &request);
+    // Pasino mines: POST mines/instant-play (all tiles in one request, 0-24).
+    void placePasinoMines(const GameBetRequest &request, int tries = 0);
     // Pasino blackjack: POST blackjack/play (new hand), blackjack/hit | stand | double | split.
     // No insurance on Pasino (scripts' BLACKJACK_INSURANCE is refused).
     void placePasinoBlackjack(const GameBetRequest &request, bool redeal = false);

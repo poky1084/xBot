@@ -575,7 +575,7 @@ QList<Game> gamesForCasino(const QString &casinoKey)
     if (k == QLatin1String("wolfbet"))
         return {Game::Dice, Game::Limbo, Game::Keno, Game::Plinko, Game::Hilo};
     if (k == QLatin1String("pasino"))
-        return {Game::Dice, Game::Limbo, Game::Blackjack};
+        return {Game::Dice, Game::Limbo, Game::Keno, Game::Mines, Game::Plinko, Game::Blackjack};
     return {Game::Dice, Game::Limbo}; // Tower, Winna
 }
 
@@ -583,10 +583,11 @@ QStringList unsupportedChoices(const QString &casinoKey, Game game, const QStrin
 {
     const QString k = casinoKey.trimmed().toLower();
     if ((k == QLatin1String("shuffle") || k == QLatin1String("goated") || k == QLatin1String("wolfbet")
-         || k == QLatin1String("duel"))
+         || k == QLatin1String("duel") || k == QLatin1String("pasino"))
         && game == Game::Plinko && key == QLatin1String("risk"))
         return {QStringLiteral("expert")}; // low / medium / high only
-    if (k == QLatin1String("wolfbet") && game == Game::Keno && key == QLatin1String("risk"))
+    if ((k == QLatin1String("wolfbet") || k == QLatin1String("pasino")) && game == Game::Keno
+        && key == QLatin1String("risk"))
         return {QStringLiteral("classic")}; // low / medium / high only
     // Road-crossing difficulty: Duel's Beef calls its top level "extreme", the others "expert".
     if (game == Game::Chicken && key == QLatin1String("difficulty"))
@@ -648,7 +649,7 @@ QList<ParamSpec> paramSpecs(Game game)
                      ints({1, 2, 3}), {}, 0, 0,
                      QStringLiteral("Grid: 1=top-left, 25=bottom-right (5×5, row by row)"))};
     case Game::Plinko:
-        return {spec(QStringLiteral("rows"), QStringLiteral("Rows:"), T::Int, 8, {}, 8, 16),
+        return {dropdownSpec(spec(QStringLiteral("rows"), QStringLiteral("Rows:"), T::Int, 8, {}, 8, 16)),
                 spec(QStringLiteral("risk"), QStringLiteral("Risk:"), T::Choice, QStringLiteral("low"),
                      {QStringLiteral("low"), QStringLiteral("medium"), QStringLiteral("high"), QStringLiteral("expert")})};
     case Game::Wheel:
