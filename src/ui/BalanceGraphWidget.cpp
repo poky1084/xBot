@@ -96,7 +96,7 @@ void BalanceGraphWidget::paintEvent(QPaintEvent *event)
     QPainter p(this);
 
     const bool dark = palette().window().color().lightness() < 128;
-    p.fillRect(rect(), dark ? QColor(0x23, 0x26, 0x29) : QColor(0xf7, 0xf8, 0xfa));
+    p.fillRect(rect(), dark ? QColor(0x1d, 0x1f, 0x22) : QColor(0xf7, 0xf8, 0xfa));
 
     const QRect r = plotRect();
     const qsizetype n = m_samples.size();
@@ -178,7 +178,7 @@ void BalanceGraphWidget::paintEvent(QPaintEvent *event)
             const QColor textColor = dark ? QColor(0xe6, 0xe8, 0xea) : QColor(0x20, 0x24, 0x28);
             p.setPen(QPen(dark ? QColor(0x9a, 0xa0, 0xa6) : QColor(0x8a, 0x90, 0x96), 1, Qt::DashLine));
             p.drawLine(QPointF(x, r.top()), QPointF(x, r.bottom()));
-            p.setPen(QPen(dark ? QColor(0x23, 0x26, 0x29) : Qt::white, 1.5));
+            p.setPen(QPen(dark ? QColor(0x1d, 0x1f, 0x22) : Qt::white, 1.5));
             p.setBrush(v >= 0.0 ? green : red);
             p.drawEllipse(hp, 3.5, 3.5);
             p.setBrush(Qt::NoBrush);
@@ -200,7 +200,7 @@ void BalanceGraphWidget::paintEvent(QPaintEvent *event)
             if (by + box.height() > r.bottom())
                 by = hp.y() - 8 - box.height();
             box.moveTo(std::max<double>(r.left(), bx), std::max<double>(r.top(), by));
-            QColor bg = dark ? QColor(0x23, 0x26, 0x29) : QColor(0xf7, 0xf8, 0xfa);
+            QColor bg = dark ? QColor(0x1d, 0x1f, 0x22) : QColor(0xf7, 0xf8, 0xfa);
             bg.setAlpha(210);
             p.fillRect(box, bg);
             p.setPen(textColor);

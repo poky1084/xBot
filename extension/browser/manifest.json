@@ -1,5 +1,5 @@
 {
-  "name": "xBot Request Proxy",
+  "name": "xBot Request Socket",
   "description": "Forwards xBot's requests to the casino tab you have open (Stake, Shuffle, Goated, Wolfbet, Duel, Paradice, Pasino, Tower, Winna) and sends the answers back.",
   "manifest_version": 3,
   "version": "2.3.0",
