@@ -1134,7 +1134,7 @@ void MainWindow::createSidebar()
         {tr("All"), QStringLiteral(":/icons/filter-all.svg")},
         {tr("Wins"), QStringLiteral(":/icons/checked-completed.svg")},
         {tr("Losses"), QStringLiteral(":/icons/error.svg")},
-        {tr("Big wins (10x+)"), QStringLiteral(":/icons/filter-active.svg")},
+        {tr("Big wins"), QStringLiteral(":/icons/filter-active.svg")},
     };
 
     auto *group = new QButtonGroup(this);
@@ -4691,7 +4691,7 @@ void MainWindow::updateFilterCounts()
         case 0: count = s.bets; break;
         case 1: count = s.wins; break;
         case 2: count = s.losses; break;
-        case 3: count = s.bigWins; break;
+        case 3: count = m_model->bigWinCount(); break; // highest 20 wins of the session
         }
         btn->setText(QStringLiteral("%1 (%2)").arg(base).arg(count));
     }

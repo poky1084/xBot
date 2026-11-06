@@ -32,6 +32,11 @@ public:
 
     enum Filter { All, Wins, Losses, BigWins };
 
+    // "Big wins": the highest-multiplier wins of the session, highest on top. Kept apart
+    // from the 1000-row list so a big win stays here after it falls off the bet list.
+    static constexpr int kMaxBigWins = 20;
+    int bigWinCount() const { return m_top.size(); }
+
     // Rows kept in the bet list; older bets drop off the bottom.
     static constexpr int kMaxRows = 1000;
 
@@ -66,7 +71,7 @@ public:
     void setResolvedIid(const QString &betId, const QString &iid);
 
     int totalBets() const { return m_rows.size(); }
-    const BetRecord &recordAt(int visualRow) const { return m_rows.at(m_visible.at(visualRow)); }
+    const BetRecord &recordAt(int visualRow) const { return source().at(m_visible.at(visualRow)); }
 
     static QString formatAmount(double value, int decimals = 8);
 
@@ -77,9 +82,14 @@ signals:
 
 private:
     bool passes(const BetRecord &b) const;
+    bool betIdInTop(const QString &betId) const; // keeps its resolved iid when it leaves the list
+    bool addBigWin(const BetRecord &record); // true when the record entered the top list
+    // Rows m_visible indexes into: the big-win list in that filter, else every bet.
+    const QVector<BetRecord> &source() const { return m_filter == BigWins ? m_top : m_rows; }
     void rebuildVisible();
 
     QVector<BetRecord> m_rows;   // everything, newest appended last
+    QVector<BetRecord> m_top;    // big wins, highest multiplier first (kMaxBigWins)
     QHash<QString, QString> m_resolved; // numeric betId -> iid ("casino:...")
     QVector<int> m_visible;      // indices into m_rows after filter+search
     Filter m_filter = All;

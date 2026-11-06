@@ -29,7 +29,7 @@ QVariant BetHistoryModel::data(const QModelIndex &index, int role) const
     if (!index.isValid() || index.row() >= m_visible.size())
         return {};
 
-    const BetRecord &rec = m_rows.at(m_visible.at(index.row()));
+    const BetRecord &rec = source().at(m_visible.at(index.row()));
     const bool win = rec.win;
 
     if (role == Qt::BackgroundRole) {
@@ -140,8 +140,51 @@ QVariant BetHistoryModel::headerData(int section, Qt::Orientation orientation, i
     }
 }
 
+bool BetHistoryModel::betIdInTop(const QString &betId) const
+{
+    if (betId.isEmpty())
+        return false;
+    for (const BetRecord &r : m_top)
+        if (r.betId == betId)
+            return true;
+    return false;
+}
+
+bool BetHistoryModel::addBigWin(const BetRecord &record)
+{
+    if (!record.win)
+        return false;
+    // Below the ones already there on an equal multiplier: the earlier big win keeps its place.
+    int pos = 0;
+    while (pos < m_top.size() && m_top.at(pos).mult >= record.mult)
+        ++pos;
+    if (pos >= kMaxBigWins)
+        return false;
+    m_top.insert(pos, record);
+    while (m_top.size() > kMaxBigWins)
+        m_top.removeLast();
+    return true;
+}
+
 void BetHistoryModel::addBet(const BetRecord &record)
 {
+    const bool topChanged = addBigWin(record);
+    if (m_filter == BigWins) {
+        // Only 20 rows, re-sorted by multiplier: rebuild them when the list changed.
+        m_rows.prepend(record);
+        if (m_rows.size() > kMaxRows) {
+            if (!betIdInTop(m_rows.last().betId))
+                m_resolved.remove(m_rows.last().betId);
+            m_rows.removeLast();
+        }
+        if (topChanged) {
+            beginResetModel();
+            rebuildVisible();
+            endResetModel();
+        }
+        return;
+    }
+
     // Incremental insert (no model reset): a reset snaps the view back to the
     // top and drops the selection on every bet, which made the list jump while
     // the user was scrolling or had a row selected.
@@ -164,7 +207,8 @@ void BetHistoryModel::addBet(const BetRecord &record)
             emit rowAboutToBeDropped(m_visible.size() - 1);
             beginRemoveRows({}, m_visible.size() - 1, m_visible.size() - 1);
         }
-        m_resolved.remove(m_rows.last().betId);
+        if (!betIdInTop(m_rows.last().betId))
+            m_resolved.remove(m_rows.last().betId);
         m_rows.removeLast();
         if (wasVisible) {
             m_visible.removeLast();
@@ -177,6 +221,7 @@ void BetHistoryModel::clear()
 {
     beginResetModel();
     m_rows.clear();
+    m_top.clear();
     m_resolved.clear();
     rebuildVisible();
     endResetModel();
@@ -186,7 +231,7 @@ QString BetHistoryModel::betIdAt(int visualRow) const
 {
     if (visualRow < 0 || visualRow >= m_visible.size())
         return {};
-    return m_rows.at(m_visible.at(visualRow)).betId;
+    return source().at(m_visible.at(visualRow)).betId;
 }
 
 void BetHistoryModel::setResolvedIid(const QString &betId, const QString &iid)
@@ -244,7 +289,7 @@ bool BetHistoryModel::passes(const BetRecord &b) const
         m_filter == All
         || (m_filter == Wins && b.win)
         || (m_filter == Losses && !b.win)
-        || (m_filter == BigWins && b.win && b.mult >= 10.0);
+        || m_filter == BigWins; // m_top only holds big wins
     const bool passesSearch =
         m_search.isEmpty()
         || QString::number(b.nonce).contains(m_search, Qt::CaseInsensitive)
@@ -256,10 +301,11 @@ bool BetHistoryModel::passes(const BetRecord &b) const
 
 void BetHistoryModel::rebuildVisible()
 {
+    const QVector<BetRecord> &rows = source();
     m_visible.clear();
-    m_visible.reserve(m_rows.size());
-    for (int i = 0; i < m_rows.size(); ++i) {
-        if (passes(m_rows.at(i)))
+    m_visible.reserve(rows.size());
+    for (int i = 0; i < rows.size(); ++i) {
+        if (passes(rows.at(i)))
             m_visible.append(i);
     }
 }
