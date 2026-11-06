@@ -154,9 +154,10 @@ bool BetHistoryModel::addBigWin(const BetRecord &record)
 {
     if (!record.win)
         return false;
-    // Below the ones already there on an equal multiplier: the earlier big win keeps its place.
+    // Above the ones already there on an equal multiplier: the latest hit goes on top, and
+    // when the list is full the oldest win of the lowest multiplier is the one that drops out.
     int pos = 0;
-    while (pos < m_top.size() && m_top.at(pos).mult >= record.mult)
+    while (pos < m_top.size() && m_top.at(pos).mult > record.mult)
         ++pos;
     if (pos >= kMaxBigWins)
         return false;
