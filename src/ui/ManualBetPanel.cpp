@@ -469,6 +469,9 @@ ManualBetPanel::ManualBetPanel(QWidget *parent)
     m_params->setHiddenKeys({QStringLiteral("suitMode"), QStringLiteral("hiloPattern")});
     m_params->setVisible(false);
     connect(m_params, &GameParamsWidget::paramsChanged, this, &ManualBetPanel::gameChanged);
+    // Tome of Life's bonus buy shows its cost: 37x the bet amount.
+    connect(m_amountSpin, &QDoubleSpinBox::valueChanged, m_params, &GameParamsWidget::setBetAmount);
+    m_params->setBetAmount(m_amountSpin->value());
 
     // Hilo: play a round by hand, like the C# bot (New Game deals the start card).
     m_hiloBox = new QWidget;

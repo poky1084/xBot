@@ -135,6 +135,9 @@ AutoBetPanel::AutoBetPanel(QWidget *parent)
                             "Manual bets use the Manual Bet tab's settings."));
     m_params->setVisible(false);
     grid->addWidget(m_params, 1, 0, 2, 2);
+    // Tome of Life's bonus buy shows its cost: 37x the base bet.
+    connect(m_baseBetSpin, &QDoubleSpinBox::valueChanged, m_params, &GameParamsWidget::setBetAmount);
+    m_params->setBetAmount(m_baseBetSpin->value());
 
     const QString oddsTip =
         tr("The odds the auto-bet plays at. Changing one updates the other.\n"

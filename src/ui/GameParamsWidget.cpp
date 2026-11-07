@@ -126,6 +126,18 @@ void GameParamsWidget::setGame(Game game)
     rebuild();
 }
 
+void GameParamsWidget::setBetAmount(double amount)
+{
+    m_betAmount = amount;
+    updateBonusCost();
+}
+
+void GameParamsWidget::updateBonusCost()
+{
+    if (m_bonusCost)
+        m_bonusCost->setText(QString::number(m_betAmount * m_bonusCostFactor, 'f', 8));
+}
+
 void GameParamsWidget::setCasino(const QString &casinoKey)
 {
     const QString key = casinoKey.trimmed().toLower();
@@ -147,6 +159,7 @@ void GameParamsWidget::rebuild()
     while (m_form->rowCount() > 0)
         m_form->removeRow(0); // deletes the label and editor widgets
     m_fields.clear();
+    m_bonusCost = nullptr;
 
     const QJsonObject values = valuesFor(m_game);
     for (const ParamSpec &spec : StakeGames::paramSpecs(m_game)) {
@@ -253,6 +266,34 @@ void GameParamsWidget::rebuild()
             check->setChecked(v.isBool() ? v.toBool() : spec.def.toBool());
             connect(check, &QCheckBox::toggled, this, [this] { storeCurrent(); });
             editor = check;
+            spanRow = true;
+            break;
+        }
+        case ParamType::BonusBuy: {
+            // [x] Bonus buy  [cost]: the cost follows the tab's bet amount.
+            auto *host = new QWidget;
+            auto *line = new QHBoxLayout(host);
+            line->setContentsMargins(0, 0, 0, 0);
+            line->setSpacing(6);
+            auto *check = new QCheckBox(spec.label);
+            check->setChecked(v.isBool() ? v.toBool()
+                              : v.isString() ? v.toString().compare(QLatin1String("true"), Qt::CaseInsensitive) == 0
+                                             : spec.def.toBool());
+            auto *cost = new QLineEdit;
+            cost->setReadOnly(true);
+            cost->setToolTip(tr("What the bonus buy costs: %1x the bet amount").arg(spec.max));
+            cost->setEnabled(check->isChecked());
+            line->addWidget(check);
+            line->addWidget(cost, 1);
+            connect(check, &QCheckBox::toggled, this, [this, cost](bool on) {
+                cost->setEnabled(on);
+                storeCurrent();
+            });
+            m_bonusCost = cost;
+            m_bonusCostFactor = spec.max;
+            updateBonusCost();
+            editor = check;
+            rowWidget = host;
             spanRow = true;
             break;
         }
@@ -460,6 +501,7 @@ QJsonValue GameParamsWidget::readEditor(const Field &field) const
         return t.isEmpty() ? spec.def : QJsonValue(t);
     }
     case ParamType::Bool:
+    case ParamType::BonusBuy:
         return static_cast<QCheckBox *>(field.editor)->isChecked();
     case ParamType::DrillPick:
         return field.editor->property("pick").toInt();

@@ -719,8 +719,12 @@ QList<ParamSpec> paramSpecs(Game game)
         return {spec(QStringLiteral("difficulty"), QStringLiteral("Difficulty:"), T::Choice, QStringLiteral("easy"), kEasyToExpert),
                 spec(QStringLiteral("tiles"), QStringLiteral("Tiles:"), T::IntList, ints({2}))};
     case Game::ScarabSpin:
-    case Game::TomeOfLife:
         return {spec(QStringLiteral("lines"), QStringLiteral("Lines:"), T::Int, 1, {}, 1, 20)};
+    case Game::TomeOfLife:
+        return {spec(QStringLiteral("lines"), QStringLiteral("Lines:"), T::Int, 1, {}, 1, 20),
+                spec(QStringLiteral("bonusbuy"), QStringLiteral("Bonus buy"), T::BonusBuy, false, {}, 0,
+                     kTomeBonusBuyCost,
+                     QStringLiteral("Buys the 15 free spins: costs 37x the bet amount (shown next to it)"))};
     case Game::Diamonds:
         return {spec(QStringLiteral("colors"), QStringLiteral("Colors:"), T::Colors, QString(), {}, 0, 0,
                      QStringLiteral("Select up to 5 colors in order")),
@@ -823,7 +827,7 @@ QStringList scriptVariables(Game game)
     case Game::Tarot:       return L({"difficulty"});
     case Game::VideoPoker:  return L({"target"});
     case Game::ScarabSpin:
-    case Game::TomeOfLife:  return L({"lines"});
+    case Game::TomeOfLife:  return L({"lines", "bonusbuy"});
     case Game::Bars:        return L({"difficulty", "tiles"});
     case Game::Chicken:
     case Game::GoatRun:     return L({"difficulty", "steps"});
@@ -860,6 +864,9 @@ QStringList missingScriptVariables(Game game, const QJsonObject &params, const Q
         break;
     case Game::VideoPoker:
         break; // target nil / null = the optimal hold
+    case Game::TomeOfLife:
+        need("lines"); // bonusbuy is optional (false)
+        break;
     case Game::Primedice:
         need("condition");
         need("target1");
@@ -876,6 +883,25 @@ QStringList missingScriptVariables(Game game, const QJsonObject &params, const Q
         break;
     }
     return missing;
+}
+
+bool bonusBuy(Game game, const QJsonObject &params)
+{
+    if (game != Game::TomeOfLife)
+        return false;
+    const QJsonValue v = params.value(QStringLiteral("bonusbuy"));
+    if (v.isBool())
+        return v.toBool();
+    if (v.isString())
+        return v.toString().trimmed().compare(QLatin1String("true"), Qt::CaseInsensitive) == 0;
+    if (v.isDouble())
+        return v.toDouble() != 0.0;
+    return false;
+}
+
+double costMultiplier(Game game, const QJsonObject &params)
+{
+    return bonusBuy(game, params) ? kTomeBonusBuyCost : 1.0;
 }
 
 double fixedStake(Game game, const QJsonObject &params, bool *fixed)
@@ -1235,7 +1261,17 @@ bool buildBetRequest(Game game, double amount, const QString &currency, const QJ
         break;
     case Game::TomeOfLife:
         b.insert(QStringLiteral("lines"), toInt(val("lines"), 1));
-        ep = QStringLiteral("_api/casino/slots-tome-of-life/bet");
+        if (bonusBuy(game, p)) {
+            // Buys the free spins (Stake charges 37x "amount").
+            static const char alphabet[] = "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789";
+            QString id;
+            for (int i = 0; i < 21; ++i)
+                id += QLatin1Char(alphabet[QRandomGenerator::global()->bounded(62)]);
+            b.insert(QStringLiteral("identifier"), id);
+            ep = QStringLiteral("_api/casino/slots-tome-of-life/bonus");
+        } else {
+            ep = QStringLiteral("_api/casino/slots-tome-of-life/bet");
+        }
         break;
     case Game::Bars: {
         const QJsonArray tiles = toIntArray(val("tiles"));
@@ -1828,6 +1864,8 @@ Summary summarize(Game game, const QJsonObject &bet, const QJsonObject &params)
     case Game::ScarabSpin:
     case Game::TomeOfLife:
         s.targetText = QStringLiteral("%1 lines").arg(toInt(params.value(QStringLiteral("lines")), 1));
+        if (bonusBuy(game, params))
+            s.targetText += QStringLiteral(" buy");
         break;
     case Game::BlueSamurai:
     case Game::Diamonds:

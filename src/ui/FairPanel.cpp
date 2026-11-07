@@ -264,6 +264,8 @@ void FairPanel::updateVerifyPreview()
         gameLine += tr(" (difficulty from the Manual Bet tab)"); break;
     case Game::Primedice: gameLine += tr(" (condition and targets from the Manual Bet tab)"); break;
     case Game::Moles: gameLine += tr(" (moles count and picks from the Manual Bet tab)"); break;
+    case Game::TomeOfLife: gameLine += tr(" (lines and bonus buy from the Manual Bet tab)"); break;
+    case Game::ScarabSpin: gameLine += tr(" (lines from the Manual Bet tab)"); break;
     default: break;
     }
     m_verifyGame->setText(gameLine);

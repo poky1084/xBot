@@ -90,7 +90,7 @@ protected:
             // Stake's other games (reference bot variables)
             "bet", "currentBet", "round", "currentprofit", "winstreak", "losestreak", "numbers",
             "risk", "fields", "mines", "rows", "segments", "startcard", "pattern", "chips", "eggs",
-            "difficulty", "guesses", "pumps", "rolls", "lines", "tiles", "steps", "pick", "moles",
+            "difficulty", "guesses", "pumps", "rolls", "lines", "bonusbuy", "tiles", "steps", "pick", "moles",
             "picks", "condition", "target1", "target2", "target3", "target4", "checkTargetHit",
             "HILO_BET_HIGH", "HILO_BET_LOW", "HILO_BET_EQUAL", "HILO_SKIP", "HILO_CASHOUT", "beep"};
         static const QSet<QString> builtins = {
@@ -311,7 +311,7 @@ protected:
             // Stake's other games (reference bot variables)
             "bet", "currentBet", "round", "currentprofit", "winstreak", "losestreak", "numbers",
             "risk", "fields", "mines", "rows", "segments", "startcard", "pattern", "chips", "eggs",
-            "difficulty", "guesses", "pumps", "rolls", "lines", "tiles", "steps", "pick", "moles",
+            "difficulty", "guesses", "pumps", "rolls", "lines", "bonusbuy", "tiles", "steps", "pick", "moles",
             "picks", "condition", "target1", "target2", "target3", "target4", "checkTargetHit",
             "getOptimalHold", "getTargetedHold", "evaluateHand",
             "HILO_BET_HIGH", "HILO_BET_LOW", "HILO_BET_EQUAL", "HILO_SKIP", "HILO_CASHOUT", "beep"};
@@ -1083,7 +1083,7 @@ void LuaEditorDock::onHelp()
         "<code>serverSeed, clientSeed, nonce</code><br><br>"
         "<b>Stake game variables</b><br>"
         "<code>numbers, risk, fields, mines, rows, segments, eggs, difficulty, guesses, pumps, "
-        "rolls, tiles, steps, pick, moles, picks, lines, condition, target1, target2, target3, "
+        "rolls, tiles, steps, pick, moles, picks, lines, bonusbuy, condition, target1, target2, target3, "
         "target4, chips, startcard, currentBet</code><br><br>"
         "<b>Read only</b><br>"
         "<code>win, previousbet, lastprofit, currentprofit, roll, balance, profit, bets, wins, "

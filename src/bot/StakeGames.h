@@ -44,6 +44,7 @@ enum class ParamType {
     Bool,       // check box ("Stop on pattern")
     Colors,     // diamonds: up to 5 colors picked in order -> "red,blue,..."
     DrillPick,  // drill: the blue / yellow / green drill buttons -> 1 / 2 / 3
+    BonusBuy,   // [x] Bonus buy [cost]: a check box and what the buy costs (`max` x the bet amount)
     Note        // text only, no value ("No extra parameters — base bet only.")
 };
 
@@ -108,6 +109,14 @@ QStringList missingScriptVariables(Game game, const QJsonObject &params, const Q
 // with chips that carry amounts. Returns that total and sets `fixed`; the base bet / nextbet
 // is not used for them (like the C# bot).
 double fixedStake(Game game, const QJsonObject &params, bool *fixed);
+
+// Tome of Life's bonus buy costs this many times the bet amount (the request's "amount" stays
+// the bet amount; Stake charges 37x it).
+constexpr double kTomeBonusBuyCost = 37.0;
+// The settings buy Tome of Life's bonus (params "bonusbuy": true / "true").
+bool bonusBuy(Game game, const QJsonObject &params);
+// What one bet costs as a multiple of its amount (37 for a bonus buy, else 1): the balance check.
+double costMultiplier(Game game, const QJsonObject &params);
 
 // A game setting that stops the run after this settled bet (C# bot): diamonds "Stop on
 // pattern", hilo "Stop on". Empty = keep going.

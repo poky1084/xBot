@@ -489,15 +489,17 @@ SlotSpin tomeSpin(const QVector<double> &f, int lines, bool bonus)
 
 // A whole round: the base spin, then 15 free spins (x3) on 3+ scatters, +15 on a retrigger, at
 // most 180. Returns the total multiplier; `spins` / `freeSpins` count what was played.
-double tomeRound(const Seeds &s, int lines, int *freeSpins)
+// `buy`: Tome of Life's bonus buy - the 15 free spins straight away (no base spin), from the
+// first floats of the bet.
+double tomeRound(const Seeds &s, int lines, int *freeSpins, bool buy = false)
 {
-    int remaining = 0;
-    int awarded = 0;
+    int remaining = buy ? 15 : 0;
+    int awarded = remaining;
     double units = 0.0;
     int index = 0;
-    for (; index == 0 || remaining > 0; ++index) {
-        const SlotSpin sp = tomeSpin(floats(s, 5, index * 20), lines, index > 0);
-        if (index == 0) {
+    for (; (index == 0 && !buy) || remaining > 0; ++index) {
+        const SlotSpin sp = tomeSpin(floats(s, 5, index * 20), lines, buy || index > 0);
+        if (index == 0 && !buy) {
             remaining = sp.scatters >= 3 ? 15 : 0;
             awarded = remaining;
         } else {
@@ -511,7 +513,7 @@ double tomeRound(const Seeds &s, int lines, int *freeSpins)
         units += std::round(sp.multiplier * lines);
     }
     if (freeSpins)
-        *freeSpins = index - 1;
+        *freeSpins = buy ? index : index - 1;
     return units / lines;
 }
 
@@ -1566,9 +1568,14 @@ QString verifyHtml(Game game, const Seeds &s, const QJsonObject &params)
     case Game::TomeOfLife:
     case Game::ScarabSpin: {
         const int lines20 = std::clamp(int(number(param(p, game, "lines"), 20)), 1, 20);
+        const bool buy = StakeGames::bonusBuy(game, p);
         int free = 0;
-        const double m = tomeRound(s, lines20, &free);
-        line(QStringLiteral("Result (%1 lines)").arg(lines20), num(m, 2) + QLatin1Char('x'));
+        const double m = tomeRound(s, lines20, &free, buy);
+        if (buy)
+            line(QStringLiteral("Bonus buy (%1 lines)").arg(lines20),
+                 QStringLiteral("%1x the bet = %2x the buy").arg(num(m, 2), num(m / StakeGames::kTomeBonusBuyCost, 4)));
+        else
+            line(QStringLiteral("Result (%1 lines)").arg(lines20), num(m, 2) + QLatin1Char('x'));
         if (free > 0)
             lines << gray(QStringLiteral("%1 free spins played").arg(free));
         break;
@@ -1761,6 +1768,11 @@ QJsonObject SimulatedStakeTransport::handle(const QString &path, const QJsonObje
     if (p == QLatin1String("_api/casino/bars/bet")) return weighted(Game::Bars, body);
     if (p == QLatin1String("_api/casino/slots/bet")) return slotGame(Game::ScarabSpin, body);
     if (p == QLatin1String("_api/casino/slots-tome-of-life/bet")) return slotGame(Game::TomeOfLife, body);
+    if (p == QLatin1String("_api/casino/slots-tome-of-life/bonus")) {
+        QJsonObject b = body;
+        b.insert(QStringLiteral("_bonusBuy"), true);
+        return slotGame(Game::TomeOfLife, b);
+    }
     if (p == QLatin1String("_api/casino/slots-samurai/bet")) return slotGame(Game::BlueSamurai, body);
     if (p == QLatin1String("_api/casino/rock-paper-scissors/bet")) return rps(body);
     if (p == QLatin1String("_api/casino/hilo/bet")) return hiloBet(body);
@@ -2321,9 +2333,18 @@ QJsonObject SimulatedStakeTransport::slotGame(Game game, const QJsonObject &b)
             return apiError(QStringLiteral("%1: 1 to 20 lines.").arg(gameDisplayName(game)));
         s = takeSeeds();
         int free = 0;
-        mult = tomeRound(s, lines, &free);
+        const bool buy = b.value(QStringLiteral("_bonusBuy")).toBool();
+        mult = tomeRound(s, lines, &free, buy);
         st.insert(QStringLiteral("lines"), lines);
         st.insert(QStringLiteral("freeSpins"), free);
+        if (buy) {
+            // Bought: Stake charges 37x the amount; the payout is the spins' total x the amount.
+            const double cost = floor8(amount * StakeGames::kTomeBonusBuyCost);
+            QJsonObject bet = betObject(QString::number(++m_betId), game, s, cost,
+                                        mult / StakeGames::kTomeBonusBuyCost, false, st);
+            bet.insert(QStringLiteral("payout"), floor8(amount * mult));
+            return wrap(QStringLiteral("slotsTomeOfLifeBonusBuyInBet"), bet);
+        }
     }
     return wrap(QStringLiteral("slotsBet"), betObject(QString::number(++m_betId), game, s, amount, mult, false, st));
 }

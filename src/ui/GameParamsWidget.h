@@ -10,6 +10,7 @@
 #include <QWidget>
 
 class QFormLayout;
+class QLineEdit;
 
 // Manual / Auto Bet tab: the settings of Stake's games other than dice / limbo, laid out like
 // the C# bot's game panels (keno numbers + risk, mines count + tiles, hilo pattern + start card,
@@ -32,6 +33,9 @@ public:
     Game game() const { return m_game; }
     // The game shows something here (inputs or a note).
     bool hasFields() const { return m_hasRows; }
+
+    // The bet amount of the tab: Tome of Life's bonus buy shows what it costs (37x it).
+    void setBetAmount(double amount);
 
     // The selected game's settings (BotConfig::gameParams).
     QJsonObject params() const;
@@ -67,4 +71,8 @@ private:
     bool m_hasRows = false;
     QStringList m_hiddenKeys;
     QString m_casino;
+    double m_betAmount = 0.0;
+    QLineEdit *m_bonusCost = nullptr; // bonus buy: its cost (set by rebuild())
+    double m_bonusCostFactor = 0.0;
+    void updateBonusCost();
 };

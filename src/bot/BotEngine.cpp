@@ -554,7 +554,8 @@ BetRecord BotEngine::rollOnce(const BotConfig &cfg)
         m_rollPending = false;
         bool fixedStake = false;
         const double stake = StakeGames::fixedStake(cfg.game, cfg.gameParams, &fixedStake);
-        const double amount = fixedStake ? stake : cfg.baseBet;
+        // A bonus buy costs 37x the bet amount.
+        const double amount = (fixedStake ? stake : cfg.baseBet) * StakeGames::costMultiplier(cfg.game, cfg.gameParams);
         if (amount < 0.0 || amount > m_stats.balance) {
             emit logMessage(tr("Bet %1 exceeds the available balance %2.")
                                 .arg(amount, 0, 'f', 8)
@@ -588,7 +589,8 @@ BetRecord BotEngine::rollOnce(const BotConfig &cfg)
         }
         bool fixedStake = false;
         const double stake = StakeGames::fixedStake(cfg.game, cfg.gameParams, &fixedStake);
-        const double amount = fixedStake ? stake : cfg.baseBet;
+        // A bonus buy costs 37x the bet amount.
+        const double amount = (fixedStake ? stake : cfg.baseBet) * StakeGames::costMultiplier(cfg.game, cfg.gameParams);
         if (amount < 0.0 || amount > m_stats.balance) {
             emit logMessage(tr("Bet %1 exceeds the available balance %2.")
                                 .arg(amount, 0, 'f', 8)
@@ -1690,13 +1692,15 @@ void BotEngine::placeNextBet()
         bool fixedStake = false;
         const double stake = StakeGames::fixedStake(m_runCfg.game, m_runCfg.gameParams, &fixedStake);
         const double bet = fixedStake ? stake : betAmount(m_nextBetSize);
-        if (m_retryNoBalance && bet >= 0.0 && bet > m_stats.balance) {
+        // What it costs: a bonus buy is 37x the bet amount.
+        const double cost = bet * StakeGames::costMultiplier(m_runCfg.game, m_runCfg.gameParams);
+        if (m_retryNoBalance && bet >= 0.0 && cost > m_stats.balance) {
             // Option "Retry bet when bet higher than balance": keep the run alive and look again in 5 s
             // (the balance is refreshed from the server in the meantime).
             if (!m_noBalanceLogged) {
                 m_noBalanceLogged = true;
                 emit logMessage(tr("Next bet %1 exceeds balance %2 - Retry betting...")
-                                    .arg(bet, 0, 'f', 8)
+                                    .arg(cost, 0, 'f', 8)
                                     .arg(m_stats.balance, 0, 'f', 8),
                                 true);
             }
@@ -1704,9 +1708,9 @@ void BotEngine::placeNextBet()
             return;
         }
         m_noBalanceLogged = false;
-        if (bet < 0.0 || bet > m_stats.balance) {
+        if (bet < 0.0 || cost > m_stats.balance) {
             stopWithReason(tr("halted (next bet %1 exceeds balance %2)")
-                               .arg(bet, 0, 'f', 8)
+                               .arg(cost, 0, 'f', 8)
                                .arg(m_stats.balance, 0, 'f', 8));
             return;
         }
@@ -1730,9 +1734,10 @@ void BotEngine::placeNextBet()
         bool fixedStake = false;
         const double stake = StakeGames::fixedStake(cfg.game, cfg.gameParams, &fixedStake);
         const double gameBet = fixedStake ? stake : betAmount(m_nextBetSize);
-        if (gameBet < 0.0 || gameBet > m_stats.balance) {
+        const double cost = gameBet * StakeGames::costMultiplier(cfg.game, cfg.gameParams); // bonus buy: 37x
+        if (gameBet < 0.0 || cost > m_stats.balance) {
             stopWithReason(tr("halted (next bet %1 exceeds balance %2)")
-                               .arg(gameBet, 0, 'f', 8)
+                               .arg(cost, 0, 'f', 8)
                                .arg(m_stats.balance, 0, 'f', 8));
             return;
         }
