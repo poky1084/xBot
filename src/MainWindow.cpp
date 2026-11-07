@@ -4486,6 +4486,7 @@ void MainWindow::updateModeWidgets()
         m_statusMode->setText(tr("Simulation"));
         m_statusMode->setStyleSheet(QStringLiteral("color:#737373;"));
     }
+    updateStatusWidgets(); // the balance shows its currency only in live mode
 
     updateFairTab();
     updateAutoOdds();
@@ -4698,9 +4699,9 @@ void MainWindow::updateStatusWidgets()
     if (!m_engine->isRunning())
         m_betsPerSecond = 0.0;
     m_statusSpeed->setText(QStringLiteral("%1/s").arg(m_betsPerSecond, 0, 'f', 1));
-    m_statusBalance->setText(QStringLiteral("%1 %2")
-                                 .arg(formatAmount(balance),
-                                      currencyLabel()));
+    // Simulation: the balance only (no currency).
+    m_statusBalance->setText(m_engine->liveMode() ? QStringLiteral("%1 %2").arg(formatAmount(balance), currencyLabel())
+                                                  : formatAmount(balance));
 }
 
 void MainWindow::updateFilterCounts()
