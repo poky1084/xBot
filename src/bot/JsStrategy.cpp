@@ -389,6 +389,12 @@ JsStrategy::Status JsStrategy::init(const QString &source, double balance, doubl
         m_engine->globalObject().setProperty(QStringLiteral("casino"), runCfg.casino);
     if (!runCfg.currency.isEmpty())
         m_engine->globalObject().setProperty(QStringLiteral("currency"), runCfg.currency);
+    if (!runCfg.serverSeed.isEmpty()) {
+        // Simulation: the seed pair it bets with (the script may set other ones).
+        m_engine->globalObject().setProperty(QStringLiteral("serverSeed"), runCfg.serverSeed);
+        m_engine->globalObject().setProperty(QStringLiteral("clientSeed"), runCfg.clientSeed);
+        m_engine->globalObject().setProperty(QStringLiteral("nonce"), double(runCfg.nonce));
+    }
     publish("startbalance", balance);
     publishBool("win", false);
     publish("previousbet", 0.0);
@@ -438,6 +444,12 @@ JsStrategy::Status JsStrategy::onBet(const BetInfo &info, double &nextBet, BotCo
         m_streak = m_streak < 0 ? m_streak - 1 : -1;
     }
 
+    if (!runCfg.serverSeed.isEmpty()) {
+        // Simulation: the seed pair it bets with (the script may set other ones).
+        m_engine->globalObject().setProperty(QStringLiteral("serverSeed"), runCfg.serverSeed);
+        m_engine->globalObject().setProperty(QStringLiteral("clientSeed"), runCfg.clientSeed);
+        m_engine->globalObject().setProperty(QStringLiteral("nonce"), double(runCfg.nonce));
+    }
     publishBool("win", info.win);
     publish("previousbet", info.bet);
     publishLastBet(info);
@@ -531,6 +543,33 @@ bool JsStrategy::readOutputs(double &nextBet, BotConfig &runCfg)
     } else {
         m_error = QStringLiteral("casino must be the string \"stake\", \"shuffle\", \"goated\", \"wolfbet\", \"duel\", \"paradice\", \"pasino\", \"tower\" or \"winna\"");
         return false;
+    }
+
+    // ---- serverSeed / clientSeed / nonce (simulation): another seed pair / nonce to bet with
+    if (!runCfg.serverSeed.isEmpty()) {
+        for (const char *name : {"serverSeed", "clientSeed"}) {
+            const QJSValue v = readGlobal(name);
+            if (v.isString()) {
+                const QString s = v.toString().trimmed();
+                if (!s.isEmpty())
+                    (qstrcmp(name, "serverSeed") == 0 ? runCfg.serverSeed : runCfg.clientSeed) = s;
+            } else if (!v.isUndefined() && !v.isNull()) {
+                m_error = QStringLiteral("%1 must be a string").arg(QLatin1String(name));
+                return false;
+            }
+        }
+        const QJSValue n = readGlobal("nonce");
+        if (n.isNumber()) {
+            const double d = n.toNumber();
+            if (!(d >= 1.0) || d != std::floor(d)) {
+                m_error = QStringLiteral("nonce must be a whole number from 1 (got %1)").arg(d);
+                return false;
+            }
+            runCfg.nonce = qint64(d);
+        } else if (!n.isUndefined() && !n.isNull()) {
+            m_error = QStringLiteral("nonce must be a whole number from 1");
+            return false;
+        }
     }
 
     // ---- currency (optional): the currency code to bet in, e.g. "btc" / "usdt"

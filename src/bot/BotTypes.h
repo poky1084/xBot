@@ -287,6 +287,11 @@ struct BotConfig
     int stopAfterBets = 0;     // 0 = unlimited
     QString casino;            // scripts: "stake" / "shuffle"; empty = unchanged
     QString currency;          // scripts: lowercase currency code to bet in ("btc", "usdt", ...); empty = unchanged
+    // Code mode in simulation: the seed pair and next nonce the simulation bets with (the
+    // scripts' serverSeed / clientSeed / nonce, which a script may also set). Empty = live mode.
+    QString serverSeed;
+    QString clientSeed;
+    qint64 nonce = 0;
     // Settings of the Stake games other than dice / limbo, keyed by the script variable names
     // of the reference bot (keno: {"risk", "numbers"}, mines: {"mines", "fields"}, ...).
     // See StakeGames::buildBetRequest() for what each game reads.

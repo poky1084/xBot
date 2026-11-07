@@ -51,6 +51,9 @@ public:
     QString clientSeed() const { return m_clientSeed; }
     void setClientSeed(const QString &seed);
     int nonce() const { return m_nonce; }
+    // The nonce of a new bet of Stake's other games (SimulatedStakeTransport): returns it and
+    // moves on to the next one, like a dice roll does.
+    qint64 takeNonce() { return m_nonce++; }
 
     // Overrides the running simulation with a fixed seed pair (used by the
     // Fairness tab's "Use these seeds for simulation" checkbox).

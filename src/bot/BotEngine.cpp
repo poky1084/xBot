@@ -1,6 +1,8 @@
 #include "bot/BotEngine.h"
 
+#include "bot/SimulatedProvider.h"
 #include "bot/StakeClient.h"
+#include "bot/StakeFair.h"
 #include "bot/StakeGames.h"
 
 #include <QJsonArray>
@@ -46,6 +48,93 @@ BotEngine::BotEngine(QObject *parent)
 }
 
 // ------------------------------------------------------------ live plumbing
+
+void BotEngine::setProvider(IDiceProvider *provider)
+{
+    m_provider = provider;
+    if (auto *sim = dynamic_cast<SimulatedProvider *>(provider)) {
+        // Stake's other games in simulation: the same requests as live, answered from the
+        // simulation's seed pair.
+        if (!m_simClient) {
+            m_simClient = new StakeClient(this);
+            connect(m_simClient, &StakeClient::diceFinished, this, &BotEngine::onLiveFinished);
+        }
+        delete m_simTransport;
+        m_simTransport = new SimulatedStakeTransport(sim, this);
+        m_simClient->setTransport(m_simTransport);
+        m_simClient->setCurrency(QStringLiteral("sim"));
+    }
+}
+
+// Code mode in simulation: the seed pair the script starts with (its serverSeed / clientSeed /
+// nonce). The "Verify a roll" seeds when "Use these seeds for simulation" is ticked, otherwise the
+// latest revealed pair from nonce 1, otherwise the active pair as it is (see setScriptSeedSource()).
+void BotEngine::prepareScriptSeeds()
+{
+    m_runCfg.serverSeed.clear();
+    m_runCfg.clientSeed.clear();
+    m_runCfg.nonce = 0;
+    auto *sim = dynamic_cast<SimulatedProvider *>(m_provider);
+    if (liveMode() || !sim)
+        return;
+    QString server, client, from;
+    qint64 nonce = 1;
+    if (m_scriptSeedSource && m_scriptSeedSource(server, client, nonce, from) && !server.isEmpty()
+        && !client.isEmpty()) {
+        sim->setServerSeed(server);
+        sim->setClientSeed(client);
+        sim->setNonce(std::max<qint64>(1, nonce));
+        emit simulationSeedsChanged();
+    }
+    if (from.isEmpty())
+        from = tr("the active seed pair");
+    emit logMessage(tr("Script seeds: %1 (nonce %2).").arg(from).arg(sim->nonce()), false);
+    syncScriptSeeds();
+}
+
+void BotEngine::syncScriptSeeds()
+{
+    auto *sim = dynamic_cast<SimulatedProvider *>(m_provider);
+    if (liveMode() || !sim)
+        return;
+    m_runCfg.serverSeed = sim->serverSeed();
+    m_runCfg.clientSeed = sim->clientSeed();
+    m_runCfg.nonce = sim->nonce();
+}
+
+// The script set serverSeed / clientSeed / nonce: the simulation bets with them from now on.
+void BotEngine::applyScriptSeeds()
+{
+    auto *sim = dynamic_cast<SimulatedProvider *>(m_provider);
+    if (liveMode() || !sim || m_runCfg.serverSeed.isEmpty())
+        return;
+    bool changed = false;
+    if (m_runCfg.serverSeed != sim->serverSeed()) {
+        sim->setServerSeed(m_runCfg.serverSeed);
+        changed = true;
+    }
+    if (m_runCfg.clientSeed != sim->clientSeed()) {
+        sim->setClientSeed(m_runCfg.clientSeed);
+        changed = true;
+    }
+    if (m_runCfg.nonce >= 1 && m_runCfg.nonce != sim->nonce()) {
+        sim->setNonce(m_runCfg.nonce);
+        changed = true;
+    }
+    if (changed)
+        emit simulationSeedsChanged();
+}
+
+StakeClient *BotEngine::gameClient() const
+{
+    return liveMode() ? m_live : m_simClient;
+}
+
+void BotEngine::clearSimulatedGames()
+{
+    if (m_simTransport)
+        m_simTransport->clearOpenGames();
+}
 
 void BotEngine::setLiveClient(StakeClient *client)
 {
@@ -117,11 +206,13 @@ static bool isGatewayError(const QString &error)
 void BotEngine::requestLiveBet(const BotConfig &cfg, double betSize, bool manual)
 {
     m_inFlight = true;
+    m_inFlightClock.start();
     m_inFlightManual = manual;
     m_inFlightCfg = cfg;
     // The row of this bet names the casino it went to, even if the casino is switched before
     // its result arrives (Casino menu / script).
-    m_inFlightCasino = m_casinoGetter ? m_casinoGetter().trimmed().toLower() : QString();
+    // Simulated bets have no casino (like simulated dice rolls).
+    m_inFlightCasino = (liveMode() && m_casinoGetter) ? m_casinoGetter().trimmed().toLower() : QString();
     m_gameSteps = 0;
     m_gameFallback = 0;
     m_gameBet = QJsonObject();
@@ -140,7 +231,7 @@ void BotEngine::requestLiveBet(const BotConfig &cfg, double betSize, bool manual
         req.game = cfg.game;
         req.amount = betSize;
         req.params = cfg.gameParams;
-        m_live->placeGame(req);
+        gameClient()->placeGame(req);
         return;
     }
 
@@ -196,7 +287,7 @@ bool BotEngine::sendGameStep(QString *error)
         return false;
     if (m_inFlightManual || game == Game::VideoPoker)
         emit logMessage(act.description, false);
-    m_live->sendGameAction(game, act.endpoint, act.body, m_inFlightCfg.gameParams, m_gameAmount);
+    gameClient()->sendGameAction(game, act.endpoint, act.body, m_inFlightCfg.gameParams, m_gameAmount);
     return true;
 }
 
@@ -218,7 +309,7 @@ void BotEngine::onLiveFinished(const LiveBetResult &result)
     }
 
     LiveBetResult r = result;
-    if (!isDiceOrLimbo(m_inFlightCfg.game) && m_live) {
+    if (!isDiceOrLimbo(m_inFlightCfg.game) && gameClient()) {
         const Game game = m_inFlightCfg.game;
         if (r.ok && r.active && m_inFlightManual && (game == Game::Hilo || game == Game::Blackjack)) {
             // Manual hilo / blackjack: wait for the Manual Bet tab's buttons instead of playing on.
@@ -228,6 +319,7 @@ void BotEngine::onLiveFinished(const LiveBetResult &result)
             m_manualGameBet = r.bet;
             m_manualGameAmount = r.amount > 0.0 ? r.amount : m_gameAmount;
             m_manualGameCasino = m_inFlightCasino;
+            m_manualGameSim = !liveMode();
             m_inFlight = false;
             emit manualGameUpdated(game, r.bet, true);
             return;
@@ -242,8 +334,11 @@ void BotEngine::onLiveFinished(const LiveBetResult &result)
                 return;
             r = LiveBetResult();
             r.ok = false;
-            r.error = tr("%1: %2 - the game is still open on Stake, finish it there or start again "
-                         "to continue it").arg(gameDisplayName(game), err);
+            r.error = liveMode()
+                ? tr("%1: %2 - the game is still open on Stake, finish it there or start again "
+                     "to continue it").arg(gameDisplayName(game), err)
+                : tr("%1: %2 - the simulated round is still open, start again to continue it")
+                      .arg(gameDisplayName(game), err);
         } else if (!r.ok && m_gameSteps > 0) {
             if (game == Game::Blackjack && !m_inFlightManual && m_gameFallback < 2
                 && (r.errorType.contains(QLatin1String("InvalidAction"), Qt::CaseInsensitive)
@@ -349,9 +444,10 @@ void BotEngine::onLiveFinished(const LiveBetResult &result)
         m_stats.balance = r.balanceAfter - (r.payout - r.amount);
     const double casinoTarget = (cfg.game == Game::Dice && m_live) ? m_live->lastDiceTarget() : -1.0;
     m_lastBetJson = r.bet;
+    // Simulated bets have no casino bet to look up (no "View" link), like simulated dice rolls.
     const BetRecord rec = recordBet(cfg, r.amount, r.roll, r.win, r.multiplier, r.payout,
-                                    r.nonce, r.betId, betCasino, casinoTarget, r.targetText,
-                                    r.rollText);
+                                    r.nonce, betCasino.isEmpty() ? QString() : r.betId, betCasino,
+                                    casinoTarget, r.targetText, r.rollText);
     if (manual && (cfg.game == Game::Hilo || cfg.game == Game::Blackjack)) {
         m_manualGame = cfg.game;
         closeManualGame(r.bet.isEmpty() ? m_manualGameBet : r.bet); // settled
@@ -413,6 +509,21 @@ void BotEngine::finishScriptDrain(bool feedLastBet)
 BetRecord BotEngine::rollOnce(const BotConfig &cfg)
 {
     if (liveMode()) {
+        if (m_inFlight && !m_running) {
+            // Never ignore the button silently: a request that never got an answer (e.g. an
+            // open-round check after switching game) would block manual betting for good.
+            if (m_inFlightClock.isValid() && m_inFlightClock.elapsed() > 15000) {
+                emit logMessage(tr("The previous request got no answer - dropped it, betting now."), false);
+                m_inFlight = false;
+                m_loadingOpenGame = false;
+            } else {
+                emit logMessage(m_loadingOpenGame
+                                    ? tr("Checking the casino for an open round - try again in a moment.")
+                                    : tr("Wait for the current bet to finish."),
+                                true);
+                return {};
+            }
+        }
         if (m_inFlight)
             return {};
         QString why;
@@ -462,6 +573,32 @@ BetRecord BotEngine::rollOnce(const BotConfig &cfg)
 
     if (m_stats.bets == 0)
         m_stats.reset(cfg.startBalance);
+
+    if (!isDiceOrLimbo(cfg.game)) {
+        // Stake's other games in simulation: played like a live bet (the result arrives
+        // through betPlaced()).
+        QString why;
+        if (!m_simClient || !StakeFair::canSimulate(cfg.game, &why)) {
+            emit logMessage(why.isEmpty() ? tr("%1 can't be simulated.").arg(gameDisplayName(cfg.game)) : why, true);
+            return {};
+        }
+        if (m_inFlight) {
+            emit logMessage(tr("Wait for the current bet to finish."), true);
+            return {};
+        }
+        bool fixedStake = false;
+        const double stake = StakeGames::fixedStake(cfg.game, cfg.gameParams, &fixedStake);
+        const double amount = fixedStake ? stake : cfg.baseBet;
+        if (amount < 0.0 || amount > m_stats.balance) {
+            emit logMessage(tr("Bet %1 exceeds the available balance %2.")
+                                .arg(amount, 0, 'f', 8)
+                                .arg(m_stats.balance, 0, 'f', 8),
+                            true);
+            return {};
+        }
+        requestLiveBet(cfg, cfg.baseBet, true);
+        return {};
+    }
 
     const double bet = std::clamp(cfg.baseBet, 0.0, std::max(0.0, m_stats.balance));
     BetRecord rec = placeBet(cfg, bet);
@@ -522,6 +659,7 @@ void BotEngine::loadOpenGame(const BotConfig &cfg)
     // Always ask the casino (the round may have been played on, or finished, on the website
     // or on another casino meanwhile); the answer replaces what the Manual tab shows.
     m_inFlight = true;
+    m_inFlightClock.start();
     m_inFlightManual = true;
     m_inFlightCfg = cfg;
     m_inFlightCasino = m_casinoGetter ? m_casinoGetter().trimmed().toLower() : QString();
@@ -530,6 +668,14 @@ void BotEngine::loadOpenGame(const BotConfig &cfg)
     m_gameBet = QJsonObject();
     m_gameAmount = cfg.baseBet;
     m_loadingOpenGame = true;
+    // No answer at all (lost request): free the engine again after a while, so manual bets
+    // are not blocked for good.
+    QTimer::singleShot(15000, this, [this] {
+        if (m_loadingOpenGame && m_inFlight && !m_running && m_inFlightClock.elapsed() >= 15000) {
+            m_loadingOpenGame = false;
+            m_inFlight = false;
+        }
+    });
     m_live->fetchActiveGame(cfg.game, cfg.gameParams, cfg.baseBet);
 }
 
@@ -555,12 +701,20 @@ void BotEngine::manualGameMove(const QString &move)
     }
     if (m_inFlight)
         return; // the previous move is still on its way
-    if (!liveMode()) {
-        emit logMessage(tr("%1: manual play needs live mode.").arg(gameLabel), true);
+    if (!liveMode() && !m_manualGameSim) {
+        emit logMessage(tr("%1: the round is open on %2 - turn live betting back on to play on.")
+                            .arg(gameLabel, casinoLabel(m_manualGameCasino)),
+                        true);
+        return;
+    }
+    if (liveMode() && m_manualGameSim) {
+        emit logMessage(tr("%1: this round was dealt in simulation - turn live betting off to play on.")
+                            .arg(gameLabel),
+                        true);
         return;
     }
     const QString casino = m_casinoGetter ? m_casinoGetter().trimmed().toLower() : QString();
-    if (!m_manualGameCasino.isEmpty() && casino != m_manualGameCasino) {
+    if (liveMode() && !m_manualGameCasino.isEmpty() && casino != m_manualGameCasino) {
         emit logMessage(tr("%1: the round is open on %2 - switch back to it to play on.")
                             .arg(gameLabel, casinoLabel(m_manualGameCasino)),
                         true);
@@ -576,6 +730,7 @@ void BotEngine::manualGameMove(const QString &move)
             return;
         }
         m_inFlight = true;
+        m_inFlightClock.start();
         m_inFlightManual = true;
         m_inFlightCfg = m_manualGameCfg;
         m_inFlightCasino = m_manualGameCasino;
@@ -626,6 +781,7 @@ void BotEngine::manualGameMove(const QString &move)
     }
 
     m_inFlight = true;
+    m_inFlightClock.start();
     m_inFlightManual = true;
     m_inFlightCfg = m_manualGameCfg;
     m_inFlightCasino = m_manualGameCasino;
@@ -704,9 +860,11 @@ void BotEngine::start()
     // (amount, chance, side, on-win/on-loss rules, stop limits, condition
     // blocks). Only the start balance (an Options setting) is kept.
     const bool scriptMode = !m_scriptSource.trimmed().isEmpty();
-    if (!scriptMode && !liveMode() && !isDiceOrLimbo(m_config.game)) {
-        const QString err = tr("%1 can only be played live on Stake (turn on live betting in Options).")
-                                .arg(gameDisplayName(m_config.game));
+    QString simWhy;
+    if (!scriptMode && !liveMode() && !isDiceOrLimbo(m_config.game)
+        && (!m_simClient || !StakeFair::canSimulate(m_config.game, &simWhy))) {
+        const QString err = simWhy.isEmpty() ? tr("%1 can't be simulated.").arg(gameDisplayName(m_config.game))
+                                             : simWhy;
         emit logMessage(err, true);
         emit stopped(err);
         return;
@@ -745,7 +903,9 @@ void BotEngine::start()
         m_script->setResetStatsHandler([this] { return resetStatsFromScript(); });
         m_script->setResetSeedHandler([this](const QString &seed) { rotateSeedFromScript(seed); });
         m_script->setVaultHandler([this](double amount) { vaultFromScript(amount); });
+        prepareScriptSeeds();
         const auto st = m_script->init(m_scriptSource, m_stats.balance, m_nextBetSize, m_runCfg);
+        applyScriptSeeds();
         if (st == ScriptStrategy::Status::Error) {
             const QString err = m_script->lastError();
             emit scriptOutput(err, true);
@@ -1104,8 +1264,10 @@ void BotEngine::switchGame(const BotConfig &betCfg)
     m_runCfg.gameParams = betCfg.gameParams;
     m_conditions.setBetBase(m_runCfg);
     m_announcedGame = game;
-    if (!liveMode() && !isDiceOrLimbo(game)) {
-        stopWithReason(tr("halted (%1 can only be played live on Stake)").arg(gameDisplayName(game)));
+    QString simWhy;
+    if (!liveMode() && !isDiceOrLimbo(game) && (!m_simClient || !StakeFair::canSimulate(game, &simWhy))) {
+        stopWithReason(tr("halted (%1)").arg(simWhy.isEmpty() ? tr("%1 can't be simulated").arg(gameDisplayName(game))
+                                                             : simWhy));
         return;
     }
     if (!isDiceOrLimbo(game))
@@ -1403,9 +1565,10 @@ BetRecord BotEngine::recordBet(const BotConfig &cfg, double betSize, double roll
 BetRecord BotEngine::placeBet(const BotConfig &cfg, double betSize)
 {
     if (!isDiceOrLimbo(cfg.game)) {
-        // The simulation only knows dice and limbo; Stake's other games are played live.
-        const QString err = tr("%1 can only be played live on Stake (turn on live betting in Options).")
-                                .arg(gameDisplayName(cfg.game));
+        // Stake's other games are simulated through requestLiveBet() (placeNextBet / rollOnce).
+        QString why;
+        StakeFair::canSimulate(cfg.game, &why);
+        const QString err = why.isEmpty() ? tr("%1 can't be simulated here.").arg(gameDisplayName(cfg.game)) : why;
         emit logMessage(err, true);
         if (m_running)
             stopWithReason(tr("halted (%1)").arg(err));
@@ -1440,7 +1603,9 @@ bool BotEngine::advanceProgression(bool win, const BotConfig &cfg)
     if (m_scriptActive) {
         const ScriptStrategy::BetInfo info = lastBetInfo(win);
 
+        syncScriptSeeds(); // the next nonce
         const auto st = m_script->onBet(info, m_nextBetSize, m_runCfg);
+        applyScriptSeeds();
         if (st == ScriptStrategy::Status::Error) {
             const QString err = m_script->lastError();
             emit scriptOutput(err, true);
@@ -1550,6 +1715,30 @@ void BotEngine::placeNextBet()
     }
 
     const BotConfig &cfg = m_runCfg;
+
+    if (!isDiceOrLimbo(cfg.game)) {
+        // Stake's other games in simulation: the same flow as a live bet, answered by the
+        // simulated Stake (the result comes back through onLiveFinished()).
+        if (m_inFlight)
+            return;
+        QString why;
+        if (!m_simClient || !StakeFair::canSimulate(cfg.game, &why)) {
+            stopWithReason(tr("halted (%1)").arg(why.isEmpty() ? tr("%1 can't be simulated").arg(gameDisplayName(cfg.game))
+                                                               : why));
+            return;
+        }
+        bool fixedStake = false;
+        const double stake = StakeGames::fixedStake(cfg.game, cfg.gameParams, &fixedStake);
+        const double gameBet = fixedStake ? stake : betAmount(m_nextBetSize);
+        if (gameBet < 0.0 || gameBet > m_stats.balance) {
+            stopWithReason(tr("halted (next bet %1 exceeds balance %2)")
+                               .arg(gameBet, 0, 'f', 8)
+                               .arg(m_stats.balance, 0, 'f', 8));
+            return;
+        }
+        requestLiveBet(cfg, gameBet, false);
+        return;
+    }
 
     // Bet exactly the amount the strategy asked for (0 is a valid bet). Never
     // shrink it to the remaining balance: if it can't be covered, halt instead.

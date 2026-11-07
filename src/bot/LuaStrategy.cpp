@@ -860,6 +860,15 @@ LuaStrategy::Status LuaStrategy::init(const QString &source, double balance,
         lua_pushstring(m_L, c.constData());
         lua_setglobal(m_L, "currency");
     }
+    if (!runCfg.serverSeed.isEmpty()) {
+        // Simulation: the seed pair it bets with (the script may set other ones).
+        const QByteArray ss = runCfg.serverSeed.toUtf8(), cs = runCfg.clientSeed.toUtf8();
+        lua_pushstring(m_L, ss.constData());
+        lua_setglobal(m_L, "serverSeed");
+        lua_pushstring(m_L, cs.constData());
+        lua_setglobal(m_L, "clientSeed");
+        publishInt("nonce", runCfg.nonce);
+    }
     publish("startbalance", balance);
     publishBool("win", false);
     publish("previousbet", 0.0);
@@ -914,6 +923,15 @@ LuaStrategy::Status LuaStrategy::onBet(const BetInfo &info, double &nextBet, Bot
         m_streak = m_streak < 0 ? m_streak - 1 : -1;
     }
 
+    if (!runCfg.serverSeed.isEmpty()) {
+        // Simulation: the seed pair it bets with (the script may set other ones).
+        const QByteArray ss = runCfg.serverSeed.toUtf8(), cs = runCfg.clientSeed.toUtf8();
+        lua_pushstring(m_L, ss.constData());
+        lua_setglobal(m_L, "serverSeed");
+        lua_pushstring(m_L, cs.constData());
+        lua_setglobal(m_L, "clientSeed");
+        publishInt("nonce", runCfg.nonce);
+    }
     publishBool("win", info.win);
     publish("previousbet", info.bet);
     publishLastBet(info);
@@ -1052,6 +1070,38 @@ bool LuaStrategy::readOutputs(double &nextBet, BotConfig &runCfg)
         return false;
     }
     lua_pop(m_L, 1);
+
+    // ---- serverSeed / clientSeed / nonce (simulation): another seed pair / nonce to bet with
+    if (!runCfg.serverSeed.isEmpty()) {
+        for (const char *name : {"serverSeed", "clientSeed"}) {
+            lua_getglobal(m_L, name);
+            if (lua_type(m_L, -1) == LUA_TSTRING) {
+                const QString v = QString::fromUtf8(lua_tostring(m_L, -1)).trimmed();
+                if (!v.isEmpty())
+                    (qstrcmp(name, "serverSeed") == 0 ? runCfg.serverSeed : runCfg.clientSeed) = v;
+            } else if (!lua_isnil(m_L, -1)) {
+                lua_pop(m_L, 1);
+                m_error = QStringLiteral("%1 must be a string").arg(QLatin1String(name));
+                return false;
+            }
+            lua_pop(m_L, 1);
+        }
+        lua_getglobal(m_L, "nonce");
+        if (lua_isnumber(m_L, -1)) {
+            const double n = lua_tonumber(m_L, -1);
+            if (!(n >= 1.0) || n != std::floor(n)) {
+                lua_pop(m_L, 1);
+                m_error = QStringLiteral("nonce must be a whole number from 1 (got %1)").arg(n);
+                return false;
+            }
+            runCfg.nonce = qint64(n);
+        } else if (!lua_isnil(m_L, -1)) {
+            lua_pop(m_L, 1);
+            m_error = QStringLiteral("nonce must be a whole number from 1");
+            return false;
+        }
+        lua_pop(m_L, 1);
+    }
 
     // ---- currency (optional): the currency code to bet in, e.g. "btc" / "usdt"
     lua_getglobal(m_L, "currency");

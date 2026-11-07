@@ -599,10 +599,12 @@ QStringList unsupportedChoices(const QString &casinoKey, Game game, const QStrin
 
 double casinoMaximum(const QString &casinoKey, Game game, const QString &key, const QJsonObject &values)
 {
-    if ((casinoKey.trimmed().compare(QLatin1String("shuffle"), Qt::CaseInsensitive) == 0
-         || casinoKey.trimmed().compare(QLatin1String("duel"), Qt::CaseInsensitive) == 0)
+    const QString ck = casinoKey.trimmed().toLower();
+    if ((ck == QLatin1String("shuffle") || ck == QLatin1String("duel") || ck == QLatin1String("stake")
+         || ck.isEmpty())
         && game == Game::Chicken && key == QLatin1String("steps")) {
-        // Shuffle's lanes per difficulty (Duel's Beef: the same 19 / 17 / 15 / 10).
+        // A road of 20 with 1 / 3 / 5 / 10 losing spots: 19 / 17 / 15 / 10 steps at most (Stake,
+        // Shuffle, Duel's Beef).
         const QString d = values.value(QStringLiteral("difficulty")).toString().toLower();
         if (d == QLatin1String("medium")) return 17.0;
         if (d == QLatin1String("hard")) return 15.0;

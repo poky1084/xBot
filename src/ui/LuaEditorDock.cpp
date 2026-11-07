@@ -84,7 +84,7 @@ protected:
             "while"};
         // Variables / functions the strategy API provides.
         static const QSet<QString> api = {
-            "nextbet", "chance", "bethigh", "target", "game", "currency", "dobet", "stop", "startbalance", "balance",
+            "nextbet", "chance", "bethigh", "target", "game", "currency", "serverSeed", "clientSeed", "nonce", "dobet", "stop", "startbalance", "balance",
             "profit", "win", "previousbet", "lastBet", "lastprofit", "roll", "bets", "wins", "losses", "wagered",
             "currentstreak", "log", "resetstats", "resetseed", "vault", "result",
             // Stake's other games (reference bot variables)
@@ -305,7 +305,7 @@ protected:
             "async", "await", "static", "get", "set"};
         // Variables / functions the strategy API provides.
         static const QSet<QString> api = {
-            "nextbet", "chance", "bethigh", "target", "game", "currency", "dobet", "stop", "startbalance", "balance",
+            "nextbet", "chance", "bethigh", "target", "game", "currency", "serverSeed", "clientSeed", "nonce", "dobet", "stop", "startbalance", "balance",
             "profit", "win", "previousbet", "lastBet", "lastprofit", "roll", "bets", "wins", "losses", "wagered",
             "currentstreak", "log", "print", "resetstats", "resetseed", "vault",
             // Stake's other games (reference bot variables)
@@ -1079,6 +1079,8 @@ void LuaEditorDock::onHelp()
     QString text = tr(
         "<b>Variables</b><br>"
         "<code>casino, game, currency, nextbet, chance, bethigh, target</code><br><br>"
+        "<b>Simulation seeds</b><br>"
+        "<code>serverSeed, clientSeed, nonce</code><br><br>"
         "<b>Stake game variables</b><br>"
         "<code>numbers, risk, fields, mines, rows, segments, eggs, difficulty, guesses, pumps, "
         "rolls, tiles, steps, pick, moles, picks, lines, condition, target1, target2, target3, "

@@ -29,6 +29,8 @@ set(SOURCES
 	src/bot/StakeClient.h
 	src/bot/StakeGames.cpp
 	src/bot/StakeGames.h
+	src/bot/StakeFair.cpp
+	src/bot/StakeFair.h
 	src/bot/BeepSound.cpp
 	src/bot/BeepSound.h
 	src/bot/LiveSettings.h

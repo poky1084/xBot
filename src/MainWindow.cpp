@@ -1336,6 +1336,31 @@ void MainWindow::createCentralWidget()
     chartLayout->addWidget(m_graph);
 
     m_fairPanel = new FairPanel(m_provider, settingsGroup());
+    // Verify uses the game's settings shown on the Manual Bet tab (mines count, plinko rows, ...).
+    m_fairPanel->setParamsSource([this] { return m_manualPanel ? m_manualPanel->gameParams() : QJsonObject(); });
+    connect(m_manualPanel, &ManualBetPanel::gameChanged, m_fairPanel, &FairPanel::refreshVerify);
+    // Code mode in simulation: the script's serverSeed / clientSeed / nonce start as the "Verify a
+    // roll" seeds (when "Use these seeds for simulation" is ticked), else the latest revealed pair.
+    m_engine->setScriptSeedSource([this](QString &server, QString &client, qint64 &nonce, QString &from) {
+        if (m_fairPanel->customSeeds(&server, &client, &nonce)) {
+            from = tr("the \"Verify a roll\" seeds");
+            return true;
+        }
+        RevealedSeeds revealed;
+        if (m_fairPanel->latestRevealed(&revealed)) {
+            server = revealed.serverSeed;
+            client = revealed.clientSeed;
+            nonce = 1;
+            from = tr("the latest revealed seed pair");
+            return true;
+        }
+        return false;
+    });
+    connect(m_engine, &BotEngine::simulationSeedsChanged, m_fairPanel, &FairPanel::refresh);
+    connect(m_fairPanel, &FairPanel::resultChanged, this, [this] {
+        if (m_tabs && m_tabs->currentWidget() == m_fairPanel)
+            updateCentralHeight(); // a taller / shorter result (mines grid, tower floors)
+    });
 
     m_tabs->addTab(m_manualPanel, QIcon(QStringLiteral(":/icons/list-add.svg")), tr("Manual Bet"));
     m_tabs->addTab(m_autoPanel, QIcon(QStringLiteral(":/icons/torrent-start-forced.svg")), tr("Auto Bet"));
@@ -1563,7 +1588,7 @@ void MainWindow::setGame(Game game)
     if (m_autoPanel)
         m_autoPanel->setGame(game); // dice / limbo odds or the game's own settings
     if (m_fairPanel)
-        m_fairPanel->setGame(game); // Limbo: verify shows the multiplier
+        m_fairPanel->setGame(game); // verify works out this game's result
     updateAutoOdds();
     updateWindowTitle();
     fitPanelToGame();

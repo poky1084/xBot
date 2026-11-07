@@ -15,6 +15,7 @@
 #include <functional>
 
 class StakeClient;
+class SimulatedStakeTransport;
 struct LiveBetResult;
 
 class BotEngine : public QObject
@@ -24,7 +25,15 @@ class BotEngine : public QObject
 public:
     explicit BotEngine(QObject *parent = nullptr);
 
-    void setProvider(IDiceProvider *provider) { m_provider = provider; }
+    // The simulation's seed pair. A SimulatedProvider also plays Stake's other games in
+    // simulation (keno, mines, plinko, hilo, blackjack, ...; see SimulatedStakeTransport).
+    void setProvider(IDiceProvider *provider);
+
+    // Code mode in simulation: where the script's serverSeed / clientSeed / nonce come from.
+    // Returns true with a seed pair + nonce to bet with (and `from`, how they were chosen, for the
+    // log), false to keep the simulation's active pair.
+    using ScriptSeedSource = std::function<bool(QString &server, QString &client, qint64 &nonce, QString &from)>;
+    void setScriptSeedSource(ScriptSeedSource source) { m_scriptSeedSource = std::move(source); }
     IDiceProvider *provider() const { return m_provider; }
 
     void setConfig(const BotConfig &cfg) { m_config = cfg; }
@@ -124,6 +133,7 @@ public:
     void resetSession(double initialBalance)
     {
         m_stats.reset(initialBalance);
+        clearSimulatedGames();
         m_runStartProfit = 0.0; // the run's profit is measured from the fresh session
         m_runStartBets = 0;
     }
@@ -164,6 +174,8 @@ public slots:
     void resume();
 
 signals:
+    // A script changed the simulation's seed pair / nonce (the Fairness tab shows it again).
+    void simulationSeedsChanged();
     void started();
     void stopped(const QString &reason);
     void pausedChanged(bool paused);
@@ -249,6 +261,7 @@ private:
     bool m_scriptActive = false;
     bool m_awaitTransport = false;  // casino was just switched: wait until its connection is ready
     QElapsedTimer m_awaitTimer;
+    QElapsedTimer m_inFlightClock; // since the request in flight was sent (stale request check)
     CasinoGetter m_casinoGetter;
     CasinoSwitcher m_casinoSwitcher;
     CasinoLabel m_casinoLabel;
@@ -276,6 +289,17 @@ private:
     double m_nextBetSize = 1.0;
     bool m_running = false;
     bool m_paused = false;
+
+    // Simulation of Stake's other games: a StakeClient talking to a simulated Stake.
+    StakeClient *m_simClient = nullptr;
+    SimulatedStakeTransport *m_simTransport = nullptr;
+    void clearSimulatedGames();
+    // The client a game bet goes to: the casino in live mode, the simulated Stake otherwise.
+    StakeClient *gameClient() const;
+    ScriptSeedSource m_scriptSeedSource;
+    void prepareScriptSeeds(); // before the script body: pick its seed pair
+    void syncScriptSeeds();    // the simulation's seeds / next nonce -> the script's variables
+    void applyScriptSeeds();   // the script's variables -> the simulation
 
     // Live mode state
     StakeClient *m_live = nullptr;
@@ -313,6 +337,7 @@ private:
     QJsonObject m_manualGameBet;
     double m_manualGameAmount = 0.0;
     QString m_manualGameCasino;
+    bool m_manualGameSim = false; // the open manual round was dealt by the simulation
     void closeManualGame(QJsonObject bet); // by value: may be m_manualGameBet itself
     int m_retryStreak = 0;
 

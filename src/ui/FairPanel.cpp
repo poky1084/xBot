@@ -1,5 +1,7 @@
 #include "ui/FairPanel.h"
 
+#include "bot/StakeFair.h"
+
 #include <QCheckBox>
 #include <QFormLayout>
 #include <QGridLayout>
@@ -65,6 +67,10 @@ FairPanel::FairPanel(SimulatedProvider *provider, const QString &settingsGroup, 
     auto *right = new QVBoxLayout;
     right->setSpacing(6);
     right->addWidget(new QLabel(tr("<b>Verify a roll</b>")));
+    m_verifyGame = new QLabel;
+    m_verifyGame->setStyleSheet(QStringLiteral("color:#8a8f94;"));
+    m_verifyGame->setWordWrap(true);
+    right->addWidget(m_verifyGame);
 
     m_verifyServerEdit = new QLineEdit;
     m_verifyServerEdit->setFont(QFont(QStringLiteral("Consolas")));
@@ -94,6 +100,7 @@ FairPanel::FairPanel(SimulatedProvider *provider, const QString &settingsGroup, 
     right->addWidget(verifyBtn, 0, Qt::AlignLeft);
 
     m_verifyResult = new QLabel;
+    m_verifyResult->setTextFormat(Qt::RichText);
     m_verifyResult->setTextInteractionFlags(Qt::TextSelectableByMouse);
     m_verifyResult->setFont(QFont(QStringLiteral("Consolas")));
     m_verifyResult->setWordWrap(true);
@@ -145,6 +152,32 @@ FairPanel::FairPanel(SimulatedProvider *provider, const QString &settingsGroup, 
 void FairPanel::setGame(Game game)
 {
     m_game = game;
+    updateVerifyPreview();
+}
+
+bool FairPanel::customSeeds(QString *server, QString *client, qint64 *nonce) const
+{
+    const QString s = m_verifyServerEdit->text().trimmed();
+    const QString c = m_verifyClientEdit->text().trimmed();
+    if (!m_useSeedsCheck->isChecked() || s.isEmpty() || c.isEmpty())
+        return false;
+    *server = s;
+    *client = c;
+    *nonce = m_verifyNonceSpin->value();
+    return true;
+}
+
+bool FairPanel::latestRevealed(RevealedSeeds *out) const
+{
+    if (m_revealed.isEmpty())
+        return false;
+    *out = m_revealed.first();
+    return true;
+}
+
+void FairPanel::setParamsSource(std::function<QJsonObject()> source)
+{
+    m_paramsSource = std::move(source);
     updateVerifyPreview();
 }
 
@@ -219,11 +252,28 @@ void FairPanel::updateVerifyPreview()
         refresh();
     }
 
+    // Which game is verified, and which of its settings are used.
+    const QJsonObject params = m_paramsSource ? m_paramsSource() : QJsonObject();
+    QString gameLine = tr("Game: %1").arg(gameDisplayName(m_game));
+    switch (m_game) {
+    case Game::Keno: gameLine += tr(" (your numbers and risk from the Manual Bet tab)"); break;
+    case Game::Mines: gameLine += tr(" (mines count and tiles from the Manual Bet tab)"); break;
+    case Game::Plinko: gameLine += tr(" (rows and risk from the Manual Bet tab)"); break;
+    case Game::Wheel: gameLine += tr(" (segments and risk from the Manual Bet tab)"); break;
+    case Game::DragonTower: case Game::Pump: case Game::Chicken: case Game::GoatRun:
+        gameLine += tr(" (difficulty from the Manual Bet tab)"); break;
+    case Game::Primedice: gameLine += tr(" (condition and targets from the Manual Bet tab)"); break;
+    case Game::Moles: gameLine += tr(" (moles count and picks from the Manual Bet tab)"); break;
+    default: break;
+    }
+    m_verifyGame->setText(gameLine);
+
     // Nothing typed yet — show a short hint instead of an empty label.
     if (server.isEmpty()) {
         m_verifyResult->setText(
             QStringLiteral("<span style=\"color:#737373\">%1</span>")
                 .arg(tr("Enter a server seed to see its SHA-256 hash.")));
+        emit resultChanged();
         return;
     }
 
@@ -234,26 +284,19 @@ void FairPanel::updateVerifyPreview()
     if (client.isEmpty()) {
         m_verifyResult->setText(
             QStringLiteral("<span style=\"color:#737373\">SHA-256: %1</span>").arg(hash));
+        emit resultChanged();
         return;
     }
 
-    if (m_game == Game::Limbo) {
-        const double result =
-            SimulatedProvider::limboFromSeeds(server, client, m_verifyNonceSpin->value());
-        m_verifyResult->setText(
-            QStringLiteral("Limbo: <b>%1x</b><br><span style=\"color:#737373\">SHA-256: %2</span>")
-                .arg(result, 0, 'f', 2)
-                .arg(hash));
-        return;
-    }
-
-    // Both seeds present — also compute the deterministic roll for this nonce.
-    const double roll =
-        SimulatedProvider::rollFromSeeds(server, client, m_verifyNonceSpin->value());
+    // Both seeds present: the game's outcome for this nonce, worked out like Stake does.
+    StakeFair::Seeds seeds;
+    seeds.server = server;
+    seeds.client = client;
+    seeds.nonce = m_verifyNonceSpin->value();
     m_verifyResult->setText(
-        QStringLiteral("Roll: <b>%1</b><br><span style=\"color:#737373\">SHA-256: %2</span>")
-            .arg(roll, 0, 'f', 2)
-            .arg(hash));
+        QStringLiteral("%1<br><span style=\"color:#737373\">SHA-256: %2</span>")
+            .arg(StakeFair::verifyHtml(m_game, seeds, params), hash));
+    emit resultChanged();
 }
 
 void FairPanel::onPickRevealed()
