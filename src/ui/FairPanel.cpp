@@ -257,10 +257,10 @@ void FairPanel::updateVerifyPreview()
     QString gameLine = tr("Game: %1").arg(gameDisplayName(m_game));
     switch (m_game) {
     case Game::Keno: gameLine += tr(" (your numbers and risk from the Manual Bet tab)"); break;
-    case Game::Mines: gameLine += tr(" (mines count and tiles from the Manual Bet tab)"); break;
     case Game::Plinko: gameLine += tr(" (rows and risk from the Manual Bet tab)"); break;
     case Game::Wheel: gameLine += tr(" (segments and risk from the Manual Bet tab)"); break;
-    case Game::DragonTower: case Game::Pump: case Game::Chicken: case Game::GoatRun:
+    case Game::DragonTower: gameLine += tr(" (easy)"); break;
+    case Game::Pump: case Game::Chicken: case Game::GoatRun:
         gameLine += tr(" (difficulty from the Manual Bet tab)"); break;
     case Game::Primedice: gameLine += tr(" (condition and targets from the Manual Bet tab)"); break;
     case Game::Moles: gameLine += tr(" (moles count and picks from the Manual Bet tab)"); break;

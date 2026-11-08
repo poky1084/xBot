@@ -1307,34 +1307,11 @@ QString verifyHtml(Game game, const Seeds &s, const QJsonObject &params)
         break;
     }
     case Game::Mines: {
-        const int count = std::clamp(int(number(param(p, game, "mines"), 3)), 1, 24);
-        const QVector<int> mines = shuffled(floats(s, count), 25, count);
+        // Stake draws all 24 values; a game with N mines uses the first N.
         QStringList m;
-        for (int n : mines)
-            m << QString::number(n + 1);
-        line(QStringLiteral("Mines (%1)").arg(count), m.join(QStringLiteral(", ")));
-        QStringList grid;
-        for (int row = 0; row < 5; ++row) {
-            QString r;
-            for (int col = 0; col < 5; ++col)
-                r += mines.contains(row * 5 + col) ? QStringLiteral("&#x1F4A3;") : QStringLiteral("&#x1F48E;");
-            grid << r;
-        }
-        lines << grid.join(QStringLiteral("<br>"));
-        const QVector<int> tiles = intList(p.contains(QStringLiteral("tiles")) ? p.value(QStringLiteral("tiles"))
-                                                                              : param(p, game, "fields"));
-        int safe = 0;
-        bool boom = false;
-        for (int t : tiles) {
-            if (mines.contains(t - 1)) {
-                boom = true;
-                break;
-            }
-            ++safe;
-        }
-        if (!tiles.isEmpty())
-            lines << gray(boom ? QStringLiteral("Your tiles: a mine after %1 safe tiles").arg(safe)
-                               : QStringLiteral("Your %1 tiles are safe = %2x").arg(safe).arg(num(minesMultiplier(count, safe))));
+        for (int n : shuffled(floats(s, 24), 25, 24))
+            m << QString::number(n);
+        line(QStringLiteral("Values"), m.join(QStringLiteral(", ")));
         break;
     }
     case Game::Plinko: {
@@ -1420,22 +1397,21 @@ QString verifyHtml(Game game, const Seeds &s, const QJsonObject &params)
         break;
     }
     case Game::DragonTower: {
-        const QString diff = text(param(p, game, "difficulty"), QStringLiteral("easy"));
+        const QString diff = QStringLiteral("easy"); // the verifier always uses easy
         TowerLevel l;
         if (!towerLevel(diff, &l)) {
             lines << QStringLiteral("Unknown difficulty \"%1\".").arg(diff);
             break;
         }
         const QVector<QVector<int>> eggs = towerEggs(s, l);
-        QStringList rows;
-        for (int i = eggs.size() - 1; i >= 0; --i) {
-            QString row;
-            for (int t = 0; t < l.tiles; ++t)
-                row += eggs.at(i).contains(t) ? QStringLiteral("&#x1F95A;") : QStringLiteral("&#x1F480;");
-            rows << QStringLiteral("%1 %2").arg(i + 1).arg(row);
+        QStringList floorsOut;
+        for (const QVector<int> &floor : eggs) {
+            QStringList f;
+            for (int t : floor)
+                f << QString::number(t);
+            floorsOut << QStringLiteral("[%1]").arg(f.join(QLatin1Char(',')));
         }
-        line(QStringLiteral("Floors (%1, top first)").arg(diff), QString());
-        lines << rows.join(QStringLiteral("<br>"));
+        line(QStringLiteral("Values (%1)").arg(diff), QStringLiteral("[%1]").arg(floorsOut.join(QLatin1Char(','))));
         break;
     }
     case Game::Flip: {
