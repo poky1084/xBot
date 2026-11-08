@@ -1565,27 +1565,15 @@ QString verifyHtml(Game game, const Seeds &s, const QJsonObject &params)
         break;
     }
     case Game::Moles: {
-        const int moles = std::clamp(int(number(param(p, game, "moles"), 3)), 1, 6);
-        const QVector<int> picks = intList(p.contains(QStringLiteral("molePicks")) ? p.value(QStringLiteral("molePicks"))
-                                                                                  : param(p, game, "picks"));
-        const int stages = std::clamp(int(picks.size()), 1, 10);
-        int hits = 0;
-        bool missed = false;
-        for (int st = 0; st < stages; ++st) {
+        // 9 stages, each a draw of 6 of the 7 holes (0 .. 6).
+        QStringList stages;
+        for (int st = 0; st < 9; ++st) {
             QStringList h;
-            for (int n : molesOn(s, moles, st))
-                h << QString::number(n + 1);
-            line(QStringLiteral("Stage %1 moles").arg(st + 1), h.join(QStringLiteral(", ")));
-            if (!missed && st < picks.size()) {
-                if (molesOn(s, moles, st).contains(picks.at(st) - 1))
-                    ++hits;
-                else
-                    missed = true;
-            }
+            for (int n : molesOn(s, 6, st))
+                h << QString::number(n);
+            stages << QStringLiteral("[%1]").arg(h.join(QLatin1Char(',')));
         }
-        if (!picks.isEmpty())
-            lines << gray(missed ? QStringLiteral("Your picks: a miss after %1 hits").arg(hits)
-                                 : QStringLiteral("Your %1 picks all hit = %2x").arg(hits).arg(num(molesMultiplier(moles, hits))));
+        line(QStringLiteral("Values"), QStringLiteral("[%1]").arg(stages.join(QLatin1Char(','))));
         break;
     }
     case Game::Rps: {
