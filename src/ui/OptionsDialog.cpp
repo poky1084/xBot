@@ -329,7 +329,7 @@ OptionsDialog::OptionsDialog(QWidget *parent)
     m_towerClearanceEdit->setEchoMode(QLineEdit::Password);
     m_towerClearanceEdit->setPlaceholderText(tr("cf_clearance cookie value"));
     m_towerClearanceEdit->setToolTip(
-        tr("Cloudflare cookie of tower.bet (httpOnly: DevTools → Application → Cookies). Only "
+        tr("Cloudflare cookie of the site (httpOnly: DevTools → Application → Cookies). Only "
            "works with the User-Agent of the browser that got it. Not needed with the browser "
            "extension."));
     liveForm->addRow(tr("cf_clearance:"), m_towerClearanceEdit);
@@ -344,7 +344,7 @@ OptionsDialog::OptionsDialog(QWidget *parent)
     // Tower only: opens the site, waits for the login, then fills Token / cf_clearance / User-Agent.
     m_towerLoginBtn = new QPushButton(tr("Open Tower && Log in - to autofill token"));
     m_towerLoginBtn->setToolTip(
-        tr("Opens tower.bet in a browser window. After you log in, the Token (\"__tt\" cookie), "
+        tr("Opens tower.bet (or the mirror above) in a browser window. After you log in, the Token (\"__tt\" cookie), "
            "cf_clearance and the User-Agent are filled in automatically."));
     m_towerLoginBtn->setEnabled(TowerLoginDialog::isAvailable());
     liveForm->addRow(QString(), m_towerLoginBtn);
@@ -359,7 +359,7 @@ OptionsDialog::OptionsDialog(QWidget *parent)
 
     m_winnaLoginBtn = new QPushButton(tr("Open Winna && Log in - to autofill data"));
     m_winnaLoginBtn->setToolTip(
-        tr("Opens winna.com in a browser window. After you log in, the session (\"connect.sid\" "
+        tr("Opens winna.com (or the mirror above) in a browser window. After you log in, the session (\"connect.sid\" "
            "cookie), cf_clearance, device id and User-Agent are filled in automatically."));
     m_winnaLoginBtn->setEnabled(WinnaLoginDialog::isAvailable());
     liveForm->addRow(QString(), m_winnaLoginBtn);
@@ -482,6 +482,11 @@ OptionsDialog::OptionsDialog(QWidget *parent)
     }
     // The site / mirror is saved on every keystroke (see siteEdited()).
     connect(m_siteEdit, &QLineEdit::textEdited, this, &OptionsDialog::siteEdited);
+    // Another mirror: its currency list is fetched again (from the new site).
+    connect(m_siteEdit, &QLineEdit::editingFinished, this, [this] {
+        m_currencyListFetched[m_casinoCombo->currentData().toInt()] = false;
+        updateCurrencyList();
+    });
     // Wolfbet's / Paradice's / Pasino's currency list needs the token: fetch it once one is entered.
     connect(m_apiKeyEdit, &QLineEdit::editingFinished, this, [this] {
         if (m_wolfbet || m_paradice || m_pasino || m_tower || m_winna)
@@ -659,8 +664,7 @@ void OptionsDialog::applyCasinoUi()
     const bool tower = m_tower;
     const bool winna = m_winna;
     const bool tokenOnly = goated || wolfbet || paradice || pasino; // the token is the only input
-    const bool noSite = tokenOnly || tower || winna; // no "Site / mirror" input
-    const bool direct = shuffle || noSite || duel; // all but Stake use "Direct mode"
+    const bool direct = shuffle || tokenOnly || tower || winna || duel; // all but Stake use "Direct mode"
 
     m_liveBox->setTitle(winna ? tr("Live betting — Winna")
                         : tower ? tr("Live betting — Tower")
@@ -693,11 +697,15 @@ void OptionsDialog::applyCasinoUi()
                                              : goated ? tr("g3_token (JWT)")
                                                       : shuffle ? tr("authorization token (JWT)")
                                                                 : tr("x-access-token (API key)"));
-    m_siteEdit->setPlaceholderText(duel      ? QStringLiteral("duel.com")
-                                   : shuffle ? QStringLiteral("shuffle.com")
-                                             : QStringLiteral("stake.com"));
+    // Every casino has a "Site / mirror" (empty = its own site).
+    const auto shown = static_cast<LiveSettings::Casino>(m_casinoCombo->currentData().toInt());
+    m_siteEdit->setPlaceholderText(LiveSettings::defaultSite(shown));
+    m_siteEdit->setToolTip(tr("Domain of the casino or one of its mirrors (empty = %1). The "
+                              "login window, the API requests and the browser extension's tab "
+                              "all use it.")
+                               .arg(LiveSettings::defaultSite(shown)));
 
-    setFormRowVisible(m_siteEdit, !noSite);        // Goated / Wolfbet: fixed site
+    setFormRowVisible(m_siteEdit, true);
     setFormRowVisible(m_clearanceEdit, !direct);   // Stake's cf_clearance
     setFormRowVisible(m_correlationEdit, shuffle);
     setFormRowVisible(m_browserIdEdit, shuffle);
@@ -778,6 +786,10 @@ LiveSettings OptionsDialog::liveSettings() const
         s.clearance = m_clearanceEdit->text().trimmed();
         s.userAgent = m_userAgentEdit->text().trimmed();
     }
+    // Goated / Wolfbet / Paradice / Pasino / Tower / Winna: "Site / mirror" (Stake, Shuffle and
+    // Duel are read above).
+    if (m_goated || m_wolfbet || m_paradice || m_pasino || m_tower || m_winna)
+        s.setSiteOf(s.casino, LiveSettings::hostOf(m_siteEdit->text(), LiveSettings::defaultSite(s.casino)));
     s.setUsesExtension(s.casino, m_authCombo->currentIndex() == 1);
     s.currency = m_liveCurrencyCombo->currentText().trimmed().toLower();
     s.extensionPort = m_extensionPort;
@@ -803,6 +815,7 @@ void OptionsDialog::setLiveSettings(const LiveSettings &s)
     applyCasinoUi();
 
     m_liveEnable->setChecked(s.enabled);
+    m_siteEdit->setText(s.siteOf(s.casino));
     if (m_duel) {
         m_authCombo->setCurrentIndex(s.usesExtension(s.casino) ? 1 : 0); // Direct mode / extension
         m_siteEdit->setText(s.duelSite);
@@ -978,6 +991,7 @@ void OptionsDialog::updateCurrencyList()
         const QString token = m_apiKeyEdit ? m_apiKeyEdit->text().trimmed() : QString();
         const bool tower = casino == LiveSettings::Casino::Tower
                            || casino == LiveSettings::Casino::Winna; // cf_clearance + User-Agent
+        liveSettings().publishSites(); // the list comes from the site / mirror typed here
         m_currencyListFetched[int(casino)] = CasinoCurrencies::fetch(
             casino, this,
             [this, casino](const QStringList &) {
@@ -1059,6 +1073,7 @@ QString OptionsDialog::autoFetchKey() const
     QStringList parts{s.casinoName(), s.activeUsesExtension() ? QStringLiteral("ext") : QStringLiteral("direct")};
     if (s.activeUsesExtension()) // the login comes from the tab: only the site matters
         return (parts + s.extensionHosts(s.casino)).join(QChar(0x1f));
+    parts << s.siteHost(s.casino); // another mirror: fetch again
     if (s.isDuel())
         parts << s.duelSite << s.duelToken << s.duelUuid << s.duelClearance;
     else if (s.isWolfbet())
@@ -1263,7 +1278,7 @@ void OptionsDialog::onGoatedLogin()
 {
     const CursorRestorer restoreCursor; // WebView2 bug: the pointer may stay hidden after `dlg`
     clearLoginInputs(); // the login window fills them in again, like fresh data
-    GoatedLoginDialog dlg(this);
+    GoatedLoginDialog dlg(m_siteEdit->text(), this);
     if (dlg.exec() != QDialog::Accepted)
         return;
 
@@ -1277,7 +1292,7 @@ void OptionsDialog::onWolfbetLogin()
 {
     const CursorRestorer restoreCursor; // WebView2 bug: the pointer may stay hidden after `dlg`
     clearLoginInputs(); // the login window fills them in again, like fresh data
-    WolfbetLoginDialog dlg(this);
+    WolfbetLoginDialog dlg(m_siteEdit->text(), this);
     if (dlg.exec() != QDialog::Accepted)
         return;
 
@@ -1292,7 +1307,7 @@ void OptionsDialog::onParadiceLogin()
 {
     const CursorRestorer restoreCursor; // WebView2 bug: the pointer may stay hidden after `dlg`
     clearLoginInputs(); // the login window fills them in again, like fresh data
-    ParadiceLoginDialog dlg(this);
+    ParadiceLoginDialog dlg(m_siteEdit->text(), this);
     if (dlg.exec() != QDialog::Accepted)
         return;
 
@@ -1308,7 +1323,7 @@ void OptionsDialog::onPasinoLogin()
 {
     const CursorRestorer restoreCursor; // WebView2 bug: the pointer may stay hidden after `dlg`
     clearLoginInputs(); // the login window fills them in again, like fresh data
-    PasinoLoginDialog dlg(this);
+    PasinoLoginDialog dlg(m_siteEdit->text(), this);
     if (dlg.exec() != QDialog::Accepted)
         return;
 
@@ -1324,7 +1339,7 @@ void OptionsDialog::onTowerLogin()
 {
     const CursorRestorer restoreCursor; // WebView2 bug: the pointer may stay hidden after `dlg`
     clearLoginInputs(); // the login window fills them in again, like fresh data
-    TowerLoginDialog dlg(this);
+    TowerLoginDialog dlg(m_siteEdit->text(), this);
     if (dlg.exec() != QDialog::Accepted)
         return;
 
@@ -1350,7 +1365,7 @@ void OptionsDialog::onWinnaLogin()
     // Every login starts from scratch: the inputs are emptied and the login window removes the
     // old winna.com cookies / site data first (like "Clear data"), so no stale session is captured.
     clearLoginInputs();
-    WinnaLoginDialog dlg(true, this);
+    WinnaLoginDialog dlg(true, m_siteEdit->text(), this);
     if (dlg.exec() != QDialog::Accepted)
         return;
 

@@ -110,7 +110,7 @@ bool ParadiceTransport::isReady(QString *whyNot) const
     }
     if (m_ext && !m_ext->isConnectedTo(pageHosts())) {
         if (whyNot)
-            *whyNot = tr("Paradice: no paradice.in tab with the browser extension is open.");
+            *whyNot = tr("Paradice: no %1 tab with the browser extension is open.").arg(pageHosts().value(0));
         return false;
     }
     return true;
@@ -123,8 +123,8 @@ QNetworkRequest ParadiceTransport::makeRequest() const
     req.setRawHeader("Accept", "*/*");
     req.setRawHeader("Accept-Language", "EN");
     req.setRawHeader("x-access-token", m_cred.token.toUtf8());
-    req.setRawHeader("Origin", "https://paradice.in");
-    req.setRawHeader("Referer", "https://paradice.in/");
+    req.setRawHeader("Origin", QStringLiteral("https://%1").arg(webHost()).toUtf8());
+    req.setRawHeader("Referer", QStringLiteral("https://%1/").arg(webHost()).toUtf8());
     req.setHeader(QNetworkRequest::UserAgentHeader,
                   m_cred.userAgent.isEmpty() ? defaultUserAgent() : m_cred.userAgent);
     req.setTransferTimeout(kRequestTimeoutMs);

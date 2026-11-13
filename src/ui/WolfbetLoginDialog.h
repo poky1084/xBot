@@ -20,7 +20,8 @@ class WolfbetLoginDialog : public QDialog
     Q_OBJECT
 
 public:
-    explicit WolfbetLoginDialog(QWidget *parent = nullptr);
+    // `site` = Wolfbet's host or a mirror (empty = wolfbet.com).
+    explicit WolfbetLoginDialog(const QString &site = QString(), QWidget *parent = nullptr);
     ~WolfbetLoginDialog() override;
 
     QString token() const { return m_token; }

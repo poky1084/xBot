@@ -20,7 +20,8 @@ class ParadiceLoginDialog : public QDialog
     Q_OBJECT
 
 public:
-    explicit ParadiceLoginDialog(QWidget *parent = nullptr);
+    // `site` = Paradice's host or a mirror (empty = paradice.in).
+    explicit ParadiceLoginDialog(const QString &site = QString(), QWidget *parent = nullptr);
     ~ParadiceLoginDialog() override;
 
     QString token() const { return m_token; }

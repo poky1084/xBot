@@ -36,6 +36,7 @@
 
 #include "bot/LiveSettings.h"
 #include "bot/DuelTransport.h"
+#include "bot/GoatedTransport.h"
 #include "bot/ParadiceTransport.h"
 #include "bot/PasinoTransport.h"
 #include "bot/TowerTransport.h"
@@ -214,17 +215,17 @@ inline bool fetch(LiveSettings::Casino casino, QObject *context,
     QByteArray postBody; // non-empty: sent as a POST
     std::function<QStringList(const QByteArray &)> parse;
     if (casino == LiveSettings::Casino::Goated) {
-        req.setUrl(QUrl(QStringLiteral("https://apis.goated.com/main/exchange-rates")));
-        req.setRawHeader("Origin", "https://www.goated.com");
-        req.setRawHeader("Referer", "https://www.goated.com/");
+        req.setUrl(QUrl(QStringLiteral("https://%1/main/exchange-rates").arg(GoatedTransport::apiHost())));
+        req.setRawHeader("Origin", QStringLiteral("https://%1").arg(GoatedTransport::webHost()).toUtf8());
+        req.setRawHeader("Referer", QStringLiteral("https://%1/").arg(GoatedTransport::webHost()).toUtf8());
         parse = detail::parseGoated;
     } else if (casino == LiveSettings::Casino::Wolfbet) {
         const QString clean = WolfbetTransport::cleanToken(token);
         if (clean.isEmpty())
             return false;
-        req.setUrl(QUrl(QStringLiteral("https://wolfbet.com/api/v2/user/balances")));
+        req.setUrl(QUrl(QStringLiteral("https://%1/api/v2/user/balances").arg(WolfbetTransport::host())));
         req.setRawHeader("Authorization", QByteArray("Bearer ") + clean.toUtf8());
-        req.setRawHeader("Referer", "https://wolfbet.com/");
+        req.setRawHeader("Referer", QStringLiteral("https://%1/").arg(WolfbetTransport::host()).toUtf8());
         req.setRawHeader("x-client-type", "Web-Application");
         req.setRawHeader("x-requested-with", "XMLHttpRequest");
         parse = detail::parseWolfbet;
@@ -235,8 +236,8 @@ inline bool fetch(LiveSettings::Casino casino, QObject *context,
         req.setUrl(QUrl(ParadiceTransport::apiUrl()));
         req.setHeader(QNetworkRequest::ContentTypeHeader, QStringLiteral("application/json"));
         req.setRawHeader("x-access-token", clean.toUtf8());
-        req.setRawHeader("Origin", "https://paradice.in");
-        req.setRawHeader("Referer", "https://paradice.in/");
+        req.setRawHeader("Origin", QStringLiteral("https://%1").arg(ParadiceTransport::webHost()).toUtf8());
+        req.setRawHeader("Referer", QStringLiteral("https://%1/").arg(ParadiceTransport::webHost()).toUtf8());
         QJsonObject body;
         body.insert(QStringLiteral("variables"), QJsonObject());
         body.insert(QStringLiteral("query"), ParadiceTransport::balancesQuery());
@@ -249,8 +250,8 @@ inline bool fetch(LiveSettings::Casino casino, QObject *context,
         req.setUrl(QUrl(PasinoTransport::apiBase() + QLatin1Char('/') + PasinoTransport::balancesPath()));
         req.setHeader(QNetworkRequest::ContentTypeHeader,
                       QStringLiteral("application/x-www-form-urlencoded"));
-        req.setRawHeader("Origin", "https://pasino.com");
-        req.setRawHeader("Referer", "https://pasino.com/");
+        req.setRawHeader("Origin", QStringLiteral("https://%1").arg(PasinoTransport::webHost()).toUtf8());
+        req.setRawHeader("Referer", QStringLiteral("https://%1/").arg(PasinoTransport::webHost()).toUtf8());
         postBody = PasinoTransport::makeBody(clean);
         parse = detail::parsePasino;
     } else if (casino == LiveSettings::Casino::Tower) {

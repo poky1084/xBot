@@ -210,7 +210,7 @@ bool WinnaTransport::isReady(QString *whyNot) const
         // The tab sends its own session cookie.
         if (!m_ext->isConnectedTo(pageHosts())) {
             if (whyNot)
-                *whyNot = tr("Winna: no winna.com tab with the browser extension is open.");
+                *whyNot = tr("Winna: no %1 tab with the browser extension is open.").arg(pageHosts().value(0));
             return false;
         }
         return true;
@@ -241,8 +241,8 @@ QNetworkRequest WinnaTransport::buildApiRequest(const QString &path, const Winna
     } else {
         req.setRawHeader("Cookie", cookieHeader(cred));
     }
-    req.setRawHeader("Origin", "https://winna.com");
-    req.setRawHeader("Referer", "https://winna.com/");
+    req.setRawHeader("Origin", QStringLiteral("https://%1").arg(webHost()).toUtf8());
+    req.setRawHeader("Referer", QStringLiteral("https://%1/").arg(webHost()).toUtf8());
     req.setHeader(QNetworkRequest::UserAgentHeader,
                   cred.userAgent.isEmpty() ? defaultUserAgent() : cred.userAgent);
     req.setTransferTimeout(kRequestTimeoutMs);
@@ -634,8 +634,8 @@ void WinnaTransport::sendGame(const QString &path, const QJsonObject &body, Tran
         } else {
             req.setRawHeader("Cookie", cookieHeader(m_cred));
         }
-        req.setRawHeader("Origin", "https://games-prod.winna.com");
-        req.setRawHeader("Referer", "https://games-prod.winna.com/");
+        req.setRawHeader("Origin", QStringLiteral("https://%1").arg(gamesHost()).toUtf8());
+        req.setRawHeader("Referer", QStringLiteral("https://%1/").arg(gamesHost()).toUtf8());
         req.setHeader(QNetworkRequest::UserAgentHeader,
                       m_cred.userAgent.isEmpty() ? defaultUserAgent() : m_cred.userAgent);
         req.setTransferTimeout(kRequestTimeoutMs);

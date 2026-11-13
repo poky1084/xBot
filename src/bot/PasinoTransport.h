@@ -1,5 +1,6 @@
 #pragma once
 
+#include "bot/LiveSettings.h"
 #include "bot/StakeTransport.h"
 
 #include <QMap>
@@ -39,7 +40,7 @@ public:
     // Requests go through the extension's pasino.com tab (nullptr = straight from the app).
     void setExtension(ExtensionTransport *ext);
     bool usesExtension() const { return m_ext != nullptr; }
-    static QStringList pageHosts() { return {QStringLiteral("pasino.com")}; }
+    static QStringList pageHosts() { return {LiveSettings::siteBase(LiveSettings::Casino::Pasino)}; }
 
     QString name() const override
     {
@@ -51,8 +52,8 @@ public:
     // Reads all balances (lowercase currency code -> amount).
     void requestBalances();
 
-    static QString webHost() { return QStringLiteral("pasino.com"); }
-    static QString apiBase() { return QStringLiteral("https://api.pasino.com"); }
+    static QString webHost() { return LiveSettings::currentSite(LiveSettings::Casino::Pasino); }
+    static QString apiBase() { return QStringLiteral("https://api.") + LiveSettings::siteBase(LiveSettings::Casino::Pasino); }
     static QString balancesPath() { return QStringLiteral("coin/get-balances"); }
 
     // {"coins":[{"coin":"BTC","balance":"0.1"},…]} -> lowercase code -> balance.

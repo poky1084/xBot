@@ -7,7 +7,7 @@ const targetSites = [
   "stake.mba", "stake.ac", "stake.jp", "stake.bz", "stake.krd", "stake.ceo",
   "staketr.com", "primedice.com", "primedice.games", "stake1021.com", "stake3090.com", "stake3075.com",
   // Shuffle, Goated, Wolfbet, Duel
-  "shuffle.com", "shuffle.game", "goated.com", "wolfbet.com", "duel.com", "duel.net", "paradice.in", "pasino.com", "tower.bet", "winna.com"
+  "shuffle.com", "shuffle.game", "goated.com", "wolfbet.com", "wolfbet.win", "duel.com", "duel.net", "paradice.in", "pasino.com", "tower.bet", "winna.com"
 ];
 
 function inject(tabId) {

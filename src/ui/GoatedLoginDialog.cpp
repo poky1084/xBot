@@ -1,5 +1,7 @@
 #include "ui/GoatedLoginDialog.h"
 
+#include "bot/LiveSettings.h"
+
 #include "ui/WebViewSession.h"
 #include <QHBoxLayout>
 #include <QJsonArray>
@@ -35,9 +37,9 @@ static const wchar_t *kReadStorageScript = LR"JS(
 })()
 )JS";
 
-GoatedLoginDialog::GoatedLoginDialog(QWidget *parent)
+GoatedLoginDialog::GoatedLoginDialog(const QString &site, QWidget *parent)
     : QDialog(parent)
-    , m_site(QStringLiteral("www.goated.com"))
+    , m_site(LiveSettings::hostOf(site, LiveSettings::defaultSite(LiveSettings::Casino::Goated)))
 {
     setWindowTitle(tr("Log in to Goated"));
     resize(1000, 720);

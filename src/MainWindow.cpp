@@ -90,6 +90,13 @@
 #include <algorithm>
 #include <cmath>
 
+// Settings key of casino `c`'s "Site / mirror" ("site" for Stake, "<name>Site" for the others).
+static QString siteSettingsKey(LiveSettings::Casino c)
+{
+    return c == LiveSettings::Casino::Stake ? QStringLiteral("site")
+                                            : LiveSettings::nameOf(c) + QStringLiteral("Site");
+}
+
 #ifdef Q_OS_WIN
 #  ifndef NOMINMAX
 #    define NOMINMAX
@@ -2779,16 +2786,8 @@ void MainWindow::onOpenOptions()
         const LiveSettings cur = dialog.liveSettings();
         ScopedSettings settings(settingsGroup());
         settings.beginGroup(QStringLiteral("Live"));
-        if (cur.isDuel()) {
-            m_live.duelSite = cur.duelSite;
-            settings.setValue(QStringLiteral("duelSite"), m_live.duelSite);
-        } else if (cur.isShuffle()) {
-            m_live.shuffleSite = cur.shuffleSite;
-            settings.setValue(QStringLiteral("shuffleSite"), m_live.shuffleSite);
-        } else if (cur.casino == LiveSettings::Casino::Stake) {
-            m_live.site = cur.site;
-            settings.setValue(QStringLiteral("site"), m_live.site);
-        }
+        m_live.setSiteOf(cur.casino, cur.siteOf(cur.casino));
+        settings.setValue(siteSettingsKey(cur.casino), m_live.siteOf(cur.casino));
         settings.endGroup();
     });
 
@@ -3473,6 +3472,7 @@ bool MainWindow::updateExtensionServer(const LiveSettings &s, QString *errorOut)
 
 bool MainWindow::configureConnection(const LiveSettings &s, QString *errorOut)
 {
+    s.publishSites(); // every transport builds its URLs from the "Site / mirror" of `s`
     QString extErr;
     const bool extOk = updateExtensionServer(s, &extErr);
     const bool ok = configureTransports(s, errorOut);
@@ -3740,17 +3740,17 @@ void MainWindow::applyLiveSettings(const LiveSettings &requested)
     if (wasEnabled && casinoChanged)
         snapshotLeavingCasinoBalance();
     // Another account or live betting switched off: the cached figures no longer apply.
-    if (!next.enabled || m_live.goatedToken != next.goatedToken)
+    if (!next.enabled || m_live.goatedToken != next.goatedToken || m_live.goatedSite != next.goatedSite)
         m_goatedBalances.clear();
-    if (!next.enabled || m_live.wolfbetToken != next.wolfbetToken)
+    if (!next.enabled || m_live.wolfbetToken != next.wolfbetToken || m_live.wolfbetSite != next.wolfbetSite)
         m_wolfbetBalances.clear();
-    if (!next.enabled || m_live.paradiceToken != next.paradiceToken)
+    if (!next.enabled || m_live.paradiceToken != next.paradiceToken || m_live.paradiceSite != next.paradiceSite)
         m_paradiceBalances.clear();
-    if (!next.enabled || m_live.pasinoToken != next.pasinoToken)
+    if (!next.enabled || m_live.pasinoToken != next.pasinoToken || m_live.pasinoSite != next.pasinoSite)
         m_pasinoBalances.clear();
-    if (!next.enabled || m_live.towerToken != next.towerToken)
+    if (!next.enabled || m_live.towerToken != next.towerToken || m_live.towerSite != next.towerSite)
         m_towerBalances.clear();
-    if (!next.enabled || m_live.winnaSession != next.winnaSession)
+    if (!next.enabled || m_live.winnaSession != next.winnaSession || m_live.winnaSite != next.winnaSite)
         m_winnaBalances.clear();
     if (!next.enabled || m_live.duelToken != next.duelToken || m_live.duelUuid != next.duelUuid
         || m_live.duelSite != next.duelSite)
@@ -4970,6 +4970,12 @@ void MainWindow::loadSettings()
         settings.value(QStringLiteral("casino"), AppConfig::casino).toString());
     m_live.site = settings.value(QStringLiteral("site"), m_live.site).toString();
     m_live.shuffleSite = settings.value(QStringLiteral("shuffleSite"), m_live.shuffleSite).toString();
+    for (const auto c : {LiveSettings::Casino::Goated, LiveSettings::Casino::Wolfbet,
+                         LiveSettings::Casino::Paradice, LiveSettings::Casino::Pasino,
+                         LiveSettings::Casino::Tower, LiveSettings::Casino::Winna}) {
+        m_live.setSiteOf(c, LiveSettings::hostOf(settings.value(siteSettingsKey(c)).toString(),
+                                                 LiveSettings::defaultSite(c)));
+    }
     m_live.extensionMode = settings.value(QStringLiteral("extensionMode"), false).toBool();
     m_live.shuffleExtension = settings.value(QStringLiteral("shuffleExtension"), false).toBool();
     m_live.goatedExtension = settings.value(QStringLiteral("goatedExtension"), false).toBool();
@@ -5016,6 +5022,7 @@ void MainWindow::loadSettings()
     m_live.correlationUserId = settings.value(QStringLiteral("correlationUserId")).toString();
     m_live.browserId = settings.value(QStringLiteral("browserId")).toString();
     settings.endGroup();
+    m_live.publishSites();
     updateCasinoMenu();
 
     BotConfig cfg;
@@ -5096,6 +5103,10 @@ void MainWindow::saveOptionsSettings(QSettings &settings)
     settings.setValue(QStringLiteral("casino"), m_live.casinoName());
     settings.setValue(QStringLiteral("site"), m_live.site);
     settings.setValue(QStringLiteral("shuffleSite"), m_live.shuffleSite);
+    for (const auto c : {LiveSettings::Casino::Goated, LiveSettings::Casino::Wolfbet,
+                         LiveSettings::Casino::Paradice, LiveSettings::Casino::Pasino,
+                         LiveSettings::Casino::Tower, LiveSettings::Casino::Winna})
+        settings.setValue(siteSettingsKey(c), m_live.siteOf(c));
     settings.setValue(QStringLiteral("extensionMode"), m_live.extensionMode);
     settings.setValue(QStringLiteral("shuffleExtension"), m_live.shuffleExtension);
     settings.setValue(QStringLiteral("goatedExtension"), m_live.goatedExtension);

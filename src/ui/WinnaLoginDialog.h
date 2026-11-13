@@ -30,7 +30,9 @@ class WinnaLoginDialog : public QDialog
 public:
     // `freshStart`: delete winna.com's cookies and site storage in this browser profile first,
     // so the login starts like after "Clear data" (no stale session cookies left over).
-    explicit WinnaLoginDialog(bool freshStart = false, QWidget *parent = nullptr);
+    // `site` = Winna's host or a mirror (empty = winna.com).
+    explicit WinnaLoginDialog(bool freshStart = false, const QString &site = QString(),
+                              QWidget *parent = nullptr);
     ~WinnaLoginDialog() override;
 
     QString session() const { return m_token; }
@@ -63,6 +65,11 @@ private:
     ICoreWebView2 *m_webview = nullptr;
 
     QString m_site;
+    // m_site without "www." (the domain the api2 / originals / games-prod hosts hang off).
+    QString siteBase() const
+    {
+        return m_site.startsWith(QLatin1String("www.")) ? m_site.mid(4) : m_site;
+    }
     QString m_token;
     QString m_clearance;
     QString m_userAgent;

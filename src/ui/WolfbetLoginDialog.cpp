@@ -1,5 +1,7 @@
 #include "ui/WolfbetLoginDialog.h"
 
+#include "bot/LiveSettings.h"
+
 #include "ui/WebViewSession.h"
 #include <QHBoxLayout>
 #include <QJsonArray>
@@ -35,9 +37,9 @@ static const wchar_t *kReadStorageScript = LR"JS(
 })()
 )JS";
 
-WolfbetLoginDialog::WolfbetLoginDialog(QWidget *parent)
+WolfbetLoginDialog::WolfbetLoginDialog(const QString &site, QWidget *parent)
     : QDialog(parent)
-    , m_site(QStringLiteral("wolfbet.com"))
+    , m_site(LiveSettings::hostOf(site, LiveSettings::defaultSite(LiveSettings::Casino::Wolfbet)))
 {
     setWindowTitle(tr("Log in to Wolfbet"));
     resize(1000, 720);

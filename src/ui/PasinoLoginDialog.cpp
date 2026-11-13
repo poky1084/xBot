@@ -1,5 +1,7 @@
 #include "ui/PasinoLoginDialog.h"
 
+#include "bot/LiveSettings.h"
+
 #include "ui/WebViewSession.h"
 #include <QHBoxLayout>
 #include <QJsonArray>
@@ -38,9 +40,9 @@ static const wchar_t *kReadStorageScript = LR"JS(
 })()
 )JS";
 
-PasinoLoginDialog::PasinoLoginDialog(QWidget *parent)
+PasinoLoginDialog::PasinoLoginDialog(const QString &site, QWidget *parent)
     : QDialog(parent)
-    , m_site(QStringLiteral("pasino.com"))
+    , m_site(LiveSettings::hostOf(site, LiveSettings::defaultSite(LiveSettings::Casino::Pasino)))
 {
     setWindowTitle(tr("Log in to Pasino"));
     resize(1000, 720);

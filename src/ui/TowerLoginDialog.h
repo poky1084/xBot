@@ -25,7 +25,8 @@ class TowerLoginDialog : public QDialog
     Q_OBJECT
 
 public:
-    explicit TowerLoginDialog(QWidget *parent = nullptr);
+    // `site` = Tower's host or a mirror (empty = tower.bet).
+    explicit TowerLoginDialog(const QString &site = QString(), QWidget *parent = nullptr);
     ~TowerLoginDialog() override;
 
     QString token() const { return m_token; }

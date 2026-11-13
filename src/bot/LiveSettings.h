@@ -57,6 +57,22 @@ struct LiveSettings
         }
     }
 
+    // The casino's own site, used when "Site / mirror" is empty.
+    static QString defaultSite(Casino c)
+    {
+        switch (c) {
+        case Casino::Shuffle: return QStringLiteral("shuffle.com");
+        case Casino::Goated:  return QStringLiteral("www.goated.com");
+        case Casino::Wolfbet: return QStringLiteral("wolfbet.com");
+        case Casino::Duel:    return QStringLiteral("duel.com");
+        case Casino::Paradice: return QStringLiteral("paradice.in");
+        case Casino::Pasino:  return QStringLiteral("pasino.com");
+        case Casino::Tower:   return QStringLiteral("tower.bet");
+        case Casino::Winna:   return QStringLiteral("winna.com");
+        default:              return QStringLiteral("stake.com");
+        }
+    }
+
     bool enabled = false;          // never persisted: every launch starts in simulation
     Casino casino = fromName(AppConfig::casino); // set by AppConfig::casino, switchable in the "Casino" menu
 
@@ -72,6 +88,15 @@ struct LiveSettings
     QString shuffleToken;          // "Token" in Options (sent as "Authorization: Bearer <token>")
     QString correlationUserId;     // CORRELATION_USER_ID
     QString browserId;             // BROWSER_ID
+
+    // ---- "Site / mirror" in Options of the casinos below (host, e.g. "goated.com" or a mirror).
+    // Their API hosts are derived from it ("apis.goated.com" -> "apis.<mirror>"), see siteBase().
+    QString goatedSite = defaultSite(Casino::Goated);
+    QString wolfbetSite = defaultSite(Casino::Wolfbet);
+    QString paradiceSite = defaultSite(Casino::Paradice);
+    QString pasinoSite = defaultSite(Casino::Pasino);
+    QString towerSite = defaultSite(Casino::Tower);
+    QString winnaSite = defaultSite(Casino::Winna);
 
     // ---- Goated (Direct mode only: plain HTTPS). Only a token is needed.
     QString goatedToken;           // localStorage "g3_token" (sent as "Authorization: Bearer <token>")
@@ -226,20 +251,7 @@ struct LiveSettings
                || winnaExtension;
     }
     // Sites of the browser tab the extension uses for casino `c` (compared without "www.").
-    QStringList extensionHosts(Casino c) const
-    {
-        switch (c) {
-        case Casino::Shuffle: return {hostOf(shuffleSite, QStringLiteral("shuffle.com"))};
-        case Casino::Goated:  return {QStringLiteral("goated.com")};
-        case Casino::Wolfbet: return {QStringLiteral("wolfbet.com")};
-        case Casino::Duel:    return {duelSite};
-        case Casino::Paradice: return {QStringLiteral("paradice.in")};
-        case Casino::Pasino:  return {QStringLiteral("pasino.com")};
-        case Casino::Tower:   return {QStringLiteral("tower.bet")};
-        case Casino::Winna:   return {QStringLiteral("winna.com")};
-        default:              return {hostOf(site, QStringLiteral("stake.com"))};
-        }
-    }
+    QStringList extensionHosts(Casino c) const { return {siteHost(c)}; }
     // Every casino site a tab may connect from (the mirrors typed in Options).
     QStringList allExtensionHosts() const
     {
@@ -263,23 +275,69 @@ struct LiveSettings
         return h.isEmpty() ? fallback : h;
     }
 
-    // Host of the active casino.
-    QString activeSite() const
+    // "Site / mirror" typed for casino `c`, as stored (may be empty / a URL).
+    QString siteOf(Casino c) const
     {
-        if (isGoated())
-            return QStringLiteral("goated.com");
-        if (isWolfbet())
-            return QStringLiteral("wolfbet.com");
-        if (isDuel())
-            return duelSite;
-        if (isParadice())
-            return QStringLiteral("paradice.in");
-        if (isPasino())
-            return QStringLiteral("pasino.com");
-        if (isTower())
-            return QStringLiteral("tower.bet");
-        if (isWinna())
-            return QStringLiteral("winna.com");
-        return isShuffle() ? shuffleSite : site;
+        switch (c) {
+        case Casino::Shuffle: return shuffleSite;
+        case Casino::Goated:  return goatedSite;
+        case Casino::Wolfbet: return wolfbetSite;
+        case Casino::Duel:    return duelSite;
+        case Casino::Paradice: return paradiceSite;
+        case Casino::Pasino:  return pasinoSite;
+        case Casino::Tower:   return towerSite;
+        case Casino::Winna:   return winnaSite;
+        default:              return site;
+        }
+    }
+    void setSiteOf(Casino c, const QString &typed)
+    {
+        switch (c) {
+        case Casino::Shuffle: shuffleSite = typed; break;
+        case Casino::Goated:  goatedSite = typed; break;
+        case Casino::Wolfbet: wolfbetSite = typed; break;
+        case Casino::Duel:    duelSite = typed; break;
+        case Casino::Paradice: paradiceSite = typed; break;
+        case Casino::Pasino:  pasinoSite = typed; break;
+        case Casino::Tower:   towerSite = typed; break;
+        case Casino::Winna:   winnaSite = typed; break;
+        default:              site = typed; break;
+        }
+    }
+    // Host of casino `c` ("https://Goated.io/" -> "goated.io"; empty -> its own site).
+    QString siteHost(Casino c) const { return hostOf(siteOf(c), defaultSite(c)); }
+
+    // Host of the active casino.
+    QString activeSite() const { return siteHost(casino); }
+
+    // ---- Sites in use by the running app. The transports and the currency lists build their
+    // URLs from these (static helpers, no settings object at hand). MainWindow calls
+    // publishSites() whenever its live settings change.
+    void publishSites() const
+    {
+        for (int i = 0; i < kCasinoCount; ++i)
+            currentSiteRef(static_cast<Casino>(i)) = siteHost(static_cast<Casino>(i));
+    }
+    // Host in use for casino `c` (e.g. "www.goated.com" if typed so).
+    static QString currentSite(Casino c)
+    {
+        const QString h = currentSiteRef(c);
+        return h.isEmpty() ? defaultSite(c) : h;
+    }
+    // The same without "www.": the domain the API subdomains hang off ("goated.com" ->
+    // "apis.goated.com"; on a mirror "goated.io" -> "apis.goated.io").
+    static QString siteBase(Casino c)
+    {
+        QString h = currentSite(c);
+        if (h.startsWith(QLatin1String("www.")))
+            h = h.mid(4);
+        return h;
+    }
+
+private:
+    static QString &currentSiteRef(Casino c)
+    {
+        static QString sites[kCasinoCount];
+        return sites[int(c)];
     }
 };

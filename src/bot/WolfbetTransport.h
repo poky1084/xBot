@@ -1,5 +1,6 @@
 #pragma once
 
+#include "bot/LiveSettings.h"
 #include "bot/StakeTransport.h"
 
 #include <QMap>
@@ -34,7 +35,7 @@ public:
     // Requests go through the extension's wolfbet.com tab (nullptr = straight from the app).
     void setExtension(ExtensionTransport *ext);
     bool usesExtension() const { return m_ext != nullptr; }
-    static QStringList pageHosts() { return {QStringLiteral("wolfbet.com")}; }
+    static QStringList pageHosts() { return {LiveSettings::siteBase(LiveSettings::Casino::Wolfbet)}; }
 
     QString name() const override
     {
@@ -48,7 +49,7 @@ public:
     // Reads all balances over HTTPS (lowercase currency code -> amount).
     void requestBalances();
 
-    static QString host() { return QStringLiteral("wolfbet.com"); }
+    static QString host() { return LiveSettings::currentSite(LiveSettings::Casino::Wolfbet); }
 
     // Accepts the token in any form it is likely to be copied in:
     //  * the bare JWT,

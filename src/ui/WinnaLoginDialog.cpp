@@ -1,5 +1,7 @@
 #include "ui/WinnaLoginDialog.h"
 
+#include "bot/LiveSettings.h"
+
 #include "ui/WebViewSession.h"
 #include <QHBoxLayout>
 #include <QJsonArray>
@@ -40,7 +42,7 @@ static const wchar_t *kPollScript = LR"JS(
             var headers = { 'Accept': 'application/json, text/plain, */*' };
             if (r.device)
                 headers['x-antifraud-device-id'] = r.device;
-            fetch('https://api2.winna.com/v1/payments/wallets?_wnNoCache=' + now, {
+            fetch('https://api2.' + location.hostname.replace(/^www\./, '') + '/v1/payments/wallets?_wnNoCache=' + now, {
                 method: 'GET', credentials: 'include', headers: headers
             }).then(function (res) {
                 return res.json().catch(function () { return null; }).then(function (j) {
@@ -55,9 +57,9 @@ static const wchar_t *kPollScript = LR"JS(
 })()
 )JS";
 
-WinnaLoginDialog::WinnaLoginDialog(bool freshStart, QWidget *parent)
+WinnaLoginDialog::WinnaLoginDialog(bool freshStart, const QString &site, QWidget *parent)
     : QDialog(parent)
-    , m_site(QStringLiteral("winna.com"))
+    , m_site(LiveSettings::hostOf(site, LiveSettings::defaultSite(LiveSettings::Casino::Winna)))
     , m_freshStart(freshStart)
 {
     setWindowTitle(tr("Log in to Winna.com"));
@@ -189,7 +191,7 @@ void WinnaLoginDialog::initializeWebView()
                                 nullptr);
 
                             if (self->m_freshStart) {
-                                self->m_status->setText(tr("Removing the old winna.com login data…"));
+                                self->m_status->setText(tr("Removing the old %1 login data…").arg(self->siteBase()));
                                 QPointer<WinnaLoginDialog> again(self);
                                 self->clearSiteData([again] {
                                     if (again)
@@ -270,10 +272,10 @@ void WinnaLoginDialog::clearSiteData(std::function<void()> then)
     // Local / session storage, IndexedDB, caches of the winna.com origins (DevTools protocol),
     // one after the other; the last one continues with `then`.
     auto clearStorage = [this, then]() {
-        auto origins = std::make_shared<QStringList>(QStringList{
-            QStringLiteral("https://winna.com"), QStringLiteral("https://www.winna.com"),
-            QStringLiteral("https://games-prod.winna.com"), QStringLiteral("https://originals.winna.com"),
-            QStringLiteral("https://api2.winna.com")});
+        const QString base = siteBase();
+        auto origins = std::make_shared<QStringList>();
+        for (const char *sub : {"", "www.", "games-prod.", "originals.", "api2."})
+            *origins << QStringLiteral("https://") + QLatin1String(sub) + base;
         auto next = std::make_shared<std::function<void()>>();
         QPointer<WinnaLoginDialog> self(this);
         *next = [self, origins, next, then]() {
@@ -306,10 +308,11 @@ void WinnaLoginDialog::clearSiteData(std::function<void()> then)
     }
     // An empty URI lists every cookie of the profile: delete those of winna.com.
     QPointer<WinnaLoginDialog> self(this);
+    const QString base = siteBase();
     const HRESULT hr = cookieManager->GetCookies(
         L"",
         Callback<ICoreWebView2GetCookiesCompletedHandler>(
-            [self, cookieManager, clearStorage](HRESULT result, ICoreWebView2CookieList *list) -> HRESULT {
+            [self, cookieManager, clearStorage, base](HRESULT result, ICoreWebView2CookieList *list) -> HRESULT {
                 if (SUCCEEDED(result) && list) {
                     UINT count = 0;
                     list->get_Count(&count);
@@ -325,7 +328,7 @@ void WinnaLoginDialog::clearSiteData(std::function<void()> then)
                         QString bare = d;
                         while (bare.startsWith(QLatin1Char('.')))
                             bare.remove(0, 1);
-                        if (bare == QLatin1String("winna.com") || bare.endsWith(QLatin1String(".winna.com")))
+                        if (bare == base || bare.endsWith(QLatin1Char('.') + base))
                             cookieManager->DeleteCookie(cookie);
                         cookie->Release();
                     }

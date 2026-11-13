@@ -103,7 +103,7 @@ bool GoatedTransport::isReady(QString *whyNot) const
     }
     if (m_ext && !m_ext->isConnectedTo(pageHosts())) {
         if (whyNot)
-            *whyNot = tr("Goated: no goated.com tab with the browser extension is open.");
+            *whyNot = tr("Goated: no %1 tab with the browser extension is open.").arg(pageHosts().value(0));
         return false;
     }
     return true;

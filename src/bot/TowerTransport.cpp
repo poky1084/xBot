@@ -127,7 +127,7 @@ bool TowerTransport::isReady(QString *whyNot) const
     }
     if (m_ext && !m_ext->isConnectedTo(pageHosts())) {
         if (whyNot)
-            *whyNot = tr("Tower: no tower.bet tab with the browser extension is open.");
+            *whyNot = tr("Tower: no %1 tab with the browser extension is open.").arg(pageHosts().value(0));
         return false;
     }
     return true;
@@ -152,8 +152,8 @@ QNetworkRequest TowerTransport::buildRequest(const QString &path, const QString 
     if (!clearance.isEmpty())
         cookie += "; cf_clearance=" + clearance.toUtf8();
     req.setRawHeader("Cookie", cookie);
-    req.setRawHeader("Origin", "https://tower.bet");
-    req.setRawHeader("Referer", "https://tower.bet/dice");
+    req.setRawHeader("Origin", QStringLiteral("https://%1").arg(webHost()).toUtf8());
+    req.setRawHeader("Referer", QStringLiteral("https://%1/dice").arg(webHost()).toUtf8());
     req.setHeader(QNetworkRequest::UserAgentHeader,
                   userAgent.trimmed().isEmpty() ? defaultUserAgent() : userAgent.trimmed());
     req.setTransferTimeout(kRequestTimeoutMs);

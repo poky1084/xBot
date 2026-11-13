@@ -20,7 +20,8 @@ class GoatedLoginDialog : public QDialog
     Q_OBJECT
 
 public:
-    explicit GoatedLoginDialog(QWidget *parent = nullptr);
+    // `site` = Goated's host or a mirror (empty = www.goated.com).
+    explicit GoatedLoginDialog(const QString &site = QString(), QWidget *parent = nullptr);
     ~GoatedLoginDialog() override;
 
     QString token() const { return m_token; }

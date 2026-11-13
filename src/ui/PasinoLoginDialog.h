@@ -20,7 +20,8 @@ class PasinoLoginDialog : public QDialog
     Q_OBJECT
 
 public:
-    explicit PasinoLoginDialog(QWidget *parent = nullptr);
+    // `site` = Pasino's host or a mirror (empty = pasino.com).
+    explicit PasinoLoginDialog(const QString &site = QString(), QWidget *parent = nullptr);
     ~PasinoLoginDialog() override;
 
     QString token() const { return m_token; }

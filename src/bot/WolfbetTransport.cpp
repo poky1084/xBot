@@ -124,7 +124,7 @@ bool WolfbetTransport::isReady(QString *whyNot) const
     }
     if (m_ext && !m_ext->isConnectedTo(pageHosts())) {
         if (whyNot)
-            *whyNot = tr("Wolfbet: no wolfbet.com tab with the browser extension is open.");
+            *whyNot = tr("Wolfbet: no %1 tab with the browser extension is open.").arg(pageHosts().value(0));
         return false;
     }
     return true;

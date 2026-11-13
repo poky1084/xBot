@@ -1,5 +1,6 @@
 #pragma once
 
+#include "bot/LiveSettings.h"
 #include "bot/StakeTransport.h"
 
 #include <QMap>
@@ -41,7 +42,7 @@ public:
     // Requests go through the extension's tower.bet tab (nullptr = straight from the app).
     void setExtension(ExtensionTransport *ext);
     bool usesExtension() const { return m_ext != nullptr; }
-    static QStringList pageHosts() { return {QStringLiteral("tower.bet")}; }
+    static QStringList pageHosts() { return {LiveSettings::siteBase(LiveSettings::Casino::Tower)}; }
 
     QString name() const override
     {
@@ -53,8 +54,8 @@ public:
     // Reads all balances (lowercase currency code -> amount).
     void requestBalances();
 
-    static QString webHost() { return QStringLiteral("tower.bet"); }
-    static QString apiBase() { return QStringLiteral("https://tower.bet/api"); }
+    static QString webHost() { return LiveSettings::currentSite(LiveSettings::Casino::Tower); }
+    static QString apiBase() { return QStringLiteral("https://%1/api").arg(webHost()); }
     static QString defaultUserAgent();
 
     // A request to https://tower.bet/api/<path> with the headers the site sends (also used by

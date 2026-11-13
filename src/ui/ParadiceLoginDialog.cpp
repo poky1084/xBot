@@ -1,5 +1,7 @@
 #include "ui/ParadiceLoginDialog.h"
 
+#include "bot/LiveSettings.h"
+
 #include "ui/WebViewSession.h"
 #include <QHBoxLayout>
 #include <QJsonArray>
@@ -37,9 +39,9 @@ static const wchar_t *kReadStorageScript = LR"JS(
 })()
 )JS";
 
-ParadiceLoginDialog::ParadiceLoginDialog(QWidget *parent)
+ParadiceLoginDialog::ParadiceLoginDialog(const QString &site, QWidget *parent)
     : QDialog(parent)
-    , m_site(QStringLiteral("paradice.in"))
+    , m_site(LiveSettings::hostOf(site, LiveSettings::defaultSite(LiveSettings::Casino::Paradice)))
 {
     setWindowTitle(tr("Log in to Paradice"));
     resize(1000, 720);

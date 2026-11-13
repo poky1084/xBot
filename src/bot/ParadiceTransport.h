@@ -1,5 +1,6 @@
 #pragma once
 
+#include "bot/LiveSettings.h"
 #include "bot/StakeTransport.h"
 
 #include <QMap>
@@ -36,7 +37,7 @@ public:
     // Requests go through the extension's paradice.in tab (nullptr = straight from the app).
     void setExtension(ExtensionTransport *ext);
     bool usesExtension() const { return m_ext != nullptr; }
-    static QStringList pageHosts() { return {QStringLiteral("paradice.in")}; }
+    static QStringList pageHosts() { return {LiveSettings::siteBase(LiveSettings::Casino::Paradice)}; }
 
     QString name() const override
     {
@@ -48,8 +49,8 @@ public:
     // Reads all balances (lowercase currency code -> amount).
     void requestBalances();
 
-    static QString webHost() { return QStringLiteral("paradice.in"); }
-    static QString apiUrl() { return QStringLiteral("https://api.paradice.in/api.php"); }
+    static QString webHost() { return LiveSettings::currentSite(LiveSettings::Casino::Paradice); }
+    static QString apiUrl() { return QStringLiteral("https://api.%1/api.php").arg(LiveSettings::siteBase(LiveSettings::Casino::Paradice)); }
 
     // The GraphQL query that lists every wallet (also used by CasinoCurrencies).
     static QString balancesQuery();

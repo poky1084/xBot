@@ -1,5 +1,6 @@
 #pragma once
 
+#include "bot/LiveSettings.h"
 #include "bot/StakeTransport.h"
 
 #include <QMap>
@@ -34,7 +35,7 @@ public:
     // Requests go through the extension's goated.com tab (nullptr = straight from the app).
     void setExtension(ExtensionTransport *ext);
     bool usesExtension() const { return m_ext != nullptr; }
-    static QStringList pageHosts() { return {QStringLiteral("goated.com")}; }
+    static QStringList pageHosts() { return {LiveSettings::siteBase(LiveSettings::Casino::Goated)}; }
 
     QString name() const override
     {
@@ -49,8 +50,8 @@ public:
     // Reads all balances over HTTPS (lowercase currency code -> amount).
     void requestBalances();
 
-    static QString apiHost() { return QStringLiteral("apis.goated.com"); }
-    static QString webHost() { return QStringLiteral("www.goated.com"); }
+    static QString apiHost() { return QStringLiteral("apis.") + LiveSettings::siteBase(LiveSettings::Casino::Goated); }
+    static QString webHost() { return LiveSettings::currentSite(LiveSettings::Casino::Goated); }
 
     // Accepts a token as copied from DevTools: strips quotes, a leading "Bearer " and
     // anything after a ';' (a copied "cookie" line).

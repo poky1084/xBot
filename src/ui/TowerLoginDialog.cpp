@@ -1,5 +1,7 @@
 #include "ui/TowerLoginDialog.h"
 
+#include "bot/LiveSettings.h"
+
 #include "ui/WebViewSession.h"
 #include <QHBoxLayout>
 #include <QJsonArray>
@@ -57,9 +59,9 @@ static const wchar_t *kPollScript = LR"JS(
 })()
 )JS";
 
-TowerLoginDialog::TowerLoginDialog(QWidget *parent)
+TowerLoginDialog::TowerLoginDialog(const QString &site, QWidget *parent)
     : QDialog(parent)
-    , m_site(QStringLiteral("tower.bet"))
+    , m_site(LiveSettings::hostOf(site, LiveSettings::defaultSite(LiveSettings::Casino::Tower)))
 {
     setWindowTitle(tr("Log in to Tower.bet"));
     resize(1000, 720);

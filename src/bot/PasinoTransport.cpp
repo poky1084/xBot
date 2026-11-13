@@ -118,7 +118,7 @@ bool PasinoTransport::isReady(QString *whyNot) const
     }
     if (m_ext && !m_ext->isConnectedTo(pageHosts())) {
         if (whyNot)
-            *whyNot = tr("Pasino: no pasino.com tab with the browser extension is open.");
+            *whyNot = tr("Pasino: no %1 tab with the browser extension is open.").arg(pageHosts().value(0));
         return false;
     }
     return true;
@@ -138,8 +138,8 @@ QNetworkRequest PasinoTransport::makeRequest(const QString &path) const
     // send an OPTIONS preflight, which api.pasino.com does not answer ("Failed to fetch").
     req.setRawHeader("Accept", "*/*");
     req.setRawHeader("Accept-Language", "en");
-    req.setRawHeader("Origin", "https://pasino.com");
-    req.setRawHeader("Referer", "https://pasino.com/");
+    req.setRawHeader("Origin", QStringLiteral("https://%1").arg(webHost()).toUtf8());
+    req.setRawHeader("Referer", QStringLiteral("https://%1/").arg(webHost()).toUtf8());
     req.setHeader(QNetworkRequest::UserAgentHeader,
                   m_cred.userAgent.isEmpty() ? defaultUserAgent() : m_cred.userAgent);
     req.setTransferTimeout(kRequestTimeoutMs);

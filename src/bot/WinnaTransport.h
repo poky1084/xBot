@@ -1,5 +1,6 @@
 #pragma once
 
+#include "bot/LiveSettings.h"
 #include "bot/StakeTransport.h"
 
 #include <QDateTime>
@@ -50,7 +51,7 @@ public:
     // Requests go through the extension's winna.com tab (nullptr = straight from the app).
     void setExtension(ExtensionTransport *ext);
     bool usesExtension() const { return m_ext != nullptr; }
-    static QStringList pageHosts() { return {QStringLiteral("winna.com")}; }
+    static QStringList pageHosts() { return {LiveSettings::siteBase(LiveSettings::Casino::Winna)}; }
 
     QString name() const override
     {
@@ -78,9 +79,11 @@ public:
     // ("balance" = the amount) -> {"success":true}. `done(error)`: "" = deposited.
     void vaultDeposit(const QString &coin, double amount, std::function<void(const QString &error)> done);
 
-    static QString webHost() { return QStringLiteral("winna.com"); }
-    static QString apiBase() { return QStringLiteral("https://api2.winna.com"); }
-    static QString gameBase() { return QStringLiteral("https://originals.winna.com"); }
+    static QString webHost() { return LiveSettings::currentSite(LiveSettings::Casino::Winna); }
+    static QString apiBase() { return QStringLiteral("https://api2.") + LiveSettings::siteBase(LiveSettings::Casino::Winna); }
+    static QString gameBase() { return QStringLiteral("https://originals.") + LiveSettings::siteBase(LiveSettings::Casino::Winna); }
+    // Page the game frames are served from (Origin / Referer of game requests).
+    static QString gamesHost() { return QStringLiteral("games-prod.") + LiveSettings::siteBase(LiveSettings::Casino::Winna); }
     static QString defaultUserAgent();
 
     // An account API request (https://api2.winna.com/<path>) with the site's headers and cookies
